@@ -24,24 +24,19 @@ def save_point_cloud_to_ply(points, filename):
     
 
 
-
-def visualize_point_cloud_with_axis(point_cloud,axis_vis=True):
-    # 创建一个点云对象
+def visualize_point_cloud_with_axis(point_cloud, axis_vis=True, color=[0.5, 0.5, 0.5]):
     pcd = o3d.geometry.PointCloud()
-    # 将numpy数组转换为open3d点云
     pcd.points = o3d.utility.Vector3dVector(point_cloud)
+    pcd.paint_uniform_color(color)  # 给点云统一上色
 
-    # 创建坐标轴
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(visible=True)
+    vis.add_geometry(pcd)
+
     if axis_vis:
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+        vis.add_geometry(axis)
 
-    # 可视化
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(visible=True)  # 创建一个窗口
-    vis.add_geometry(pcd)
-    vis.add_geometry(axis)
-    vis.run()  # 运行可视化
-    vis.destroy_window()  # 关闭窗口
-
-    
+    vis.run()
+    vis.destroy_window()
 
