@@ -320,8 +320,6 @@ def read_annotation(annotation_filename,class_names=['car']):
             extrinsic_matrix=extrinsic_matrix,
         )
 
-
-
 def get_sequence_name_and_cam_id(annotation_path):
     
     # current sequence name
@@ -337,14 +335,11 @@ def get_sequence_name_and_cam_id(annotation_path):
     return sequence_name,cam_id,int(instance_id)
 
 
-def obtain_sensor2_reference_lidar_top(
-                                       args,
+def obtain_sensor2_reference_lidar_top(args,
                                        current_annotation_path,
                                        reference_dict,
-                                       sensor_type,
-                                       ):
-
-        
+                                       sensor_type):
+            
     sensors_info_dict = loaded_sensors_data_info(root_path=args.root_path,annotation_path=current_annotation_path)        
     
     if sensor_type=="LIDAR_TOP":   
@@ -406,19 +401,14 @@ def obtain_sensor2_reference_lidar_top(
         
 
 def generate_bin_info(args,bin_token,scene_token,samples_all,bin_start, bin_end, bin_center, bin_length):
-    
-    
     assert bin_end > bin_start
     
     first_sample_annotation_path = samples_all[bin_start]
     last_sample_annotation_path = samples_all[bin_end]
     center_sample_annotation_path = samples_all[bin_center]
-    
     # using the center view as the reference view
     reference_sample_infos_dict = loaded_sensors_data_info(root_path=args.root_path,
                                                       annotation_path=center_sample_annotation_path)
-
-
 
     # bin samples is order def
     bin_samples_annotation_path = [center_sample_annotation_path, first_sample_annotation_path, last_sample_annotation_path] + \
@@ -452,8 +442,6 @@ def generate_bin_info(args,bin_token,scene_token,samples_all,bin_start, bin_end,
             
       
 def create_kitti_infos(args,annotation_path,current_seq_name):
-    
-    
     def find_bin_end(bin_start,dists,min_bin_length):
         '''
         dists_cp: 复制 dists，用于遍历。
@@ -504,7 +492,7 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
     annotations_list = [os.path.join(args.root_path,f) for f in annotations_list]
     
     # DEBUG: FIXME
-    annotations_list = annotations_list[:50]
+    annotations_list = annotations_list
     
     min_bin_length = args.min_bin_length
 
@@ -552,7 +540,7 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
                 bin_id += 1
                 bin_tokens.append(bin_token)
 
-                bin_filename = osp.join(args.out_dir, "bin_infos", "{}.pkl".format(bin_token))
+                bin_filename = osp.join(args.out_dir, "bin_infos_{}".format(str(args.min_bin_length)), "{}.pkl".format(bin_token))
                 mmengine.dump(bin_info, bin_filename)
                 all_the_bins['bins'].append(bin_token)
             
@@ -568,7 +556,7 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
         bin_info = generate_bin_info(args,bin_token,current_seq_name,annotations_list,
                                      0,len(annotations_list)-1,bin_center,dist_sum)
         bin_id += 1
-        bin_filename = osp.join(args.out_dir, "bin_infos", "{}.pkl".format(bin_token))
+        bin_filename = osp.join(args.out_dir, "bin_infos_{}".format(str(args.min_bin_length)), "{}.pkl".format(bin_token))
         mmengine.dump(bin_info, bin_filename)
 
         all_the_bins["bins"].append(bin_token)
@@ -576,13 +564,15 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
  
         
 def kitti360_data_prep(args):
-    
-    for filename_list in os.listdir(args.filelist_folder):
+    idx = 0
+    for filename_list in sorted(os.listdir(args.filelist_folder)):
         seq_name = os.path.basename(filename_list)[:-9]
-
-        current_annotations_fname = os.path.join(args.filelist_folder, filename_list)
-        create_kitti_infos(args=args,annotation_path=current_annotations_fname,current_seq_name=seq_name)
         
+        print("Processed Current Seq is {}, Finished {}/{}".format(seq_name,idx,len(os.listdir(args.filelist_folder))))
+        idx = idx +1
+        current_annotations_fname = os.path.join(args.filelist_folder, filename_list)
+        create_kitti_infos(args=args,annotation_path=current_annotations_fname,current_seq_name=seq_name)        
+
 
 
 if __name__=="__main__":
