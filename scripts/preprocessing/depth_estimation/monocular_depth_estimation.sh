@@ -22,5 +22,13 @@ CUDA_VISIBLE_DEVICES=1 python get_rel_depth.py --root_path $root_path \
 
 
 
+
+
+
+
+
+
+
+
 # Monodepth estimation using MonoDepthV2
 Monocular_Depth_Estimation_With_DepthAnythingV2
