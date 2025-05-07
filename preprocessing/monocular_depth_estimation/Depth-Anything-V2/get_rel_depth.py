@@ -129,25 +129,5 @@ if __name__ == '__main__':
         
     
     
-    # for cam_idx, cam_types in enumerate(os.listdir(args.inputdir)):
-    #     if "CAM" in cam_types:
-    #         output_cam_folder = os.path.join(args.outdir,cam_types)
-    #         os.makedirs(output_cam_folder,exist_ok=True)
-    #         print("Current Processed {}: {}/{}".format(cam_types,cam_idx,6))
-    #         for fname in tqdm(os.listdir(os.path.join(args.inputdir,cam_types))):
-    #             input_image_fname = os.path.join(args.inputdir,cam_types,fname)
-    #             assert os.path.exists(input_image_fname)
-
-    #             raw_img = cv2.imread(input_image_fname)
-                
-    #             with torch.no_grad():
-    #                 est_depth = model.infer_image(raw_img)
-                
-    #             saved_name = os.path.join(output_cam_folder,os.path.basename(input_image_fname))
-    #             saved_name = saved_name.replace(".jpg",".npy")
-    #             np.save(saved_name,est_depth)
-            
-    
-    # print("All Processed Done for the input {}".format(args.inputdir))
 
     

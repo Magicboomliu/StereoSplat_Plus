@@ -21,15 +21,18 @@ max_value = 200
 data_basic=dict(
     canonical_space = dict(
         # img_size=(540, 960),
-        focal_length=1000.0,
+        focal_length=552.554261,
     ),
     depth_range=(0, 1),
     depth_normalize=(0.1, max_value),
     # crop_size = (616, 1064),  # %28 = 0
-    crop_size = (900, 1600),
+    crop_size = (364, 1400), #374,1408
      clip_depth_range=(0.1, 200),
     vit_size=(616,1064)
 ) 
+
+
+
 
 batchsize_per_gpu = 1
 thread_per_gpu = 1
