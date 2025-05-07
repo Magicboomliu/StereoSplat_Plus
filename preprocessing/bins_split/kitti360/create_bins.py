@@ -565,7 +565,9 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
         
 def kitti360_data_prep(args):
     idx = 0
-    for filename_list in sorted(os.listdir(args.filelist_folder)):
+    all_sequence_names = sorted(os.listdir(args.filelist_folder))
+    all_sequence_names = all_sequence_names[4:]
+    for filename_list in all_sequence_names:
         seq_name = os.path.basename(filename_list)[:-9]
         
         print("Processed Current Seq is {}, Finished {}/{}".format(seq_name,idx,len(os.listdir(args.filelist_folder))))
