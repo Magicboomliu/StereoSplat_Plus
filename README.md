@@ -4,7 +4,8 @@ Feed-Forward 3D Gaussain Splatting
 
 ## Dependency  
 ```
- pip install -r requirements.txt
+conda create -n stereogs python=3.10.0 
+pip install -r requirements.txt
 ```
 install `diffusers` by-hand if encounter error. [Link](https://huggingface.co/docs/diffusers/training/text2image)  
 
