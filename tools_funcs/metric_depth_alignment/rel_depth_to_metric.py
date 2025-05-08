@@ -19,6 +19,12 @@ def load_the_depthanytingV2_results(path,scale=50):
     img = img/scale
     return img
 
+def load_the_Metric3DV2_results(path,scale=256):
+    # Read the image in unchanged mode (preserves uint16 format)
+    img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
+    img = img/scale
+    return img
+
 def loaded_projected_sparse_depth_and_valid_mask(path):
     depth = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)/256
 
@@ -173,11 +179,7 @@ def Med_Scaling_Depth(rel_depth,gt_sparse_depth,valid_mask):
 
 
 
-def load_the_Metric3DV2_results(path,scale=256):
-    # Read the image in unchanged mode (preserves uint16 format)
-    img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
-    img = img/scale
-    return img
+
 
 
 
