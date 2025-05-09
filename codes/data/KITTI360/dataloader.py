@@ -90,7 +90,13 @@ class KITTI360(Dataset):
 if __name__=="__main__":
     
     dataset_params = {
-        
-        
+        datapath:"/data1/StereoDatasets/KITTI/KITTI360/",
+        data_version:str,
+        resolution: list = [224, 400],
+        split: str = "train",
+        sequence:str ='2013_05_28_drive_0000_sync',
+        use_center: bool = True,
+        use_first: bool = False,
+        use_last: bool = False,
     }
     
