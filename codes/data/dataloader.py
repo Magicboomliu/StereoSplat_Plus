@@ -122,8 +122,7 @@ class nuScenesDataset(Dataset):
         split: str = "train",
         use_center: bool = True,
         use_first: bool = False,
-        use_last: bool = False,
-    ):
+        use_last: bool = False):
         
         super().__init__()
 
