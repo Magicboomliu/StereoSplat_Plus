@@ -96,4 +96,4 @@ if __name__=="__main__":
     train_list, val_list, all_list = split_bins_into_train_and_val(args)
     save_into_txt(train_list,os.path.join(args.output_folder,'train_{}.txt'.format(args.sequence_name)))
     save_into_txt(val_list,os.path.join(args.output_folder,'val_{}.txt'.format(args.sequence_name)))
-    save_into_txt(all_list,os.path.join(args.output_folder,'all_{}.txt'.format(args.sequence_name)))
+    save_into_txt(all_list,os.path.join(args.output_folder,'all_{}.txt'.format(args.sequence_name)))   
