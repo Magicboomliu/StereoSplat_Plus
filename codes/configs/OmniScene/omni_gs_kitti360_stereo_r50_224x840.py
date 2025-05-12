@@ -42,7 +42,7 @@ train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-
+data_version="bin_infos_8.0"
 
 dataset_params = dict(
     dataset_name="KITTI360Dataset",
@@ -52,6 +52,7 @@ dataset_params = dict(
     val_filelist=val_filelist,
     test_filelist=test_filelist,
     sequence=sequence,
+    data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
     use_center=use_center,
