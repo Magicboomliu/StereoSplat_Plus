@@ -54,8 +54,7 @@ def load_the_Metric3DV2_results(path,scale=256):
 
 def load_conditions(img_paths, reso):
     
-    target_reso = reso[0]
-    original_reso = reso[1]
+
     
 
     def maybe_resize(img, tgt_reso, ck):
@@ -95,7 +94,7 @@ def load_conditions(img_paths, reso):
             
         img = Image.open(img_path)
         h, w = img.height, img.width
-        img, ck, resize_flag = maybe_resize(img, target_reso, raw_ck)
+        img, ck, resize_flag = maybe_resize(img, reso, raw_ck)
         
         img = HWC3(img)
         imgs.append(img)
@@ -110,7 +109,7 @@ def load_conditions(img_paths, reso):
    
         if resize_flag:
             disp = Image.fromarray(disp)
-            disp = disp.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
+            disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
             disp = np.array(disp)
 
         
@@ -137,10 +136,10 @@ def load_conditions(img_paths, reso):
   
         if resize_flag:
             dptm = Image.fromarray(dptm)
-            dptm = dptm.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
+            dptm = dptm.resize((reso[1], reso[0]), Image.BILINEAR)
             dptm = np.array(dptm)
             conf = Image.fromarray(conf)
-            conf = conf.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
+            conf = conf.resize((reso[1], reso[0]), Image.BILINEAR)
             conf = np.array(conf)
         
         depths_m.append(dptm)

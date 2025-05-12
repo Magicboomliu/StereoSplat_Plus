@@ -22,8 +22,8 @@ from einops import rearrange, repeat, einsum
 cv2.setNumThreads(0) 
 cv2.ocl.setUseOpenCL(False)
 
-import sys
-sys.path.append("../..")
+# import sys
+# sys.path.append("../..")
 from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
@@ -73,8 +73,6 @@ class KITTI360Dataset(Dataset):
         ]
         
         self.reso = resolution
-        self.resize_reso = resolution[0]
-        self.original_reso = resolution[1]
         # using the center as the input
         self.use_center = use_center
         
@@ -169,7 +167,7 @@ class KITTI360Dataset(Dataset):
 
         # https://blog.csdn.net/OrdinaryMatthew/article/details/126670351
         for fx, fy, cx, cy in zip(input_fxs, input_fys, input_cxs, input_cys):
-            direction = get_ray_directions(self.reso[0][0], self.reso[0][1],
+            direction = get_ray_directions(self.reso[0], self.reso[1],
                                            focal=[fx, fy], principal=[cx, cy]) # openGL
             fovx = 2 * np.arctan(cx / fx)
             fovy = 2 * np.arctan(cy / fy)
@@ -251,7 +249,7 @@ class KITTI360Dataset(Dataset):
         for fx, fy, cx, cy in zip(output_fxs, output_fys, output_cxs, output_cys):
             fovx = 2 * np.arctan(cx / fx)
             fovy = 2 * np.arctan(cy / fy)
-            direction = get_ray_directions(self.reso[0][0], self.reso[0][1],
+            direction = get_ray_directions(self.reso[0], self.reso[1],
                                            focal=[fx, fy], principal=[cx, cy])
             output_directions.append(direction)
         output_directions = torch.stack(output_directions)
@@ -300,7 +298,7 @@ if __name__=="__main__":
         "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
         "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
         "data_version":"bin_infos_8.0",
-        "resolution":[[224, 840],[376,1408]], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
+        "resolution":[224, 840], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",
         "sequence":'2013_05_28_drive_0000_sync',
         "use_center":True,
