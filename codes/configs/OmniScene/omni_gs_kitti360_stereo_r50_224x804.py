@@ -3,15 +3,18 @@ _base_ = [
     './_base_/schedule.py',
 ]
 
-exp_name = "omni_gs_nusc_novelview_r50_112x200"
-output_dir = "workdirs"
+# exp name
+# output directionary
+exp_name = "omni_gs_kitti360_stereo_r50_224x804"
+output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
 
+# learning rate setiing
 lr = 1e-4
 grad_max_norm = 1.0
-print_freq = 100
-save_freq = 2000
-val_freq = 500
-max_epochs = 30
+print_freq = 5
+save_freq = 3000
+val_freq = 1000
+max_epochs = 300
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
@@ -22,21 +25,39 @@ gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
 
+# using the volume 
 volume_only = False
 use_checkpoint = True
 seed = 0
+
+# only using the center for training
 use_center, use_first, use_last = True, False, False
-resolution = [112, 200]
-point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
+resolution = [[224, 840]]
+
+# LiDAR Range id different
+point_cloud_range = [-80.0, -80.0, -3.0, 80.0, 80.0, 12.0]
+
+datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+sequence='2013_05_28_drive_0000_sync'
+
+
 dataset_params = dict(
-    dataset_name="nuScenesDataset",
+    dataset_name="KITTI360Dataset",
     seed=seed,
+    datapath=datapath,
+    train_filelist=train_filelist,
+    val_filelist=val_filelist,
+    test_filelist=test_filelist,
+    sequence=sequence,
     resolution=resolution,
     pc_range=point_cloud_range,
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
-    batch_size_train=2,
+    batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
@@ -44,9 +65,14 @@ dataset_params = dict(
     num_workers_test=4
 )
 
-num_cams = 6
+num_cams = 2
 near = 0.1
 far = 1000.0
+
+# define the 3D Space including the 
+# image resolution
+# Z-Near Planar
+# Z-Far Planar
 camera_args = dict(
     resolution=resolution,
     znear=near,
@@ -58,13 +84,14 @@ eval_args = dict(
     save_ply=False
 )
 
+# loss functions
 loss_args = dict(
-    recon_loss_type="l2",
-    recon_loss_vol_type="l2_mask",
-    perceptual_loss_vol_type="mask",
-    depth_abs_loss_vol_type="mask",
-    mask_dptm=True,
-    perceptual_resolution=[resolution[0], resolution[1]],
+    recon_loss_type="l2", # reconstrunction loss
+    recon_loss_vol_type="l2_mask", # masked reconstruction loss for volume gaussains
+    perceptual_loss_vol_type="mask", # prcepstion loss? SSIM Loss using masked
+    depth_abs_loss_vol_type="mask", # depth abstract loss
+    mask_dptm=True,                 # whether using the mask dptm(metric3d-v2 as examples)
+    perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
     weight_recon=1.0,
     weight_perceptual=0.05,
     weight_depth_abs=0.01,
@@ -73,7 +100,8 @@ loss_args = dict(
     weight_depth_abs_vol=0.01,
 )
 
-pc_range = point_cloud_range
+pc_range = point_cloud_range # [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
+# x range, y_range and z_range in the LiDAR coordiante
 pc_xrange, pc_yrange, pc_zrange = pc_range[3] - pc_range[0], pc_range[4] - pc_range[1], pc_range[5] - pc_range[2]
 
 _dim_ = 128
@@ -82,6 +110,7 @@ num_layers = 1
 patch_sizes=[8, 8, 4, 2]
 _ffn_dim_ = _dim_ * 2
 
+# unit is a little bigger than the x_range,y_range and the z_range
 tpv_h_ = 192
 tpv_w_ = 192
 tpv_z_ = 16
@@ -90,12 +119,15 @@ scale_w = 1
 scale_z = 1
 gpv = 3
 
+# for filering
 num_points_in_pillar = [8, 16, 16]
 num_points = [16, 32, 32]
+
 hybrid_attn_anchors = 16
 hybrid_attn_points = 32
 hybrid_attn_init = 0
 
+# cross layer
 self_cross_layer = dict(
     type='TPVFormerLayer',
     attn_cfgs=[
@@ -154,6 +186,8 @@ self_layer = dict(
     ffn_dropout=0.1,
     operation_order=('self_attn', 'norm', 'ffn', 'norm'))
 
+
+# model definition
 model = dict(
     type='OmniGaussian',
     use_checkpoint=use_checkpoint,
@@ -173,6 +207,7 @@ model = dict(
             type='Pretrained',
             checkpoint='pretrained/dino_resnet50_pretrain.pth',
             prefix=None)),
+    
     neck=dict(
         type='mmdet.FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -180,6 +215,7 @@ model = dict(
         start_level=0,
         add_extra_convs='on_input',
         num_outs=4),
+    
     pixel_gs=dict(
         type="PixelGaussian",
         use_checkpoint=use_checkpoint,
@@ -190,6 +226,7 @@ model = dict(
             resnet_groups=32,
             num_attention_heads=num_heads,
             num_views=num_cams),
+        
         up_block=dict(
             type='MVUpsample2D',
             num_layers=num_layers,
@@ -210,6 +247,8 @@ model = dict(
         num_cams=num_cams,
         near=near,
         far=far),
+    
+    
     volume_gs=dict(
         type="VolumeGaussian",
         use_checkpoint=use_checkpoint,
