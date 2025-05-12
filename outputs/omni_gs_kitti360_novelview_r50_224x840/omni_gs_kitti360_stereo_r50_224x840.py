@@ -202,6 +202,7 @@ model = dict(
     volume_gs=dict(
         encoder=dict(
             embed_dims=128,
+            num_cams=2,
             num_feature_levels=1,
             num_layers=3,
             num_points_in_pillar=[
@@ -272,7 +273,7 @@ model = dict(
                                 type='TPVMSDeformableAttention3D'),
                             dropout=0.1,
                             embed_dims=128,
-                            num_cams=6,
+                            num_cams=2,
                             pc_range=[
                                 -80.0,
                                 -80.0,
@@ -332,7 +333,7 @@ model = dict(
                                 type='TPVMSDeformableAttention3D'),
                             dropout=0.1,
                             embed_dims=128,
-                            num_cams=6,
+                            num_cams=2,
                             pc_range=[
                                 -80.0,
                                 -80.0,
@@ -462,7 +463,7 @@ point_cloud_range = [
     80.0,
     12.0,
 ]
-print_freq = 5
+print_freq = 1
 report_to = 'tensorboard'
 resolution = [
     224,
@@ -510,7 +511,7 @@ self_cross_layer = dict(
                 type='TPVMSDeformableAttention3D'),
             dropout=0.1,
             embed_dims=128,
-            num_cams=6,
+            num_cams=2,
             pc_range=[
                 -80.0,
                 -80.0,

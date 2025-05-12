@@ -153,15 +153,149 @@ def main(args):
         
     }
     
- 
-
+    # Define the dataloader
     train_dataset = dataset(**train_params)
-    
     val_dataset = dataset(**val_params)
-    
-    print(len(train_dataset))
-    print(len(val_dataset))
 
+    train_dataloader = DataLoader(
+        train_dataset, dataset_config.batch_size_train, shuffle=True,
+        num_workers=dataset_config.num_workers
+    )
+    val_dataloader = DataLoader(
+        val_dataset, dataset_config.batch_size_val, shuffle=False,
+        num_workers=dataset_config.num_workers_val
+    )
+    
+    # move to the accelerate
+    my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
+        my_model, optimizer, train_dataloader, val_dataloader, scheduler
+    )
+
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
+
+    # resume and load
+    epoch = 0
+    global_iter = 0
+    first_epoch = 0
+
+    # resume and load
+    epoch = 0
+    global_iter = 0
+    first_epoch = 0
+
+    # Potentially load in the weights and states from a previous save
+    if args.resume_from:
+        cfg.resume_from = args.resume_from
+    if cfg.resume_from:
+        if cfg.resume_from == "None":
+            path = None
+        elif cfg.resume_from != "latest":
+            path = os.path.basename(cfg.resume_from)
+        else:
+            # Get the most recent checkpoint
+            dirs = os.listdir(cfg.work_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            if len(dirs) > 0:
+                dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+                path = dirs[-1]
+            else:
+                path = None
+
+    if path:
+        accelerator.print(f"Resuming from checkpoint {path}")
+        accelerator.load_state(osp.join(cfg.work_dir, path), map_location='cpu', strict=False)
+        global_iter = int(path.split("-")[1])
+        first_epoch = global_iter // num_update_steps_per_epoch
+        resume_step = global_iter % num_update_steps_per_epoch
+        if accelerator.is_main_process:
+            print(f'successfully resumed from epoch{first_epoch}-iter{global_iter}')
+    else:
+        resume_step = -1
+    
+    if accelerator.is_main_process:
+        print('work dir: ', args.work_dir)
+    
+    # training
+    print_freq = cfg.print_freq
+    
+    
+    
+    while epoch < max_num_epochs:
+        my_model.train()
+        data_time_s = time.time()
+        time_s = time.time()
+        for i_iter, batch in enumerate(train_dataloader):
+            # forward + backward + optimize
+            data_time_e = time.time()
+            with accelerator.accumulate(my_model):
+                optimizer.zero_grad()
+                loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+
+                accelerator.backward(loss)
+
+                if accelerator.sync_gradients:
+                    grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+                optimizer.step()
+                scheduler.step()
+
+
+            # Checks if the accelerator has performed an optimization step behind the scenes
+            accelerator.wait_for_everyone()
+            if accelerator.sync_gradients and accelerator.is_main_process:
+                if global_iter % cfg.save_freq == 0:
+                    if accelerator.is_main_process:
+                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
+                        accelerator.save_state(save_file_name)
+                        dst_file = osp.join(args.work_dir, 'latest')
+                        mmengine.utils.symlink(save_file_name, dst_file)
+                        if logger is not None:
+                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+                
+                if global_iter % cfg.val_freq == 0:
+                    my_model.eval()
+                    if accelerator.is_main_process:
+                        for i_iter_val, batch_val in enumerate(val_dataloader):
+                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                            val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                                                "step-{}/batch-{}".format(global_iter, i_iter_val))
+                            log_val = my_model.validation_step(batch_val, val_batch_save_dir)
+                            log.update(log_val)
+                    my_model.train()
+            
+            time_e = time.time()
+
+            # print loss log regularly
+            if global_iter % print_freq == 0 and accelerator.is_main_process:
+                lr = optimizer.param_groups[0]['lr']
+                losses_str = ""
+                for loss_k, loss_v in log.items():
+                    losses_str += ("%s: %.3f, " % (loss_k, loss_v))
+                if logger is not None:
+                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
+                        epoch, i_iter, len(train_dataloader), 
+                        loss.item(), losses_str, grad_norm, lr,
+                        time_e - time_s, data_time_e - data_time_s
+                    ))
+
+            global_iter += 1
+
+            # dump loss log to tensorboard
+            accelerator.log(log, step=global_iter)
+
+            data_time_s = time.time()
+            time_s = time.time()
+
+        epoch += 1
+
+    # Create the pipeline using the trained modules and save it.
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
+    
+    
+    
+    
+    
 if __name__ == '__main__':
     # Training settings
     parser = argparse.ArgumentParser(description='')

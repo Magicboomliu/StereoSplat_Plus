@@ -11,7 +11,7 @@ output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
 # learning rate setiing
 lr = 1e-4
 grad_max_norm = 1.0
-print_freq = 5
+print_freq = 1
 save_freq = 3000
 val_freq = 1000
 max_epochs = 300
@@ -146,7 +146,7 @@ self_cross_layer = dict(
         dict(
             type='TPVImageCrossAttention',
             pc_range=point_cloud_range,
-            num_cams=6,
+            num_cams=2,
             dropout=0.1,
             deformable_attention=dict(
                 type='TPVMSDeformableAttention3D',
@@ -261,6 +261,7 @@ model = dict(
             num_feature_levels=1,
             num_layers=3,
             pc_range=point_cloud_range,
+            num_cams=num_cams,
             num_points_in_pillar=num_points_in_pillar,
             num_points_in_pillar_cross_view=[16, 16, 16],
             return_intermediate=False,
