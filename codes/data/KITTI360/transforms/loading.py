@@ -44,6 +44,12 @@ def load_the_depthanytingV2_results(path,scale=50):
     img = img/scale
     return img
 
+def load_the_Metric3DV2_results(path,scale=256):
+    # Read the image in unchanged mode (preserves uint16 format)
+    img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
+    img = img/scale
+    return img
+
 
 
 def load_conditions(img_paths, reso):
@@ -71,7 +77,7 @@ def load_conditions(img_paths, reso):
     depths_m = [] # depths with metric
     confs_m = []  # confidence
     
-    
+
     for img_path in img_paths:      
         if "image_00/data_rect" in img_path:
             # left image
@@ -95,18 +101,18 @@ def load_conditions(img_paths, reso):
         imgs.append(img)
         cks.append(ck)
         
-        
         # relative depth from DepthAnything-v2
         # /data1/StereoDatasets/KITTI/KITTI360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/data_rect/0000000256.png
         # /data1/StereoDatasets/KITTI/KITTI360/monocular_depth/monodepthV2/data_2d_raw/2013_05_28_drive_0000_sync/
         depth_path = img_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw")
         assert os.path.exists(depth_path)
-        
         disp = load_the_depthanytingV2_results(depth_path)
+   
         if resize_flag:
             disp = Image.fromarray(disp)
-            disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
+            disp = disp.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
             disp = np.array(disp)
+
         
         # inverse disparity to relative depth
         # clamping the farthest depth to 50x of the nearest
@@ -119,21 +125,24 @@ def load_conditions(img_paths, reso):
         
         
         # metric depth from Metric3D-v2
-        depthm_path = img_path.replace("sweeps_small", "sweeps_dptm_small")
-        depthm_path = depthm_path.replace("samples_small", "samples_dptm_small")
-        depthm_path = depthm_path.replace(".jpg", "_dpt.npy")
-        conf_path = depthm_path.replace("_dpt.npy", "_conf.npy")
-        dptm = np.load(depthm_path).astype(np.float32)
-        conf = np.load(conf_path).astype(np.float32)
+        depthm_path = img_path.replace("data_2d_raw", "monocular_depth/Metric3DV2/data_2d_raw")
+        depthm_path = depthm_path.replace(".png", "_dpt.png")
+        conf_path = depthm_path.replace("_dpt.npy", "_conf.png")
+        assert os.path.exists(depthm_path)
+        assert os.path.exists(conf_path)
+        
+        dptm = load_the_Metric3DV2_results(depthm_path)
+        conf = load_the_Metric3DV2_results(conf_path)
         
   
         if resize_flag:
             dptm = Image.fromarray(dptm)
-            dptm = dptm.resize((reso[1], reso[0]), Image.BILINEAR)
+            dptm = dptm.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
             dptm = np.array(dptm)
             conf = Image.fromarray(conf)
-            conf = conf.resize((reso[1], reso[0]), Image.BILINEAR)
+            conf = conf.resize((reso[0][1], reso[0][0]), Image.BILINEAR)
             conf = np.array(conf)
+        
         depths_m.append(dptm)
         confs_m.append(conf)
 
@@ -144,6 +153,8 @@ def load_conditions(img_paths, reso):
     cks = torch.as_tensor(cks, dtype=torch.float32)
 
     return imgs, depths, depths_m, confs_m, cks
+
+
 
 def load_lidar_info(info):
     pcd_path = info["data_path"]
