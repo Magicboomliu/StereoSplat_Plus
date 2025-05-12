@@ -1,3 +1,4 @@
+2025-05-12 20:57:41,895   INFO  Config:
 _dim_ = 128
 _ffn_dim_ = 256
 camera_args = dict(
@@ -573,3 +574,5 @@ val_freq = 1000
 volume_only = False
 warmup_steps = 1000
 work_dir = '/home/zliu/Project2025/FeedStereoGS/outputs/omni_gs_kitti360_novelview_r50_224x840'
+
+2025-05-12 20:57:43,403   INFO  Number of params: 81658196

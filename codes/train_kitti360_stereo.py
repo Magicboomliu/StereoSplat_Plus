@@ -124,32 +124,43 @@ def main(args):
     
     
     train_params = {
-        "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
-        "train_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt",
-        "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "data_version":"bin_infos_8.0",
-        "resolution":[224, 840], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
+        "datapath":dataset_config.datapath,
+        "train_filelist":dataset_config.train_filelist,
+        "val_filelist":dataset_config.val_filelist,
+        "test_filelist":dataset_config.val_filelist,
+        "data_version":dataset_config.data_version,
+        "resolution":dataset_config.resolution, 
         "split":"train",
-        "sequence":'2013_05_28_drive_0000_sync',
-        "use_center":True,
-        "use_first": False,
-        "use_last": False,
+        "sequence":dataset_config.sequence,
+        "use_center":dataset_config.use_center,
+        "use_first": dataset_config.use_first,
+        "use_last": dataset_config.use_last,
+        
+    }
+
+    val_params = {
+        "datapath":dataset_config.datapath,
+        "train_filelist":dataset_config.train_filelist,
+        "val_filelist":dataset_config.val_filelist,
+        "test_filelist":dataset_config.val_filelist,
+        "data_version":dataset_config.data_version,
+        "resolution":dataset_config.resolution, 
+        "split":"val",
+        "sequence":dataset_config.sequence,
+        "use_center":dataset_config.use_center,
+        "use_first": dataset_config.use_first,
+        "use_last": dataset_config.use_last,
         
     }
     
-    print(train_params)
-    quit()
+ 
 
-    train_dataset = dataset(dataset_config.resolution, split="train",
-                            use_center=dataset_config.use_center,
-                            use_first=dataset_config.use_first,
-                            use_last=dataset_config.use_last)
+    train_dataset = dataset(**train_params)
     
-    val_dataset = dataset(dataset_config.resolution, split="val",
-                          use_center=dataset_config.use_center,
-                          use_first=dataset_config.use_first,
-                          use_last=dataset_config.use_last)
+    val_dataset = dataset(**val_params)
+    
+    print(len(train_dataset))
+    print(len(val_dataset))
 
 if __name__ == '__main__':
     # Training settings
