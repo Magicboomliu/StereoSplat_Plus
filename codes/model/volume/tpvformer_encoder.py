@@ -327,6 +327,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
             bs, num_cam, c, h, w = feat.shape
             spatial_shape = (h, w)
             feat = feat.flatten(3).permute(1, 0, 3, 2)  # num_cam, bs, hw, c
+            
             feat = feat + self.cams_embeds[:, None, None, :].to(dtype)
             feat = feat + self.level_embeds[None, None,
                                             lvl:lvl + 1, :].to(dtype)
