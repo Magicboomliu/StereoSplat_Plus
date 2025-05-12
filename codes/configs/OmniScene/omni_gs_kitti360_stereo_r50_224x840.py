@@ -32,7 +32,7 @@ seed = 0
 
 # only using the center for training
 use_center, use_first, use_last = True, False, False
-resolution = [[224, 840]]
+resolution = [224, 840]
 
 # LiDAR Range id different
 point_cloud_range = [-80.0, -80.0, -3.0, 80.0, 80.0, 12.0]
