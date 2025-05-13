@@ -235,10 +235,16 @@ def main(args):
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
-                loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                
+                try:
+                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
-                with torch.autograd.detect_anomaly():
-                    accelerator.backward(loss)
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
+                except:
+                    torch.cuda.empty_cache()
+                    print(batch['bin_token'])
+                    continue  # 或 return / break
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)

@@ -9,12 +9,12 @@ exp_name = "omni_gs_kitti360_stereo_r50_224x804"
 output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
 
 # learning rate setiing
-lr = 1e-4
+lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 5000
 val_freq = 2000
-max_epochs = 100
+max_epochs = 50
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
