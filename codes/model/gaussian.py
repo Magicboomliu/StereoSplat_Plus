@@ -186,6 +186,35 @@ class GaussianRenderer:
         device = gaussians.device
         B, V = c2w.shape[:2]
 
+        # ---------------- sanitize fovx/fovy ---------------- #
+        def safe_fov(tensor):
+            tensor = torch.nan_to_num(tensor, nan=0.5, posinf=0.5, neginf=0.5)  # default 0.5 rad ≈ 57 deg
+            return tensor.clamp(min=1e-3, max=math.pi - 1e-3)
+        if fovx is None and fovy is None:
+            raise ValueError("At least one of fovx or fovy must be provided.")
+        if fovx is None:
+            fovx = safe_fov(fovy.clone())
+        if fovy is None:
+            fovy = safe_fov(fovx.clone())
+        fovx = safe_fov(fovx)
+        fovy = safe_fov(fovy)
+
+        # ---------------- sanitize c2w ---------------- #
+        c2w = torch.nan_to_num(c2w, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # ---------------- sanitize bg_color ---------------- #
+        if bg_color is not None:
+            bg_color = torch.nan_to_num(bg_color, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+        else:
+            bg_color = self.bg_color  # use default (usually [0, 0, 0])
+
+        # ---------------- sanitize rays ---------------- #
+        if rays_o is not None:
+            rays_o = torch.nan_to_num(rays_o, nan=0.0, posinf=0.0, neginf=0.0)
+        if rays_d is not None:
+            rays_d = torch.nan_to_num(rays_d, nan=0.0, posinf=0.0, neginf=0.0)
+
+
         # loop of loop...
         # 为了最后收集每个 batch、每个相机的渲染结果
         images = []
@@ -200,6 +229,17 @@ class GaussianRenderer:
             opacity = gaussians[b, :, 6:7].contiguous().float() #
             rotations = gaussians[b, :, 7:11].contiguous().float() #旋转四元数
             scales = gaussians[b, :, 11:].contiguous().float() # 尺度
+
+            means3D = torch.nan_to_num(means3D, nan=0.0, posinf=1.0, neginf=0.0)
+            rgbs = torch.nan_to_num(rgbs, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+            opacity = torch.nan_to_num(opacity, nan=0.0, posinf=10.0, neginf=-10.0).clamp(-10.0, 10.0)
+            rotations = torch.nan_to_num(rotations, nan=0.0, posinf=0.0, neginf=0.0)
+            norm = torch.norm(rotations, dim=-1, keepdim=True).clamp(min=1e-6)
+            rotations = rotations / norm
+            scales = torch.nan_to_num(scales, nan=1.0, posinf=1.0, neginf=1.0).clamp(min=1e-4, max=10.0)
+                
+
+            
             
             # means2D 预留一个空的屏幕2D位置（后面rasterizer会用到
             means2D = torch.zeros_like(means3D, dtype=means3D.dtype, device=device) #(N,3)
