@@ -16,6 +16,8 @@ from .utils.typing import *
 
 C0 = 0.28209479177387814
 
+def has_nan_or_inf(tensor):
+    return torch.isnan(tensor).any() or torch.isinf(tensor).any()
 
 def RGB2SH(rgb):
     return (rgb - 0.5) / C0
@@ -256,6 +258,7 @@ class GaussianRenderer:
                 else:
                     raise NotImplementedError
 
+                # assert not has_nan_or_inf(rendered_image),"Rendered Images Contains NAN or INF.............."
                 rendered_image = torch.clamp(rendered_image, min=0.0, max=1.0)
                 images.append(rendered_image)
                 alphas.append(rendered_alpha)

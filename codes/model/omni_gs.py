@@ -25,6 +25,53 @@ from torchmetrics import PearsonCorrCoef
 from .utils.interpolation import interpolate_extrinsics
 
 
+
+def sanitize_gaussians_tensor(gaussians: torch.Tensor):
+    if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
+        print("[Sanitize] Invalid values found → fixing...")
+
+    gaussians = gaussians.clone()  # 避免 in-place 修改原图计算图
+
+    # 0:3 mean3D
+    mean3D = torch.nan_to_num(gaussians[..., 0:3], nan=0.0, posinf=0.0, neginf=0.0)
+
+    # 3:6 RGB
+    rgb = torch.nan_to_num(gaussians[..., 3:6], nan=0.0, posinf=0.0, neginf=0.0)
+    # rgb = torch.clamp(rgb, 0.0, 1.0)
+
+    # 6:7 opacity
+    opacity = torch.nan_to_num(gaussians[..., 6:7], nan=0.0, posinf=10.0, neginf=-10.0)
+    opacity = torch.clamp(opacity, -10.0, 10.0)
+
+    # 7:11 rotation
+    rotation = gaussians[..., 7:11]
+    norm = torch.norm(rotation, dim=-1, keepdim=True)
+    bad_mask = (
+        (norm < 1e-6)
+        | torch.isnan(rotation).any(dim=-1, keepdim=True)
+        | torch.isinf(rotation).any(dim=-1, keepdim=True)
+    )
+    # 清理数值 + 归一化
+    norm = torch.clamp(norm, min=1e-6)
+    rotation = torch.nan_to_num(rotation, nan=0.0, posinf=0.0, neginf=0.0)
+    rotation = rotation / norm
+    # fallback 仅对异常数据赋值
+    if bad_mask.any():
+        fallback_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=rotation.device)
+        fallback_expand = fallback_quat.expand(bad_mask.sum(), 4)
+        rotation[bad_mask.expand_as(rotation)] = fallback_expand
+
+
+    # 11:14 scale
+    scale = torch.nan_to_num(gaussians[..., 11:14], nan=1.0, posinf=1.0, neginf=1.0)
+    scale = torch.clamp(scale, min=1e-6)
+
+    # Concatenate all cleaned parts
+    cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
+    return cleaned
+
+
+
 @MODELS.register_module()
 class OmniGaussian(BaseModule):
 
@@ -209,9 +256,14 @@ class OmniGaussian(BaseModule):
                 gaussians_feat_mask,
                 data_dict["img_metas"])
         
+        # Make Sure the estimate gaussains are valid
+        gaussians_pixel = sanitize_gaussians_tensor(gaussians_pixel)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
         gaussians_all = torch.cat([gaussians_pixel, gaussians_volume], dim=1)
         
         bs = gaussians_all.shape[0] # batch size is 2
+        
 
         '''
         data dicts: 

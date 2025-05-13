@@ -302,9 +302,15 @@ def get_full_projection_matrix(
     return (c2w.unsqueeze(0).bmm(proj_mtx.unsqueeze(0))).squeeze(0)
 
 
+def has_nan_or_inf(tensor):
+    return torch.isnan(tensor).any() or torch.isinf(tensor).any()
+
 # gaussian splatting functions
 def convert_pose(C2W):
+    assert not has_nan_or_inf(C2W), "C2W Contains Nan of Inf..............................."
+
     flip_yz = torch.eye(4, device=C2W.device)
+    
     flip_yz[1, 1] = -1
     flip_yz[2, 2] = -1
     C2W = torch.matmul(C2W, flip_yz)

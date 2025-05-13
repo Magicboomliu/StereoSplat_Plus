@@ -23,6 +23,8 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 import warnings
 warnings.filterwarnings("ignore")
 
+torch.autograd.set_detect_anomaly(True)
+
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -232,9 +234,11 @@ def main(args):
             data_time_e = time.time()
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
+                
                 loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
-                accelerator.backward(loss)
+                with torch.autograd.detect_anomaly():
+                    accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
