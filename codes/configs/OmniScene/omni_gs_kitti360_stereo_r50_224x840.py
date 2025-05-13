@@ -35,7 +35,7 @@ use_center, use_first, use_last = True, False, False
 resolution = [224, 840]
 
 # LiDAR Range id different
-point_cloud_range = [-80.0, -80.0, -3.0, 80.0, 80.0, 12.0]
+point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
@@ -58,7 +58,7 @@ dataset_params = dict(
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
-    batch_size_train=2,
+    batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
