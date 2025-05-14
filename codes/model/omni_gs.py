@@ -295,8 +295,6 @@ class OmniGaussian(BaseModule):
         # print(render_pkg_fuse['alpha'].shape)       #[2,18,1,H,W]
         # print(render_pkg_fuse.keys())    # dict_keys(['image', 'alpha', 'depth'])
 
-        
-        
         if split == "train" or split == "val":
             render_pkg_pixel = self.renderer.render(
                 gaussians=gaussians_pixel,
@@ -416,7 +414,6 @@ class OmniGaussian(BaseModule):
             loss = loss + (p_loss_vol * self.loss_args.weight_perceptual_vol)
             set_loss("perceptual_vol", split, p_loss_vol, self.loss_args.weight_perceptual_vol)
 
-        
         # ==================== Depth loss ===================== #
         ### Depth loss for omni-gs. For regularization use.
         if self.loss_args.weight_depth_abs > 0:
@@ -515,8 +512,6 @@ class OmniGaussian(BaseModule):
         return preds, gts, data_dict["bin_token"]
     
     def forward_demo(self, batch):
-        
-        
         data_dict = self.get_data(batch)
         img = data_dict["imgs"] #(4,6,3,H,W)        
         bs = img.shape[0] # batch size is 4
@@ -560,7 +555,6 @@ class OmniGaussian(BaseModule):
         # quit()
         
         gaussians_all = torch.cat([gaussians_pixel, gaussians_volume], dim=1) # cancate them together for final rendering
-
         bs = gaussians_all.shape[0]     # batch size
         
 
@@ -648,12 +642,10 @@ class OmniGaussian(BaseModule):
         output_imgs = render_pkg_fuse["image"] # b v 3 h w  #torch.Size([4, 960, 3, 224, 400]) 
         output_depths = render_pkg_fuse["depth"].squeeze(2) # b v h w    --->  Metric Depths
         
-
         preds = {"img": output_imgs, "depth": output_depths}
 
         return preds, data_dict["bin_token"]
 
-    
     def forward_demo_kitti360(self,batch):
         data_dict = self.get_data(batch)
         img = data_dict["imgs"] #(1,2,3,H,W)        
@@ -740,7 +732,6 @@ class OmniGaussian(BaseModule):
         c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
 
         
-
         num_frames_short = 60
         num_frames_long = 60
         num_frames_all = 60 * 13
@@ -796,8 +787,6 @@ class OmniGaussian(BaseModule):
         
         
         return preds, data_dict["bin_token"]
-
-
 
     def save_val_results(self, batch_gt, render_pkg_fuse, render_pkg_pixel, render_pkg_volume,
                          gaussians_all, gaussians_pixel, gaussians_volume, save_dir):
@@ -865,7 +854,7 @@ class OmniGaussian(BaseModule):
                 save_vis("volume", i, save_dir, n_rand_view, render_pkg_volume, 
                                 None, rgbs_gt, depths_m_gt, 
                                 mask_dptm, self.renderer)
-
+    
     # validations with bins tokens
     def validation_step_with_bin_tokens(self, batch, 
                                         val_result_savedir,
@@ -887,7 +876,6 @@ class OmniGaussian(BaseModule):
                                 output_the_predicted_images
                                 )
         return loss_term_val, (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgb_gt,metric_v2_depth_batch 
-
 
     def save_val_results_with_bin_token_names(self, batch_gt, render_pkg_fuse, render_pkg_pixel, render_pkg_volume,
                          gaussians_all, 
