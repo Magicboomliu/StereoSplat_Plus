@@ -12,7 +12,7 @@ output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 5000
+save_freq = 3000
 val_freq = 2000
 max_epochs = 50
 save_epoch_freq = -1
@@ -39,6 +39,7 @@ point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
+#train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/small_train.txt"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
