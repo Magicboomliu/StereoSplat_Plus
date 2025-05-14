@@ -652,6 +652,9 @@ class OmniGaussian(BaseModule):
 
         return preds, data_dict["bin_token"]
 
+
+
+
     def save_val_results(self, batch_gt, render_pkg_fuse, render_pkg_pixel, render_pkg_volume,
                          gaussians_all, gaussians_pixel, gaussians_volume, save_dir):
         os.makedirs(save_dir, exist_ok=True)
@@ -741,6 +744,7 @@ class OmniGaussian(BaseModule):
                                 )
         return loss_term_val, (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgb_gt,metric_v2_depth_batch 
 
+
     def save_val_results_with_bin_token_names(self, batch_gt, render_pkg_fuse, render_pkg_pixel, render_pkg_volume,
                          gaussians_all, 
                          gaussians_pixel, 
@@ -788,9 +792,6 @@ class OmniGaussian(BaseModule):
         
         metric_v2_depth_batch = batch_gt["output_imgs"]
         
-        
-
-
 
         def save_vis(sample_save_dir, i,n_rand_view, render_pkg, gaussians, rgbs_gt, depths_m_gt, mask_dptm, renderer,
                      bin_token_name,
@@ -828,8 +829,7 @@ class OmniGaussian(BaseModule):
                                                 gaussians[i:i+1, :, 3:6]], dim=-1)
                 renderer.save_ply(gaussians_reformat, gs_save_path)
         
-        
-        
+    
         # visualizations
         if output_the_predicted_images:
             

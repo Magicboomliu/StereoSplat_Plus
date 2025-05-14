@@ -206,7 +206,7 @@ model = dict(
         style='pytorch',
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='pretrained/dino_resnet50_pretrain.pth',
+            checkpoint='/home/zliu/Desktop/Project2025/FeedStereoGS/codes/pretrained/dino_resnet50_pretrain.pth',
             prefix=None)),
     
     neck=dict(
