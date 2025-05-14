@@ -244,6 +244,7 @@ def main(args):
                 except:
                     torch.cuda.empty_cache()
                     print(batch['bin_token'])
+                    print("Here is Error Encounter......")
                     continue  # 或 return / break
 
                 if accelerator.sync_gradients:
