@@ -24,6 +24,7 @@ from .utils.benchmarker import Benchmarker
 from torchmetrics import PearsonCorrCoef
 from .utils.interpolation import interpolate_extrinsics
 
+import math
 
 
 def sanitize_gaussians_tensor(gaussians: torch.Tensor):
@@ -652,6 +653,149 @@ class OmniGaussian(BaseModule):
 
         return preds, data_dict["bin_token"]
 
+    
+    def forward_demo_kitti360(self,batch):
+        data_dict = self.get_data(batch)
+        img = data_dict["imgs"] #(1,2,3,H,W)        
+        bs = img.shape[0] # batch size is 4
+        
+        img_feats = self.extract_img_feat(img=img, status="test")
+
+        # pixel-gs prediction
+        gaussians_pixel, gaussians_feat = self.pixel_gs(
+                rearrange(img_feats[0], "b v c h w -> (b v) c h w"),
+                data_dict["depths"], data_dict["confs"], data_dict["pluckers"],
+                data_dict["rays_o"], data_dict["rays_d"])
+        
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        gaussians_pixel_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_pixel[b, :, 0] >= x_start) & (gaussians_pixel[b, :, 0] <= x_end) & \
+                        (gaussians_pixel[b, :, 1] >= y_start) & (gaussians_pixel[b, :, 1] <= y_end) & \
+                        (gaussians_pixel[b, :, 2] >= z_start) & (gaussians_pixel[b, :, 2] <= z_end)
+            gaussians_pixel_mask_i = gaussians_pixel[b][mask_pixel_i]
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_pixel_mask.append(gaussians_pixel_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                gaussians_pixel_mask,
+                gaussians_feat_mask,
+                data_dict["img_metas"])
+        
+        gaussians_pixel = sanitize_gaussians_tensor(gaussians_pixel)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        gaussians_all = torch.cat([gaussians_pixel, gaussians_volume], dim=1) #(1,N,14)
+
+        bs = gaussians_all.shape[0]     
+        
+        # left ---- left forward 3------left------left backward 3---------rotation 45 ------rotation back 
+        # ----right-----right forwad 3 ------right-------right back----rotation 45 ----- rotation back
+        
+        # https://www.cvlibs.net/datasets/kitti-360/documentation.php
+
+        # left ---- left forward 3m --------
+        c2w_cf_left = data_dict["output_c2ws"][:, -2] #(1,2,4,4)
+        c2w_cf_left_forward = c2w_cf_left.clone()
+        c2w_cf_left_forward[..., 0, 3] = c2w_cf_left_forward[..., 0, 3] + 3
+        
+        # left backward 3---------rotation 45 ------rotation back 
+        theta = -math.pi / 4  # 
+        rot_0 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
+
+        c2w_cf_left_rot2_right = c2w_cf_left.clone()
+        c2w_cf_left_rot2_right[...,:3,:3] = rot_0@c2w_cf_left_rot2_right[...,:3,:3]
+
+        # right-----right forwad 3 ------right
+        c2w_cf_left_backward = c2w_cf_left.clone()
+        c2w_cf_left_backward[..., 0, 3] = c2w_cf_left_backward[..., 0, 3] - 3
+        
+        
+        # right ---- right forward 3m : 
+        c2w_cf_right = data_dict["output_c2ws"][:, -1] #(1,2,4,4)
+        c2w_cf_right_forward = c2w_cf_right.clone()
+        c2w_cf_right_forward[..., 0, 3] = c2w_cf_right_forward[..., 0, 3] + 3
+        
+        # right ---- right backwards 3m
+        c2w_cf_right_backward = c2w_cf_right.clone()
+        c2w_cf_right_backward[..., 0, 3] = c2w_cf_right_backward[..., 0, 3] - 3
+
+
+        # right backward 3---------rotation 45 ------rotation back:  short +1
+        theta = math.pi / 4  # 
+        rot_1 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
+        
+        c2w_cf_right_rot2_left = c2w_cf_right.clone()
+        c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
+
+        
+
+        num_frames_short = 60
+        num_frames_long = 60
+        num_frames_all = 60 * 13
+        t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
+        t_long = torch.linspace(0, 1 - 1 / (num_frames_long + 1), num_frames_long, dtype=torch.float32, device=self.device)
+        
+        c2w_interp_forward0 = interpolate_extrinsics(c2w_cf_left, c2w_cf_left_forward, t_short)
+        c2w_interp_forward1 = interpolate_extrinsics(c2w_cf_left_forward, c2w_cf_left, t_short)
+
+        c2w_interp_backward0 = interpolate_extrinsics(c2w_cf_left, c2w_cf_left_backward, t_short)
+        c2w_interp_backward1 = interpolate_extrinsics(c2w_cf_left_backward, c2w_cf_left, t_short)
+        
+        c2w_rot0 = interpolate_extrinsics(c2w_cf_left,c2w_cf_left_rot2_right,t_short)
+        c2w_rot1 = interpolate_extrinsics(c2w_cf_left_rot2_right,c2w_cf_left,t_short)
+        
+        
+        c2w_interp_0 = interpolate_extrinsics(c2w_cf_left, c2w_cf_right, t_long)
+        c2w_interp_forward2 = interpolate_extrinsics(c2w_cf_right, c2w_cf_right_forward, t_short)
+        c2w_interp_forward3 = interpolate_extrinsics(c2w_cf_right_forward , c2w_cf_right, t_short)
+        
+
+        c2w_interp_backward2 = interpolate_extrinsics(c2w_cf_right, c2w_cf_right_backward, t_short)
+        c2w_interp_backward3 = interpolate_extrinsics(c2w_cf_right_backward, c2w_cf_right, t_short)
+
+        c2w_rot2 = interpolate_extrinsics(c2w_cf_right,c2w_cf_right_rot2_left,t_short)
+        c2w_rot3 = interpolate_extrinsics(c2w_cf_right_rot2_left,c2w_cf_right,t_short)
+        
+
+        c2w_interp = torch.cat([c2w_interp_forward0, c2w_interp_forward1,
+                                c2w_interp_backward0,c2w_interp_backward1,
+                                c2w_rot0,c2w_rot1,c2w_interp_0, c2w_interp_forward2, 
+                                c2w_interp_forward3,
+                                c2w_interp_backward2,c2w_interp_backward3,
+                                c2w_rot2,c2w_rot3
+                                ], dim=1)        
+
+        fovxs_interp = data_dict["output_fovxs"][:, -2:-1].repeat(1, num_frames_all)
+        fovys_interp = data_dict["output_fovys"][:, -2:-1].repeat(1, num_frames_all)
+        
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=c2w_interp,
+            fovx=fovxs_interp,
+            fovy=fovys_interp,
+            rays_o=None,
+            rays_d=None
+        )
+
+        output_imgs = render_pkg_fuse["image"] # b v 3 h w
+        output_depths = render_pkg_fuse["depth"].squeeze(2) # b v h w
+
+        preds = {"img": output_imgs, "depth": output_depths}
+        
+        
+        return preds, data_dict["bin_token"]
 
 
 

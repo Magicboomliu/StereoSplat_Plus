@@ -112,9 +112,7 @@ def main(args):
         
     }
     
-
     val_dataset = dataset(**val_params)
-
 
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
