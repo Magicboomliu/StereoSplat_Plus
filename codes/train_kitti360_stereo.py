@@ -236,16 +236,16 @@ def main(args):
                 optimizer.zero_grad()
                 
                 
-                try:
-                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                # try:
+                loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
-                    with torch.autograd.detect_anomaly():
-                        accelerator.backward(loss)
-                except:
-                    torch.cuda.empty_cache()
-                    print(batch['bin_token'])
-                    print("Here is Error Encounter......")
-                    continue  # 或 return / break
+                with torch.autograd.detect_anomaly():
+                    accelerator.backward(loss)
+                # except:
+                #     torch.cuda.empty_cache()
+                #     print(batch['bin_token'])
+                #     print("Here is Error Encounter......")
+                #     continue  # 或 return / break
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
@@ -272,7 +272,7 @@ def main(args):
                             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
                             val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
                                                 "step-{}/batch-{}".format(global_iter, i_iter_val))
-                            log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
+                            log_val = my_model.validation_step(batch_val, val_batch_save_dir)
                             log.update(log_val)
                     my_model.train()
             
