@@ -183,6 +183,8 @@ def saved_json_files(dict_data,saved_path):
 
 def main(args):
     
+
+    
     os.makedirs(args.output_folder,exist_ok=True)
     
     if args.single_bin_token!="None":
@@ -309,10 +311,23 @@ def main(args):
                 max = disp.max()
                 min = max / range
                 depth = 1 / np.maximum(disp, min)
-                depth = (depth - depth.min()) / (depth.max() - depth.min()) # range from 0 ~1
-                
+                depth_left = (depth - depth.min()) / (depth.max() - depth.min()) # range from 0 ~1
+
+                monodepth_path = data_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw").replace("image_00","image_01")
+                assert os.path.exists(monodepth_path)
+                disp = load_the_depthanytingV2_results(monodepth_path)
+                range = np.minimum(disp.max() / (disp.min() + 0.001), 50.0)
+                max = disp.max()
+                min = max / range
+                depth = 1 / np.maximum(disp, min)
+                depth_right = (depth - depth.min()) / (depth.max() - depth.min()) # range from 0 ~1
+
+                saved_depth = concat_horizental(depth_left,depth_right)
                 saved_monodepth_fname = os.path.join(monodepth_folder_path,os.path.basename(data_path))
-                plt.imsave(saved_monodepth_fname,depth,cmap='jet')
+                plt.imsave(saved_monodepth_fname,saved_depth,cmap='jet')
+                
+                
+                
                 
                 # load_the_depthanytingV2_results
                 depthm_path = data_path.replace("data_2d_raw", "monocular_depth/Metric3DV2/data_2d_raw")
@@ -324,9 +339,23 @@ def main(args):
                 dptm = load_the_Metric3DV2_results(depthm_path)
                 conf = load_the_Metric3DV2_results(conf_path)
     
-                dptm = dptm/(dptm.max()+1e-5)
+                dptm_left = dptm/(dptm.max()+1e-5)
+
+                # load_the_depthanytingV2_results
+                depthm_path = data_path.replace("data_2d_raw", "monocular_depth/Metric3DV2/data_2d_raw").replace("image_00","image_01")
+                depthm_path = depthm_path.replace(".png", "_dpt.png")
+                conf_path = depthm_path.replace("_dpt.npy", "_conf.png")
+                assert os.path.exists(depthm_path)
+                assert os.path.exists(conf_path)
+                
+                dptm = load_the_Metric3DV2_results(depthm_path)
+                conf = load_the_Metric3DV2_results(conf_path)
+    
+                dptm_right = dptm/(dptm.max()+1e-5)
+                
+                saved_dptm = concat_horizental(dptm_left,dptm_right)
                 saved_metricdepth_fname = os.path.join(metric_depth_folder_path,os.path.basename(data_path))
-                plt.imsave(saved_metricdepth_fname,dptm,cmap='jet')
+                plt.imsave(saved_metricdepth_fname,saved_dptm,cmap='jet')
 
             
     else:
