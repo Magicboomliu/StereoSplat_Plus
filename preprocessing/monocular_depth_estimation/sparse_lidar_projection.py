@@ -14,6 +14,7 @@ import skimage.io
 
 
 import skimage.io
+
 def save_results_into_uint16(results,scale_factor=256):
     results = results * scale_factor
     results = results.astype(np.uint16)
