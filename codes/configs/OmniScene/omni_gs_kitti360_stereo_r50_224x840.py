@@ -44,6 +44,8 @@ val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/Fe
 test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
+supp_view_nums=3
+
 
 dataset_params = dict(
     dataset_name="KITTI360Dataset",
@@ -64,7 +66,8 @@ dataset_params = dict(
     batch_size_test=4,
     num_workers=8,
     num_workers_val=8,
-    num_workers_test=4
+    num_workers_test=4,
+    supp_view_nums=supp_view_nums
 )
 
 num_cams = 2
