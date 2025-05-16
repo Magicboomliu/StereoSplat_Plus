@@ -51,12 +51,15 @@ class KITTI360Dataset(Dataset):
         use_center: bool = True,
         use_first: bool = False,
         use_last: bool = False,
+        supp_view_nums: int=0,
         **kwargs,
         ):
         super().__init__()
 
         self.datapath = datapath
         self.data_version = data_version
+        
+        self.supp_view_nums = supp_view_nums
         
         self.camera_types = [
             "CAM_LEFT",
@@ -93,6 +96,24 @@ class KITTI360Dataset(Dataset):
             raise NotImplementedError
             
         self.split = split
+        
+
+    def _uniform_sample(self,ordered_list, N):
+        if N <= 0 or N > len(ordered_list):
+            raise ValueError("N must be > 0 and <= length of ordered_list")
+
+        total = len(ordered_list)
+        step = (total - 1) / (N - 1) if N > 1 else 0
+        indices = []
+        last_index = -1
+        for i in range(N):
+            idx = round(i * step)
+            if idx == last_index:
+                idx += 1  # 确保不重复（尽量）
+            idx = min(idx, total - 1)  # 防止越界
+            indices.append(idx)
+            last_index = idx
+        return [ordered_list[i] for i in indices]
 
     def __getitem__(self, index):
         
@@ -100,12 +121,6 @@ class KITTI360Dataset(Dataset):
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)
         
         bin_info = self._load_pkl_file(abs_bin_token_fname)
-        # print(bin_info['token']) # scene2013_05_28_drive_0000_sync_bin000 
-        # print(bin_info['scene_token']) # 2013_05_28_drive_0000_sync
-        # print(bin_info['timestep']) # 0000000256.
-        # print(bin_info['bin_length']) # 8.402467621701142
-        # print(bin_info['sensor_info'].keys()) # dict_keys(['LIDAR_TOP', 'CAM_LEFT', 'CAM_RIGHT'])
-        
         # center
         sensor_info_center = {sensor: bin_info["sensor_info"][sensor][0] for sensor in self.camera_types + ["LIDAR_TOP"]}
         # first 
@@ -197,13 +212,30 @@ class KITTI360Dataset(Dataset):
         # ======= Render views from non-key frames for rendering losses ====== #
         output_img_paths, output_c2ws, output_w2cs = [], [], []
         frame_num = len(bin_info["sensor_info"]["LIDAR_TOP"]) # how many frames, if no problems, here should be 7
-        assert frame_num >= 3, "only got {} frames for bin{}".format(frame_num, bin_token)
         
-        if self.use_center:
-            rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
+        
+        # for training, using a certain number of the views for training.
+        if self.split=="train":
+            assert frame_num >=self.supp_view_nums, "only got {} frames for bin{}".format(frame_num, bin_token_name)
+            if self.use_center:
+                uniform_selected_supplement_views = self.supp_view_nums -3 # split the first/center/last frame.
+                candidates_views = list(range(frame_num))[3:]
+                if uniform_selected_supplement_views>0:
+                    supplement_view_ids = self._uniform_sample(ordered_list=candidates_views,N=uniform_selected_supplement_views)
+                    rend_indices = [[1, 2]+ supplement_view_ids] * len(self.camera_types)                   
+                else:
+                    rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
+            else:
+                rend_indices = [[0]] * len(self.camera_types)
+        
+        # for valiation and the testing
         else:
-            rend_indices = [[0]] * len(self.camera_types)
-        
+            assert frame_num >=3, "only got {} frames for bin{}".format(frame_num, bin_token_name)
+            if self.use_center:
+                rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
+            else:
+                rend_indices = [[0]] * len(self.camera_types)
+            
         
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]
@@ -214,9 +246,8 @@ class KITTI360Dataset(Dataset):
                 output_img_paths.append(img_path)
                 output_c2ws.append(c2w)
                 output_w2cs.append(w2c)
-        output_c2ws = torch.as_tensor(output_c2ws, dtype=torch.float32)  #(4,4,4)-->(2*6)
-        
-        
+        output_c2ws = torch.as_tensor(output_c2ws, dtype=torch.float32)  #(2*N,4,4)-->(2*6)
+                
         # load and modify images (cropped or resized if necessary), and modify intrinsics accordingly
         output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
                     load_conditions(output_img_paths, self.reso)
@@ -297,9 +328,9 @@ if __name__=="__main__":
     
     dataset_params = {
         "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
-        "train_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt",
-        "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "train_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
+        "val_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "test_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
         "data_version":"bin_infos_8.0",
         "resolution":[224, 840], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",
@@ -307,10 +338,15 @@ if __name__=="__main__":
         "use_center":True,
         "use_first": False,
         "use_last": False,
+        "supp_view_nums": 10
     }
     
     dataset = KITTI360Dataset(**dataset_params)
     
     for idx, data in enumerate(dataset):
-        print(data.keys())
+        print(data['inputs'].keys())
+        print(data['inputs_pix'].keys())
+        print(data['inputs_vol'].keys())
+        print(data['outputs']['rgb'].shape)
+        print(data['outputs']['depth_m'].shape)
         quit()
