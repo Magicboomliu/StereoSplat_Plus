@@ -255,6 +255,7 @@ class KITTI360Dataset(Dataset):
         output_directions = torch.stack(output_directions)
         output_rays_o, output_rays_d = get_rays(
                     output_directions, output_c2ws, keepdim=True, normalize=False)
+        
 
         # pack data
         input_dict = {"rgb": input_imgs} # images
@@ -268,7 +269,9 @@ class KITTI360Dataset(Dataset):
         output_dict = {"rgb": output_imgs, "depth": output_depths,
                        "depth_m": output_depths_m, "conf_m": output_confs_m,
                        "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-                       "rays_o": output_rays_o, "rays_d": output_rays_d}
+                       "rays_o": output_rays_o, "rays_d": output_rays_d,
+                       "input_image_path":output_img_paths+ input_img_paths
+                       }
 
         return {
             "bin_token": bin_token_name,

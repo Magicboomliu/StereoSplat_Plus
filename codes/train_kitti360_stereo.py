@@ -1,4 +1,3 @@
-
 import os, time, argparse, os.path as osp, numpy as np
 import torch
 import torch.nn.functional as F
@@ -186,17 +185,14 @@ def main(args):
     global_iter = 0
     first_epoch = 0
 
-    
-
     # Potentially load in the weights and states from a previous save
     if args.resume_from:
         cfg.resume_from = args.resume_from
-    
     if cfg.resume_from:
         if cfg.resume_from == "None":
             path = None
         elif cfg.resume_from != "latest":
-            path = cfg.resume_from
+            path = os.path.basename(cfg.resume_from)
         else:
             # Get the most recent checkpoint
             dirs = os.listdir(cfg.work_dir)
@@ -206,12 +202,11 @@ def main(args):
                 path = dirs[-1]
             else:
                 path = None
-    
 
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(osp.join(cfg.work_dir, path), map_location='cpu', strict=False)
-        global_iter = int((os.path.basename(os.path.normpath(path))).split("-")[1]) 
+        global_iter = int(path.split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
         if accelerator.is_main_process:
@@ -240,16 +235,16 @@ def main(args):
                 optimizer.zero_grad()
                 
                 
-                # try:
-                loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                try:
+                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
-                with torch.autograd.detect_anomaly():
-                    accelerator.backward(loss)
-                # except:
-                #     torch.cuda.empty_cache()
-                #     print(batch['bin_token'])
-                #     print("Here is Error Encounter......")
-                #     continue  # 或 return / break
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
+                except:
+                    torch.cuda.empty_cache()
+                    print(batch['bin_token'])
+                    print("Here is Error Encounter......")
+                    continue  # 或 return / break
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
