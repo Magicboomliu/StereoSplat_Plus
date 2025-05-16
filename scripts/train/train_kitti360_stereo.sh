@@ -1,9 +1,9 @@
 TRAIN_KITTI360_OmniScene(){
 cd ../..
 cd codes
-configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840.py"
+configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840_supp10.py"
 work_dir="/data1/zliu/feedforward_outputs/more_vis_for_vis/omni_gs_kitti360_novelview_r50_224x840"
-resume_from="/data1/zliu/feedforward_outputs/omni_gs_kitti360_novelview_r50_224x840/latest/"
+resume_from="None"
 
 #configs 
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
