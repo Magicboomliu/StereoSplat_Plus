@@ -218,6 +218,7 @@ class OmniGaussian(BaseModule):
     
     def forward(self, batch, split="train", iter=0, iter_end=100000):
         
+        
         """Forward training function."""
         data_dict = self.get_data(batch)
         img = data_dict["imgs"] #[B,6,3,H,W]
@@ -281,6 +282,7 @@ class OmniGaussian(BaseModule):
         render_fovxs = data_dict["output_fovxs"] # [B,6*3]
         render_fovys = data_dict["output_fovys"] # [B,6*3]
         
+
         # return a dicts: rendered images and rendered alphs and rendered depth
         render_pkg_fuse = self.renderer.render(
             gaussians=gaussians_all,
@@ -325,6 +327,9 @@ class OmniGaussian(BaseModule):
 
         # =================== Data preparation =================== #        
         rgb_gt = data_dict["output_imgs"]
+        
+
+        
         data_dict["rgb_gt"] = rgb_gt
         depth_m_gt = data_dict["output_depths_m"] # Depth from Metric3D-V2
         conf_m_gt = data_dict["output_confs_m"]
