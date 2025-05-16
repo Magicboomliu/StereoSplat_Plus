@@ -34,7 +34,69 @@ from torchmetrics.functional.image import structural_similarity_index_measure as
 import json
 import math
 from tqdm import tqdm
+import pickle
 
+
+def compute_depth_mae_mse_sparse(est_depth, gt_depth):
+    """
+    Compute MAE and MSE between estimated and sparse ground truth depth.
+
+    Args:
+        est_depth (Tensor): shape [B, 6, 1, H, W]
+        gt_depth (Tensor):  shape [B, 6, 1, H, W], sparse (0 = invalid)
+
+    Returns:
+        mae: scalar, mean absolute error over valid pixels
+        mse: scalar, mean squared error over valid pixels
+    """
+    assert est_depth.shape == gt_depth.shape
+
+    valid_mask = gt_depth > 0
+
+    abs_error = torch.abs(est_depth - gt_depth)[valid_mask]
+    sq_error = (est_depth - gt_depth).pow(2)[valid_mask]
+
+    if valid_mask.sum() == 0:
+        return float('nan'), float('nan')  # no valid pixels
+
+    mae = abs_error.mean().item()
+    mse = sq_error.mean().item()
+
+    return mae, mse
+
+
+def load_pkl_file(path):
+    with open(path, 'rb') as f:
+        data_dict = pickle.load(f)
+    return data_dict
+
+def load_the_sparse_gt_lidar(path,scale=256):
+    # Read the image in unchanged mode (preserves uint16 format)
+    img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
+    img = img/scale
+    return img
+
+
+def compute_depth_errors(gt_depth: np.ndarray, aligned_depth: np.ndarray, valid_mask: np.ndarray):
+    """
+    Compute MSE and MAE between GT and aligned prediction in valid regions.
+
+    Args:
+        gt_depth (np.ndarray): Ground truth depth map, shape [H, W] or [N].
+        aligned_depth (np.ndarray): Aligned predicted depth map, same shape as gt_depth.
+        valid_mask (np.ndarray): Boolean mask of valid pixels, same shape.
+
+    Returns:
+        mse (float): Mean squared error.
+        mae (float): Mean absolute error.
+    """
+    gt_valid = gt_depth[valid_mask]
+    pred_valid = aligned_depth[valid_mask]
+
+    mse = np.mean((gt_valid - pred_valid) ** 2)
+    mae = np.mean(np.abs(gt_valid - pred_valid))
+
+    return mse, mae
 
 
 def compute_psnr_ssim(img1, img2):
@@ -62,6 +124,26 @@ def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
         
+import cv2
+def save_depth_batch_as_jet(depth_batch, save_dir="jet_depths"):
+    """
+    Args:
+        depth_batch: torch.Tensor, shape [1, 6, 1, H, W]
+        save_dir: directory to save the images
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    depth_batch = depth_batch.squeeze(0).squeeze(2)  # → shape: [6, H, W]
+    
+    depth_batch = 376/(depth_batch+1e-4)
+    depth_batch = torch.clamp(depth_batch,min=0,max=320)
+    
+    for i, depth in enumerate(depth_batch):
+        depth_np = depth.cpu().numpy()  # Convert to NumPy array
+        depth_norm = cv2.normalize(depth_np, None, 0, 255, cv2.NORM_MINMAX)
+        depth_uint8 = depth_norm.astype(np.uint8)
+        depth_uint8 = depth_uint8[0]
+        depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_JET)
+        cv2.imwrite(f"{save_dir}/depth_{i:02d}.png", depth_color)
 
 def main(args):
     # load config
@@ -160,7 +242,8 @@ def main(args):
             
             # process the current folder
             bin_token_list = batch['bin_token']
-
+            
+            
             # peform the log inference validations: visualization results inside
             log_val,(rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgb_gt, metric_v2_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,bin_token_list,args.output_vis)
             
@@ -173,7 +256,25 @@ def main(args):
             rendered_depth_by_omni_list.append(rendered_depth_by_omni_batch)
             rendered_depth_by_pixel_list.append(rendered_depth_by_pixel_batch)
             rendered_depth_by_volume_list.append(rendered_depth_by_volume_batch)
-            gt_depth_list.append(metric_v2_depth_batch)
+            
+            
+            projected_depth_tensor_list_batch = []
+            for img_name in batch['outputs']['input_image_path']:
+                img_name = img_name[0]
+                project_lidar_path = img_name.replace("data_2d_raw","projected_sparse_lidar/data_2d_raw")
+                
+                assert os.path.exists(project_lidar_path)
+                project_lidar = load_the_sparse_gt_lidar(project_lidar_path)
+                project_lidar = F.interpolate(torch.from_numpy(project_lidar).unsqueeze(0).unsqueeze(0),size=[224,840],
+                              mode='bilinear')
+                project_lidar = project_lidar.squeeze(0).squeeze(0)
+                project_lidar  = project_lidar.unsqueeze(0).unsqueeze(0).unsqueeze(0).to(rendered_depth_by_omni_batch.device)
+                projected_depth_tensor_list_batch.append(project_lidar)
+                
+            
+            projected_depth_tensor_batch = torch.cat(projected_depth_tensor_list_batch,dim=1)
+            gt_depth_list.append(projected_depth_tensor_batch)
+    
     
     
     rendered_rgb_by_omni_all = torch.cat(rendered_rgb_by_omni_list,dim=0).cpu()
@@ -186,6 +287,9 @@ def main(args):
     rendered_depth_by_volume_all = torch.cat(rendered_depth_by_volume_list,dim=0).cpu()
     gt_depth_all = torch.cat(gt_depth_list,dim=0).cpu()
     
+    mae_omni, mse_omni = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_omni_all,gt_depth=gt_depth_all)
+    mae_pixel, mse_pixel = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_pixel_all,gt_depth=gt_depth_all)
+    mae_volume, mse_volume = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_volume_all,gt_depth=gt_depth_all)
     
     ## PSNR and SSIM
     psnr_omni, ssim_omni = compute_psnr_ssim(rendered_rgb_by_omni_all,gt_rgb_all)
@@ -201,13 +305,19 @@ def main(args):
     os.makedirs(sub_folder_volume,exist_ok=True)
     
         
-    saved_into_json(data_dict={"psnr":psnr_omni.item(),"ssim":ssim_omni.item()},
+    saved_into_json(data_dict={"psnr":psnr_omni.item(),"ssim":ssim_omni.item(),
+                               "depth_mae": mae_omni-3                               
+                               },
                     path = os.path.join(sub_folder_omni,"metric.json"))    
     
-    saved_into_json(data_dict={"psnr":psnr_pixel.item(),"ssim":ssim_pixel.item()},
+    saved_into_json(data_dict={"psnr":psnr_pixel.item(),"ssim":ssim_pixel.item(),
+                               "depth_mae": mae_pixel-3
+                               },
                     path = os.path.join(sub_folder_pixel,"metric.json"))
     
-    saved_into_json(data_dict={"psnr":psnr_volume.item(),"ssim":ssim_volumne.item()},
+    saved_into_json(data_dict={"psnr":psnr_volume.item(),"ssim":ssim_volumne.item(),
+                               "depth_mae":mae_volume-3
+                               },
                     path = os.path.join(sub_folder_volume,"metric.json"))
 
 
