@@ -56,6 +56,7 @@ if __name__=="__main__":
         input_pix_state = check_dict(batch['inputs_pix'])
         input_vol_state = check_dict(batch['inputs_vol'])
         
+        
         state = output_state + input_state + input_pix_state +input_vol_state
         
         if state:
