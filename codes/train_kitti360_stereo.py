@@ -194,7 +194,7 @@ def main(args):
         if cfg.resume_from == "None":
             path = None
         elif cfg.resume_from != "latest":
-            path = os.path.basename(cfg.resume_from)
+            path = cfg.resume_from
         else:
             # Get the most recent checkpoint
             dirs = os.listdir(cfg.work_dir)
@@ -205,10 +205,12 @@ def main(args):
             else:
                 path = None
 
+    
+
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
-        accelerator.load_state(osp.join(cfg.work_dir, path), map_location='cpu', strict=False)
-        global_iter = int(path.split("-")[1])
+        accelerator.load_state(path, map_location='cpu', strict=False)
+        global_iter = int(path.split("/")[-2].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
         if accelerator.is_main_process:
@@ -222,10 +224,7 @@ def main(args):
 
     # training
     print_freq = cfg.print_freq
-    
-    
-    
-    
+        
     while epoch < max_num_epochs:
         my_model.train()
         data_time_s = time.time()
@@ -239,6 +238,9 @@ def main(args):
                 # try:
                 loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
+                if torch.isnan(loss) or torch.isinf(loss):
+                    continue  # 直接跳过当前 iteration
+                
                 with torch.autograd.detect_anomaly():
                     accelerator.backward(loss)
                 # except:
