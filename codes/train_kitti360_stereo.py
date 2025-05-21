@@ -238,6 +238,8 @@ def main(args):
                 # try:
                 loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
+                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                
                 if torch.isnan(loss) or torch.isinf(loss):
                     continue  # 直接跳过当前 iteration
                 
