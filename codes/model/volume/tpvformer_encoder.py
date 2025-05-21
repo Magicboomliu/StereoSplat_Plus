@@ -57,15 +57,22 @@ class TPVFormerEncoder(TransformerLayerSequence):
             self.project_transform_wz = nn.Conv2d(embed_dims, embed_dims, 3, 1, 1)
 
         
-         # 三个平面上的3D参考点（用于attention）
+        # 三个平面上的3D参考点（用于attention）
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
         ref_3d_hw = self.get_reference_points(tpv_h, tpv_w, self.real_z,
-                                              num_points_in_pillar[0])
+                                              num_points_in_pillar[0],
+                                              device=device)
         ref_3d_zh = self.get_reference_points(tpv_z, tpv_h, self.real_w,
-                                              num_points_in_pillar[1])
+                                              num_points_in_pillar[1],
+                                              device=device)
+
         ref_3d_zh = ref_3d_zh.permute(3, 0, 1, 2)[[2, 0, 1]]  # change to x,y,z
         ref_3d_zh = ref_3d_zh.permute(1, 2, 3, 0)
         ref_3d_wz = self.get_reference_points(tpv_w, tpv_z, self.real_h,
-                                              num_points_in_pillar[2])
+                                              num_points_in_pillar[2],
+                                              device=device)
+
         ref_3d_wz = ref_3d_wz.permute(3, 0, 1, 2)[[1, 2, 0]]  # change to x,y,z
         ref_3d_wz = ref_3d_wz.permute(1, 2, 3, 0)
         self.register_buffer('ref_3d_hw', ref_3d_hw)

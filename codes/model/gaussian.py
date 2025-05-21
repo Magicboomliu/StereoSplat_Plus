@@ -131,7 +131,10 @@ class GaussianRenderer:
         self.resolution = resolution
         self.znear = znear
         self.zfar = zfar
-        self.bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+        
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        self.bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device=device)
 
         # convert the depth into surface normal
         self.normal_module = Depth2Normal().to(device)

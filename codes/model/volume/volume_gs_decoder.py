@@ -56,7 +56,9 @@ class VolumeGaussianDecoder(BaseModule):
         self.rgb_act = lambda x: torch.sigmoid(x)
 
         # obtain anchor points for gaussians
-        gs_anchors = self.get_reference_points(tpv_h * scale_h, tpv_w * scale_w, tpv_z * scale_z, pc_range) # 1, w, h, z, 3
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        gs_anchors = self.get_reference_points(tpv_h * scale_h, tpv_w * scale_w, tpv_z * scale_z, pc_range,
+                device=device) # 1, w, h, z, 3
         self.register_buffer('gs_anchors', gs_anchors)
     
     @staticmethod
