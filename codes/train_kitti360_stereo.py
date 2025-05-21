@@ -93,7 +93,7 @@ def main(args):
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(args.work_dir, f'{timestamp}.log')
     if not osp.exists(osp.dirname(log_file)):
-        os.makedirs(osp.dirname(log_file))
+        os.makedirs(osp.dirname(log_file),exist_ok=True)
     logger = create_logger(log_file=log_file, is_main_process=accelerator.is_main_process)
     if logger is not None:
         logger.info(f'Config:\n{cfg.pretty_text}')

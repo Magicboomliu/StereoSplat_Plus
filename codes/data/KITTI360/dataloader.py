@@ -124,40 +124,44 @@ class KITTI360Dataset(Dataset):
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)
         
         bin_info = self._load_pkl_file(abs_bin_token_fname)
+
+        center_idx = 0
+        first_idx = 1
+        last_idx = 2
         
 
-        # Adaptive Input
-        if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
-            dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
-            if dynamic_input_frame_idx==0:
-                center_idx = dynamic_input_frame_idx
-                first_idx = 1
-                last_idx = 2
-            elif dynamic_input_frame_idx==1:
-                center_idx = dynamic_input_frame_idx # First as Center
-                first_idx = 0 # Center as First
-                last_idx = 2 # Last still Last
-            elif dynamic_input_frame_idx==2:
-                center_idx = dynamic_input_frame_idx # Last as Center
-                first_idx = 1 # First is still frist
-                last_idx = 0 # Center as Last
-            else:
-                # change the center and the current dynamic input idx
+        # # Adaptive Input
+        # if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
+        #     dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
+        #     if dynamic_input_frame_idx==0:
+        #         center_idx = dynamic_input_frame_idx
+        #         first_idx = 1
+        #         last_idx = 2
+        #     elif dynamic_input_frame_idx==1:
+        #         center_idx = dynamic_input_frame_idx # First as Center
+        #         first_idx = 0 # Center as First
+        #         last_idx = 2 # Last still Last
+        #     elif dynamic_input_frame_idx==2:
+        #         center_idx = dynamic_input_frame_idx # Last as Center
+        #         first_idx = 1 # First is still frist
+        #         last_idx = 0 # Center as Last
+        #     else:
+        #         # change the center and the current dynamic input idx
                 
-                swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
-                swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
-                swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
+        #         swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
+        #         swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
+        #         swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
                 
-                center_idx = 0
-                first_idx = 1
-                last_idx = 2
+        #         center_idx = 0
+        #         first_idx = 1
+        #         last_idx = 2
             
              
-        else:
-            dynamic_input_frame_idx = 0
-            center_idx = dynamic_input_frame_idx
-            first_idx = 1
-            last_idx = 2
+        # else:
+        #     dynamic_input_frame_idx = 0
+        #     center_idx = dynamic_input_frame_idx
+        #     first_idx = 1
+        #     last_idx = 2
         
         # center
         sensor_info_center = {sensor: bin_info["sensor_info"][sensor][center_idx] for sensor in self.camera_types + ["LIDAR_TOP"]}

@@ -44,7 +44,7 @@ val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/Fe
 test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_reordered"
-supp_view_nums=6
+supp_view_nums=8
 
 
 dataset_params = dict(

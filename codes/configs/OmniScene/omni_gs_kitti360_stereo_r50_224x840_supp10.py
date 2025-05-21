@@ -117,7 +117,7 @@ _ffn_dim_ = _dim_ * 2
 
 # unit is a little bigger than the x_range,y_range and the z_range
 tpv_h_ = 192
-tpv_w_ = 19
+tpv_w_ = 192
 tpv_z_ = 16
 scale_h = 1
 scale_w = 1
