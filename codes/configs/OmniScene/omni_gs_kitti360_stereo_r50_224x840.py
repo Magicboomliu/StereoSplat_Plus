@@ -18,7 +18,7 @@ max_epochs = 50
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 100000
+max_train_steps = 50000
 warmup_steps = 1000
 mixed_precision = "no"
 gradient_accumulation_steps = 1
