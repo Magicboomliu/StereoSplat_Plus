@@ -22,8 +22,8 @@ from einops import rearrange, repeat, einsum
 cv2.setNumThreads(0) 
 cv2.ocl.setUseOpenCL(False)
 
-# import sys
-# sys.path.append("../..")
+import sys
+sys.path.append("../..")
 from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
@@ -35,6 +35,9 @@ def read_text_lines(filepath):
         lines = f.readlines()
     lines = [l.rstrip() for l in lines]
     return lines
+
+def swap_elements(lst, A, B):
+    lst[A], lst[B] = lst[B], lst[A]
 
 
 class KITTI360Dataset(Dataset):    
@@ -121,12 +124,47 @@ class KITTI360Dataset(Dataset):
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)
         
         bin_info = self._load_pkl_file(abs_bin_token_fname)
+        
+
+        # Adaptive Input
+        if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
+            dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
+            if dynamic_input_frame_idx==0:
+                center_idx = dynamic_input_frame_idx
+                first_idx = 1
+                last_idx = 2
+            elif dynamic_input_frame_idx==1:
+                center_idx = dynamic_input_frame_idx # First as Center
+                first_idx = 0 # Center as First
+                last_idx = 2 # Last still Last
+            elif dynamic_input_frame_idx==2:
+                center_idx = dynamic_input_frame_idx # Last as Center
+                first_idx = 1 # First is still frist
+                last_idx = 0 # Center as Last
+            else:
+                # change the center and the current dynamic input idx
+                
+                swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
+                swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
+                swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
+                
+                center_idx = 0
+                first_idx = 1
+                last_idx = 2
+            
+             
+        else:
+            dynamic_input_frame_idx = 0
+            center_idx = dynamic_input_frame_idx
+            first_idx = 1
+            last_idx = 2
+        
         # center
-        sensor_info_center = {sensor: bin_info["sensor_info"][sensor][0] for sensor in self.camera_types + ["LIDAR_TOP"]}
+        sensor_info_center = {sensor: bin_info["sensor_info"][sensor][center_idx] for sensor in self.camera_types + ["LIDAR_TOP"]}
         # first 
-        sensor_info_first = {sensor: bin_info["sensor_info"][sensor][1] for sensor in self.camera_types_first + ["LIDAR_TOP"]}
+        sensor_info_first = {sensor: bin_info["sensor_info"][sensor][first_idx] for sensor in self.camera_types_first + ["LIDAR_TOP"]}
         # last
-        sensor_info_last = {sensor: bin_info["sensor_info"][sensor][2] for sensor in self.camera_types_last + ["LIDAR_TOP"]}
+        sensor_info_last = {sensor: bin_info["sensor_info"][sensor][last_idx] for sensor in self.camera_types_last + ["LIDAR_TOP"]}
 
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
@@ -331,7 +369,7 @@ if __name__=="__main__":
         "train_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
         "val_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
         "test_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "data_version":"bin_infos_8.0",
+        "data_version":"bin_infos_8.0_reordered",
         "resolution":[224, 840], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",
         "sequence":'2013_05_28_drive_0000_sync',
