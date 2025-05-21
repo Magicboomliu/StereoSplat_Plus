@@ -1,8 +1,8 @@
 TRAIN_KITTI360_OmniScene(){
 cd ../..
 cd codes
-configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840_supp10.py"
-work_dir="/data1/zliu/feedforward_outputs/more_vis_for_vis/omni_gs_kitti360_novelview_r50_224x840"
+configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840_supp10_adaptive_input_frame.py"
+work_dir="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/Vanilla_Omni_Scene_Adaptive_Input/omni_gs_kitti360_novelview_r50_224x840"
 resume_from="None"
 
 #configs 
