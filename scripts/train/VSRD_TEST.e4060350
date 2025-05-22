@@ -1,0 +1,596 @@
+warning: this version of cuda is NOT supported.
+
+Loading ffmpeg/6.1.1
+  Loading requirement: cuda/12.3.2
+Loading mpi version 2021.11
+WARNING: nv files may not be bound with --writable
+WARNING: Skipping mount /etc/localtime [binds]: /etc/localtime doesn't exist in container
+2025-05-22 12:32:44,062   INFO  Config:
+_dim_ = 128
+_ffn_dim_ = 256
+camera_args = dict(
+    resolution=[
+        224,
+        840,
+    ], zfar=1000.0, znear=0.1)
+data_version = 'bin_infos_8.0'
+datapath = '/gs/KITTI360_For_Upload'
+dataset_params = dict(
+    batch_size_test=4,
+    batch_size_train=2,
+    batch_size_val=1,
+    data_version='bin_infos_8.0',
+    datapath='/gs/KITTI360_For_Upload',
+    dataset_name='KITTI360Dataset',
+    num_workers=8,
+    num_workers_test=4,
+    num_workers_val=8,
+    pc_range=[
+        -50.0,
+        -50.0,
+        -3.0,
+        50.0,
+        50.0,
+        12.0,
+    ],
+    resolution=[
+        224,
+        840,
+    ],
+    seed=0,
+    sequence='2013_05_28_drive_0000_sync',
+    supp_view_nums=6,
+    test_filelist=
+    '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt',
+    train_filelist=
+    '/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt',
+    use_center=True,
+    use_first=False,
+    use_last=False,
+    use_stereo=True,
+    val_filelist=
+    '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt'
+)
+eval_args = dict(save_ply=False, save_vis=False)
+exp_name = 'omni_gs_kitti360_stereo_r50_224x804'
+far = 1000.0
+gpv = 3
+grad_max_norm = 1.0
+gradient_accumulation_steps = 1
+hybrid_attn_anchors = 16
+hybrid_attn_init = 0
+hybrid_attn_points = 32
+loss_args = dict(
+    depth_abs_loss_vol_type='mask',
+    mask_dptm=True,
+    perceptual_loss_vol_type='mask',
+    perceptual_resolution=[
+        224,
+        840,
+    ],
+    recon_loss_type='l2',
+    recon_loss_vol_type='l2_mask',
+    weight_depth_abs=0.01,
+    weight_depth_abs_vol=0.01,
+    weight_perceptual=0.05,
+    weight_perceptual_vol=0.05,
+    weight_recon=1.0,
+    weight_recon_vol=1.0)
+lr = 8e-05
+lr_scheduler_type = 'constant_with_warmup'
+max_epochs = 30
+max_train_steps = 100000
+mixed_precision = 'no'
+model = dict(
+    backbone=dict(
+        depth=50,
+        frozen_stages=-1,
+        in_channels=3,
+        init_cfg=dict(
+            checkpoint='pretrained/dino_resnet50_pretrain.pth',
+            prefix=None,
+            type='Pretrained'),
+        norm_cfg=dict(requires_grad=False, type='BN'),
+        norm_eval=True,
+        num_stages=4,
+        out_indices=(
+            0,
+            1,
+            2,
+            3,
+        ),
+        style='pytorch',
+        type='mmdet.ResNet'),
+    camera_args=dict(resolution=[
+        224,
+        840,
+    ], zfar=1000.0, znear=0.1),
+    dataset_params=dict(
+        batch_size_test=4,
+        batch_size_train=2,
+        batch_size_val=1,
+        data_version='bin_infos_8.0',
+        datapath='/gs/KITTI360_For_Upload',
+        dataset_name='KITTI360Dataset',
+        num_workers=8,
+        num_workers_test=4,
+        num_workers_val=8,
+        pc_range=[
+            -50.0,
+            -50.0,
+            -3.0,
+            50.0,
+            50.0,
+            12.0,
+        ],
+        resolution=[
+            224,
+            840,
+        ],
+        seed=0,
+        sequence='2013_05_28_drive_0000_sync',
+        supp_view_nums=6,
+        test_filelist=
+        '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt',
+        train_filelist=
+        '/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt',
+        use_center=True,
+        use_first=False,
+        use_last=False,
+        use_stereo=True,
+        val_filelist=
+        '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt'
+    ),
+    loss_args=dict(
+        depth_abs_loss_vol_type='mask',
+        mask_dptm=True,
+        perceptual_loss_vol_type='mask',
+        perceptual_resolution=[
+            224,
+            840,
+        ],
+        recon_loss_type='l2',
+        recon_loss_vol_type='l2_mask',
+        weight_depth_abs=0.01,
+        weight_depth_abs_vol=0.01,
+        weight_perceptual=0.05,
+        weight_perceptual_vol=0.05,
+        weight_recon=1.0,
+        weight_recon_vol=1.0),
+    neck=dict(
+        add_extra_convs='on_input',
+        in_channels=[
+            256,
+            512,
+            1024,
+            2048,
+        ],
+        num_outs=4,
+        out_channels=128,
+        start_level=0,
+        type='mmdet.FPN'),
+    pixel_gs=dict(
+        down_block=dict(
+            num_attention_heads=8,
+            num_layers=1,
+            num_views=2,
+            resnet_act_fn='silu',
+            resnet_groups=32,
+            type='MVDownsample2D'),
+        far=1000.0,
+        in_embed_dim=128,
+        mid_block=dict(
+            num_attention_heads=8,
+            num_layers=1,
+            num_views=2,
+            resnet_act_fn='silu',
+            resnet_groups=32,
+            type='MVMiddle2D'),
+        near=0.1,
+        num_cams=2,
+        out_embed_dims=[
+            128,
+            256,
+            512,
+            512,
+        ],
+        patch_sizes=[
+            8,
+            8,
+            4,
+            2,
+        ],
+        type='PixelGaussian',
+        up_block=dict(
+            num_attention_heads=8,
+            num_layers=1,
+            num_views=2,
+            resnet_act_fn='silu',
+            resnet_groups=32,
+            type='MVUpsample2D'),
+        use_checkpoint=True),
+    type='OmniGaussian',
+    use_checkpoint=True,
+    volume_gs=dict(
+        encoder=dict(
+            embed_dims=128,
+            num_cams=2,
+            num_feature_levels=1,
+            num_layers=3,
+            num_points_in_pillar=[
+                8,
+                16,
+                16,
+            ],
+            num_points_in_pillar_cross_view=[
+                16,
+                16,
+                16,
+            ],
+            pc_range=[
+                -50.0,
+                -50.0,
+                -3.0,
+                50.0,
+                50.0,
+                12.0,
+            ],
+            positional_encoding=dict(
+                h=192,
+                num_feats=[
+                    48,
+                    48,
+                    32,
+                ],
+                type='TPVFormerPositionalEncoding',
+                w=192,
+                z=16),
+            return_intermediate=False,
+            tpv_h=192,
+            tpv_w=192,
+            tpv_z=16,
+            transformerlayers=[
+                dict(
+                    attn_cfgs=[
+                        dict(
+                            dropout=0.1,
+                            embed_dims=128,
+                            init_mode=0,
+                            num_anchors=16,
+                            num_heads=8,
+                            num_points=32,
+                            tpv_h=192,
+                            tpv_w=192,
+                            tpv_z=16,
+                            type='TPVCrossViewHybridAttention'),
+                        dict(
+                            deformable_attention=dict(
+                                embed_dims=128,
+                                floor_sampling_offset=False,
+                                num_heads=8,
+                                num_levels=1,
+                                num_points=[
+                                    16,
+                                    32,
+                                    32,
+                                ],
+                                num_z_anchors=[
+                                    8,
+                                    16,
+                                    16,
+                                ],
+                                tpv_h=192,
+                                tpv_w=192,
+                                tpv_z=16,
+                                type='TPVMSDeformableAttention3D'),
+                            dropout=0.1,
+                            embed_dims=128,
+                            num_cams=2,
+                            pc_range=[
+                                -50.0,
+                                -50.0,
+                                -3.0,
+                                50.0,
+                                50.0,
+                                12.0,
+                            ],
+                            tpv_h=192,
+                            tpv_w=192,
+                            tpv_z=16,
+                            type='TPVImageCrossAttention'),
+                    ],
+                    feedforward_channels=256,
+                    ffn_dropout=0.1,
+                    operation_order=(
+                        'self_attn',
+                        'norm',
+                        'cross_attn',
+                        'norm',
+                        'ffn',
+                        'norm',
+                    ),
+                    type='TPVFormerLayer'),
+                dict(
+                    attn_cfgs=[
+                        dict(
+                            dropout=0.1,
+                            embed_dims=128,
+                            init_mode=0,
+                            num_anchors=16,
+                            num_heads=8,
+                            num_points=32,
+                            tpv_h=192,
+                            tpv_w=192,
+                            tpv_z=16,
+                            type='TPVCrossViewHybridAttention'),
+                        dict(
+                            deformable_attention=dict(
+                                embed_dims=128,
+                                floor_sampling_offset=False,
+                                num_heads=8,
+                                num_levels=1,
+                                num_points=[
+                                    16,
+                                    32,
+                                    32,
+                                ],
+                                num_z_anchors=[
+                                    8,
+                                    16,
+                                    16,
+                                ],
+                                tpv_h=192,
+                                tpv_w=192,
+                                tpv_z=16,
+                                type='TPVMSDeformableAttention3D'),
+                            dropout=0.1,
+                            embed_dims=128,
+                            num_cams=2,
+                            pc_range=[
+                                -50.0,
+                                -50.0,
+                                -3.0,
+                                50.0,
+                                50.0,
+                                12.0,
+                            ],
+                            tpv_h=192,
+                            tpv_w=192,
+                            tpv_z=16,
+                            type='TPVImageCrossAttention'),
+                    ],
+                    feedforward_channels=256,
+                    ffn_dropout=0.1,
+                    operation_order=(
+                        'self_attn',
+                        'norm',
+                        'cross_attn',
+                        'norm',
+                        'ffn',
+                        'norm',
+                    ),
+                    type='TPVFormerLayer'),
+                dict(
+                    attn_cfgs=[
+                        dict(
+                            dropout=0.1,
+                            embed_dims=128,
+                            init_mode=0,
+                            num_anchors=16,
+                            num_heads=8,
+                            num_points=32,
+                            tpv_h=192,
+                            tpv_w=192,
+                            tpv_z=16,
+                            type='TPVCrossViewHybridAttention'),
+                    ],
+                    feedforward_channels=256,
+                    ffn_dropout=0.1,
+                    operation_order=(
+                        'self_attn',
+                        'norm',
+                        'ffn',
+                        'norm',
+                    ),
+                    type='TPVFormerLayer'),
+            ],
+            type='TPVFormerEncoder'),
+        gs_decoder=dict(
+            gpv=3,
+            gs_dim=14,
+            hidden_dims=256,
+            in_dims=128,
+            offset_max=[
+                1.0416666666666667,
+                1.0416666666666667,
+                1.875,
+            ],
+            out_dims=128,
+            pc_range=[
+                -50.0,
+                -50.0,
+                -3.0,
+                50.0,
+                50.0,
+                12.0,
+            ],
+            scale_h=1,
+            scale_max=[
+                1.0416666666666667,
+                1.0416666666666667,
+                1.875,
+            ],
+            scale_w=1,
+            scale_z=1,
+            tpv_h=192,
+            tpv_w=192,
+            tpv_z=16,
+            type='VolumeGaussianDecoder'),
+        type='VolumeGaussian',
+        use_checkpoint=True),
+    volume_only=False,
+    with_pixel=True)
+near = 0.1
+num_cams = 2
+num_heads = 8
+num_layers = 1
+num_points = [
+    16,
+    32,
+    32,
+]
+num_points_in_pillar = [
+    8,
+    16,
+    16,
+]
+optimizer = dict(
+    lr=5e-05,
+    paramwise_cfg=dict(custom_keys=dict(img_backbone=dict(lr_mult=0.1))),
+    type='AdamW',
+    weight_decay=0.01)
+output_dir = '/gs/outputs_models/OmniScene/Use_NMRF_Stereo'
+patch_sizes = [
+    8,
+    8,
+    4,
+    2,
+]
+pc_range = [
+    -50.0,
+    -50.0,
+    -3.0,
+    50.0,
+    50.0,
+    12.0,
+]
+pc_xrange = 100.0
+pc_yrange = 100.0
+pc_zrange = 15.0
+point_cloud_range = [
+    -50.0,
+    -50.0,
+    -3.0,
+    50.0,
+    50.0,
+    12.0,
+]
+print_freq = 10
+report_to = 'tensorboard'
+resolution = [
+    224,
+    840,
+]
+resume_from = 'latest'
+save_epoch_freq = -1
+save_freq = 5000
+scale_h = 1
+scale_w = 1
+scale_z = 1
+seed = 0
+self_cross_layer = dict(
+    attn_cfgs=[
+        dict(
+            dropout=0.1,
+            embed_dims=128,
+            init_mode=0,
+            num_anchors=16,
+            num_heads=8,
+            num_points=32,
+            tpv_h=192,
+            tpv_w=192,
+            tpv_z=16,
+            type='TPVCrossViewHybridAttention'),
+        dict(
+            deformable_attention=dict(
+                embed_dims=128,
+                floor_sampling_offset=False,
+                num_heads=8,
+                num_levels=1,
+                num_points=[
+                    16,
+                    32,
+                    32,
+                ],
+                num_z_anchors=[
+                    8,
+                    16,
+                    16,
+                ],
+                tpv_h=192,
+                tpv_w=192,
+                tpv_z=16,
+                type='TPVMSDeformableAttention3D'),
+            dropout=0.1,
+            embed_dims=128,
+            num_cams=2,
+            pc_range=[
+                -50.0,
+                -50.0,
+                -3.0,
+                50.0,
+                50.0,
+                12.0,
+            ],
+            tpv_h=192,
+            tpv_w=192,
+            tpv_z=16,
+            type='TPVImageCrossAttention'),
+    ],
+    feedforward_channels=256,
+    ffn_dropout=0.1,
+    operation_order=(
+        'self_attn',
+        'norm',
+        'cross_attn',
+        'norm',
+        'ffn',
+        'norm',
+    ),
+    type='TPVFormerLayer')
+self_layer = dict(
+    attn_cfgs=[
+        dict(
+            dropout=0.1,
+            embed_dims=128,
+            init_mode=0,
+            num_anchors=16,
+            num_heads=8,
+            num_points=32,
+            tpv_h=192,
+            tpv_w=192,
+            tpv_z=16,
+            type='TPVCrossViewHybridAttention'),
+    ],
+    feedforward_channels=256,
+    ffn_dropout=0.1,
+    operation_order=(
+        'self_attn',
+        'norm',
+        'ffn',
+        'norm',
+    ),
+    type='TPVFormerLayer')
+sequence = '2013_05_28_drive_0000_sync'
+supp_view_nums = 6
+test_filelist = '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt'
+tpv_h_ = 192
+tpv_w_ = 192
+tpv_z_ = 16
+train_filelist = '/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt'
+use_center = True
+use_checkpoint = True
+use_first = False
+use_last = False
+use_stereo = True
+val_filelist = '/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt'
+val_freq = 3000
+volume_only = False
+warmup_steps = 1000
+work_dir = '/gs/output_models/saved_models/use_NMRFStereo'
+
+2025-05-22 12:32:56,557   INFO  Number of params: 81657684
+2025-05-22 12:33:49,295   INFO  [TRAIN] Save latest state dict to /gs/output_models/saved_models/use_NMRFStereo/checkpoint-0.
+2025-05-22 12:34:45,995   INFO  [TRAIN] Epoch 0 Iter     0/3848: Loss: 0.524, train/loss_recon: 0.124, train/loss_recon_w: 0.124, train/loss_recon_vol: 0.122, train/loss_recon_vol_w: 0.122, train/loss_perceptual: 0.633, train/loss_perceptual_w: 0.032, train/loss_perceptual_vol: 0.616, train/loss_perceptual_vol_w: 0.031, train/loss_depth_abs: 11.368, train/loss_depth_abs_w: 0.114, train/loss_depth_abs_vol: 10.161, train/loss_depth_abs_vol_w: 0.102, val/loss_recon: 0.120, val/loss_recon_w: 0.120, val/loss_recon_vol: 0.116, val/loss_recon_vol_w: 0.116, val/loss_perceptual: 0.689, val/loss_perceptual_w: 0.034, val/loss_perceptual_vol: 0.661, val/loss_perceptual_vol_w: 0.033, val/loss_depth_abs: 12.763, val/loss_depth_abs_w: 0.128, val/loss_depth_abs_vol: 10.883, val/loss_depth_abs_vol_w: 0.109,  grad_norm: 2.0, lr: 0.0000002, time: 109.420 (7.714)
+2025-05-22 12:35:30,926   INFO  [TRAIN] Epoch 0 Iter    10/3848: Loss: 0.527, train/loss_recon: 0.137, train/loss_recon_w: 0.137, train/loss_recon_vol: 0.134, train/loss_recon_vol_w: 0.134, train/loss_perceptual: 0.641, train/loss_perceptual_w: 0.032, train/loss_perceptual_vol: 0.615, train/loss_perceptual_vol_w: 0.031, train/loss_depth_abs: 10.510, train/loss_depth_abs_w: 0.105, train/loss_depth_abs_vol: 8.772, train/loss_depth_abs_vol_w: 0.088,  grad_norm: 1.6, lr: 0.0000010, time: 4.454 (0.067)
+2025-05-22 12:36:15,779   INFO  [TRAIN] Epoch 0 Iter    20/3848: Loss: 0.545, train/loss_recon: 0.133, train/loss_recon_w: 0.133, train/loss_recon_vol: 0.128, train/loss_recon_vol_w: 0.128, train/loss_perceptual: 0.625, train/loss_perceptual_w: 0.031, train/loss_perceptual_vol: 0.590, train/loss_perceptual_vol_w: 0.030, train/loss_depth_abs: 12.438, train/loss_depth_abs_w: 0.124, train/loss_depth_abs_vol: 9.866, train/loss_depth_abs_vol_w: 0.099,  grad_norm: 1.2, lr: 0.0000018, time: 4.461 (0.064)

@@ -1,7 +1,7 @@
 TRAIN_KITTI360_OmniScene(){
 cd ../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840_supp6_stereodepth.py"
+configs_path="/home/2/ux04482/20250522/FeedStereoGS/codes/configs/OmniScene/omni_gs_kitti360_stereo_r50_224x840_supp6_stereodepth.py"
 work_dir="/gs/output_models/saved_models/use_NMRFStereo"
 resume_from="None"
 
