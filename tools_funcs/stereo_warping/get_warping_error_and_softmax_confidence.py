@@ -121,11 +121,7 @@ if __name__=="__main__":
     
     
         
-    # import skimage.io 
-    # warped_left_vis = warped_left.squeeze(0).permute(1,2,0).cpu().numpy().astype(np.uint8)
-    # skimage.io.imsave("warped.png",warped_left_vis)   
-    # skimage.io.imsave("left.png",left_image_data.astype(np.uint8)) 
-    # skimage.io.imsave("right.png",right_image_data.astype(np.uint8)) 
+
 
     
         
