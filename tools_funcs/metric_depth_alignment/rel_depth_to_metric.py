@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
-
 def load_the_depthanytingV2_results(path,scale=50):
     # Read the image in unchanged mode (preserves uint16 format)
     img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
@@ -186,20 +185,25 @@ def Med_Scaling_Depth(rel_depth,gt_sparse_depth,valid_mask):
 
 if __name__=="__main__":
     
-    dpt_type = "Metric3DV2" # select from "depthanythingV2" and "Metric3DV2"
+    dpt_type = "NMRFStereo" # select from "depthanythingV2" and "Metric3DV2" and "NMRFStereo"
     matched_type = "None" # select from "LS" "Med", "None"
     if dpt_type =="depthanythingV2":
-        est_depth_rel_root_path = "/data1/StereoDatasets/KITTI/KITTI360/monocular_depth/monodepthV2/"
+        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/monocular_depth/monodepthV2/"
     elif dpt_type =='Metric3DV2':
-        est_depth_rel_root_path = "/data1/StereoDatasets/KITTI/KITTI360/monocular_depth/Metric3DV2/"
+        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/monocular_depth/Metric3DV2/"
+    elif dpt_type=='NMRFStereo':
+        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/KITTI360/PseudoDepth_NMRFStereo/"
     
     
     
-    sparse_gt_projected_root_path = "/data1/StereoDatasets/KITTI/KITTI360/projected_sparse_lidar/"
+    sparse_gt_projected_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/projected_sparse_lidar/"
     target_sequence_name = "2013_05_28_drive_0000_sync"
     image_folder_left = os.path.join(est_depth_rel_root_path,"data_2d_raw",target_sequence_name,"image_00/data_rect/")
     mean_mae = 0
     mean_mse = 0
+    
+    mean_mae_right = 0
+    mean_mse_right = 0
     
     idx = 0
     for fname in tqdm(sorted(os.listdir(image_folder_left))):
@@ -208,37 +212,86 @@ if __name__=="__main__":
         
         idx = idx +1
         pseudo_depth_path = os.path.join(image_folder_left,fname)
+        pseudo_depth_path_right = pseudo_depth_path.replace("image_00","image_01")
         
         if dpt_type == "depthanythingV2":
             depthanythingV2_est_depth_data = load_the_depthanytingV2_results(path=pseudo_depth_path)    
             normalized_depthanythingV2_depth = normalized_depth(depthanythingV2_est_depth_data)
             gt_sparse_project_depth = pseudo_depth_path.replace(est_depth_rel_root_path,sparse_gt_projected_root_path)
+
+            depthanythingV2_est_depth_data_right = load_the_depthanytingV2_results(path=pseudo_depth_path_right)    
+            normalized_depthanythingV2_depth_right = normalized_depth(depthanythingV2_est_depth_data_right)
+            gt_sparse_project_depth_right = pseudo_depth_path_right.replace(est_depth_rel_root_path,sparse_gt_projected_root_path)
+            
+            
+            
         elif dpt_type == "Metric3DV2":
             metric3d_results = load_the_Metric3DV2_results(path=pseudo_depth_path)
             normalized_depthanythingV2_depth = metric3d_results
             gt_sparse_project_depth = pseudo_depth_path.replace(est_depth_rel_root_path,sparse_gt_projected_root_path).replace("_dpt","")
-
-
+            
+            
+            metric3d_results_right = load_the_Metric3DV2_results(path=pseudo_depth_path_right)
+            normalized_depthanythingV2_depth_right = metric3d_results_right
+            gt_sparse_project_depth_right = pseudo_depth_path_right.replace(est_depth_rel_root_path,sparse_gt_projected_root_path).replace("_dpt","")
+            
+        elif dpt_type=='NMRFStereo':
+            metric3d_results = load_the_Metric3DV2_results(path=pseudo_depth_path)
+            normalized_depthanythingV2_depth = metric3d_results
+            gt_sparse_project_depth = pseudo_depth_path.replace(est_depth_rel_root_path,sparse_gt_projected_root_path)
+            
+            metric3d_results_right = load_the_Metric3DV2_results(path=pseudo_depth_path_right)
+            normalized_depthanythingV2_depth_right = metric3d_results_right
+            gt_sparse_project_depth_right = pseudo_depth_path_right.replace(est_depth_rel_root_path,sparse_gt_projected_root_path)
+            
+        
+        else:
+            raise NotImplementedError
+        
+        
         assert os.path.exists(gt_sparse_project_depth)
-
+        assert os.path.exists(gt_sparse_project_depth_right)
+        
         sparse_depth,valid_mask =loaded_projected_sparse_depth_and_valid_mask(gt_sparse_project_depth)
+        sparse_depth_right,valid_mask_right =loaded_projected_sparse_depth_and_valid_mask(gt_sparse_project_depth_right)
+        
         
         assert sparse_depth.shape == normalized_depthanythingV2_depth.shape
         assert sparse_depth.shape == valid_mask.shape
+        
+        assert sparse_depth_right.shape == normalized_depthanythingV2_depth_right.shape
+        assert sparse_depth_right.shape ==valid_mask_right.shape
+        
 
         aligned_pred, scale, shift  = depth2metric(rel_depth=normalized_depthanythingV2_depth,
                     gt_sparse_depth=sparse_depth,
                     valid_mask=valid_mask,align_type=matched_type)
+
+        aligned_pred_right, scale_right, shift_right  = depth2metric(rel_depth=normalized_depthanythingV2_depth_right,
+                    gt_sparse_depth=sparse_depth_right,
+                    valid_mask=valid_mask_right,align_type=matched_type)
         
         mse, mae = compute_depth_errors(gt_depth=sparse_depth, aligned_depth=aligned_pred, valid_mask=valid_mask.astype(np.bool_))
-    
+
+        mse_right, mae_right = compute_depth_errors(gt_depth=sparse_depth_right, 
+                                                    aligned_depth=aligned_pred_right, valid_mask=valid_mask_right.astype(np.bool_))
 
         mean_mae+=mae
         mean_mse+=mse
+        
+        mean_mse_right+=mse_right
+        mean_mae_right+=mae_right
     
     
     mean_mae = mean_mae/idx
     mean_mse = mean_mse/idx
     
+    
+    mean_mse_right = mean_mse_right/idx
+    mean_mae_right = mean_mae_right/idx
+    
     print("mean mse:",mean_mse)
     print("mean mae:",mean_mae)
+
+    print("mean mse right:",mean_mse_right)
+    print("mean mae right:",mean_mae_right)
