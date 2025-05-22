@@ -1,7 +1,7 @@
 #!/bin/sh
 #$ -cwd
 #$ -l gpu_1=1
-#$ -l h_rt=00:10:00
+#$ -l h_rt=00:25:00
 #$ -p -5
 #$ -N VSRD_TEST
 #$ -m ae
