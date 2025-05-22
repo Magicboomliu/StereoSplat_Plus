@@ -11,14 +11,14 @@ output_dir = "/gs/outputs_models/OmniScene/Large_TPV"
 # learning rate setiing
 lr = 8e-5
 grad_max_norm = 1.0
-print_freq = 1
-save_freq = 3000
-val_freq = 2000
-max_epochs = 50
+print_freq = 10
+save_freq = 5000
+val_freq = 3000
+max_epochs = 30
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 50000
+max_train_steps = 100000
 warmup_steps = 1000
 mixed_precision = "no"
 gradient_accumulation_steps = 1
@@ -38,7 +38,7 @@ resolution = [224, 840]
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 datapath = "/gs/KITTI360_For_Upload"
-train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
+train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
 #train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/small_train.txt"
 val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
@@ -117,7 +117,7 @@ _ffn_dim_ = _dim_ * 2
 
 # unit is a little bigger than the x_range,y_range and the z_range
 tpv_h_ = 192
-tpv_w_ = 192
+tpv_w_ = 288
 tpv_z_ = 16
 scale_h = 1
 scale_w = 1
