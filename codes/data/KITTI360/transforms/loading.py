@@ -54,9 +54,6 @@ def load_the_Metric3DV2_results(path,scale=256):
 
 def load_conditions(img_paths, reso):
     
-
-    
-
     def maybe_resize(img, tgt_reso, ck):
         if not isinstance(img, PIL.Image.Image):
             img = Image.fromarray(img)
@@ -152,6 +149,106 @@ def load_conditions(img_paths, reso):
     cks = torch.as_tensor(cks, dtype=torch.float32)
 
     return imgs, depths, depths_m, confs_m, cks
+
+
+
+def load_conditions_stereo(img_paths, reso):
+    
+    def maybe_resize(img, tgt_reso, ck):
+        if not isinstance(img, PIL.Image.Image):
+            img = Image.fromarray(img)
+        resize_flag = False
+        if img.height != tgt_reso[0] or img.width != tgt_reso[1]:
+            # img.resize((w, h))
+            fx, fy, cx, cy = ck[0, 0], ck[1, 1], ck[0, 2], ck[1, 2]
+            scale_h, scale_w = tgt_reso[0] / img.height, tgt_reso[1] / img.width
+            fx_scaled, fy_scaled, cx_scaled, cy_scaled = fx * scale_w, fy * scale_h, cx * scale_w, cy * scale_h
+            ck = np.array([[fx_scaled, 0, cx_scaled], [0, fy_scaled, cy_scaled], [0, 0, 1]])
+            img = img.resize((tgt_reso[1], tgt_reso[0]))
+            resize_flag = True
+        return np.array(img), ck, resize_flag
+    
+    imgs, cks = [], []
+    depths = [] # depths normalized
+    depths_m = [] # depths with metric
+    confs_m = []  # confidence
+    
+
+    for img_path in img_paths:      
+        if "image_00/data_rect" in img_path:
+            # left image
+            raw_ck = np.array([[552.554261,   0,       682.049453],
+                            [  0, 552.554261, 238.769549],
+                            [  0, 0,    1]]) # 3x3            
+        elif "image_01/data_rect" in img_path:
+            # right image
+            raw_ck = np.array([[552.554261,   0,       682.049453],
+                            [  0, 552.554261, 238.769549],
+                            [  0, 0,    1]]) # 3x3
+        
+        else:
+            raise NotImplementedError
+            
+        img = Image.open(img_path)
+        h, w = img.height, img.width
+        img, ck, resize_flag = maybe_resize(img, reso, raw_ck)
+        
+        img = HWC3(img)
+        imgs.append(img)
+        cks.append(ck)
+        
+        # relative depth from DepthAnything-v2
+        # /data1/StereoDatasets/KITTI/KITTI360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/data_rect/0000000256.png
+        # /data1/StereoDatasets/KITTI/KITTI360/monocular_depth/monodepthV2/data_2d_raw/2013_05_28_drive_0000_sync/
+        depth_path = img_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw")
+        assert os.path.exists(depth_path)
+        disp = load_the_depthanytingV2_results(depth_path)
+   
+        if resize_flag:
+            disp = Image.fromarray(disp)
+            disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
+            disp = np.array(disp)
+
+        
+        # inverse disparity to relative depth
+        # clamping the farthest depth to 50x of the nearest
+        range = np.minimum(disp.max() / (disp.min() + 0.001), 50.0)
+        max = disp.max()
+        min = max / range
+        depth = 1 / np.maximum(disp, min)
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) # range from 0 ~1
+        depths.append(depth)
+        
+        
+        # metric depth from Metric3D-v2
+        depthm_path = img_path.replace("data_2d_raw", "PseudoDepth_NMRFStereo/data_2d_raw")
+        
+        assert os.path.exists(depthm_path)
+        dptm = load_the_Metric3DV2_results(depthm_path)
+        conf = np.ones_like(dptm)
+        
+        
+        
+        if resize_flag:
+            dptm = Image.fromarray(dptm)
+            dptm = dptm.resize((reso[1], reso[0]), Image.BILINEAR)
+            dptm = np.array(dptm)
+            conf = Image.fromarray(conf)
+            conf = conf.resize((reso[1], reso[0]), Image.BILINEAR)
+            conf = np.array(conf)
+        
+        depths_m.append(dptm)
+        confs_m.append(conf)
+
+    imgs = torch.from_numpy(np.stack(imgs, axis=0)).permute(0, 3, 1, 2).float() / 255.0  # [v c h w]-->[6,3,H,W]
+    depths = torch.from_numpy(np.stack(depths, axis=0)).float()  # [v h w] ---->[6,H,W]
+    depths_m = torch.from_numpy(np.stack(depths_m, axis=0)).float()  # [v h w] ---->[6,H,W]
+    confs_m = torch.from_numpy(np.stack(confs_m, axis=0)).float()  # [v h w]  ---->[6,H,W]
+    cks = torch.as_tensor(cks, dtype=torch.float32)
+
+    return imgs, depths, depths_m, confs_m, cks
+
+
 
 
 

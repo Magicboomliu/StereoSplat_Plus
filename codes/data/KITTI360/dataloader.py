@@ -28,7 +28,7 @@ from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
-from data.KITTI360.transforms.loading import load_info, load_conditions
+from data.KITTI360.transforms.loading import load_info, load_conditions,load_conditions_stereo
 
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
@@ -55,14 +55,15 @@ class KITTI360Dataset(Dataset):
         use_first: bool = False,
         use_last: bool = False,
         supp_view_nums: int=0,
+        use_stereo: bool = False,
         **kwargs,
         ):
         super().__init__()
 
         self.datapath = datapath
         self.data_version = data_version
-        
         self.supp_view_nums = supp_view_nums
+        self.use_stereo = use_stereo
         
         self.camera_types = [
             "CAM_LEFT",
@@ -130,38 +131,38 @@ class KITTI360Dataset(Dataset):
         last_idx = 2
         
 
-        # # Adaptive Input
-        # if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
-        #     dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
-        #     if dynamic_input_frame_idx==0:
-        #         center_idx = dynamic_input_frame_idx
-        #         first_idx = 1
-        #         last_idx = 2
-        #     elif dynamic_input_frame_idx==1:
-        #         center_idx = dynamic_input_frame_idx # First as Center
-        #         first_idx = 0 # Center as First
-        #         last_idx = 2 # Last still Last
-        #     elif dynamic_input_frame_idx==2:
-        #         center_idx = dynamic_input_frame_idx # Last as Center
-        #         first_idx = 1 # First is still frist
-        #         last_idx = 0 # Center as Last
-        #     else:
-        #         # change the center and the current dynamic input idx
+        # Adaptive Input
+        if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
+            dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
+            if dynamic_input_frame_idx==0:
+                center_idx = dynamic_input_frame_idx
+                first_idx = 1
+                last_idx = 2
+            elif dynamic_input_frame_idx==1:
+                center_idx = dynamic_input_frame_idx # First as Center
+                first_idx = 0 # Center as First
+                last_idx = 2 # Last still Last
+            elif dynamic_input_frame_idx==2:
+                center_idx = dynamic_input_frame_idx # Last as Center
+                first_idx = 1 # First is still frist
+                last_idx = 0 # Center as Last
+            else:
+                # change the center and the current dynamic input idx
                 
-        #         swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
-        #         swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
-        #         swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
+                swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
+                swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
+                swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
                 
-        #         center_idx = 0
-        #         first_idx = 1
-        #         last_idx = 2
+                center_idx = 0
+                first_idx = 1
+                last_idx = 2
             
              
-        # else:
-        #     dynamic_input_frame_idx = 0
-        #     center_idx = dynamic_input_frame_idx
-        #     first_idx = 1
-        #     last_idx = 2
+        else:
+            dynamic_input_frame_idx = 0
+            center_idx = dynamic_input_frame_idx
+            first_idx = 1
+            last_idx = 2
         
         # center
         sensor_info_center = {sensor: bin_info["sensor_info"][sensor][center_idx] for sensor in self.camera_types + ["LIDAR_TOP"]}
@@ -208,9 +209,12 @@ class KITTI360Dataset(Dataset):
         input_w2cs = np.array(input_w2cs)  # 变成统一的 (2, 4, 4) ndarray
         input_w2cs = torch.from_numpy(input_w2cs).float()  # 更快、更标准
         
-
-        input_imgs, input_depths, input_depths_m, input_confs_m, input_cks = \
-                    load_conditions(input_img_paths, self.reso)      
+        if self.use_stereo:
+            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks = \
+                        load_conditions_stereo(input_img_paths, self.reso)     
+        else:
+            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks = \
+                        load_conditions(input_img_paths, self.reso)   
 
         input_cks = torch.as_tensor(input_cks, dtype=torch.float32) #(6,3,3)--> Camera Intrinsics
         
@@ -291,8 +295,13 @@ class KITTI360Dataset(Dataset):
         output_c2ws = torch.as_tensor(output_c2ws, dtype=torch.float32)  #(2*N,4,4)-->(2*6)
                 
         # load and modify images (cropped or resized if necessary), and modify intrinsics accordingly
-        output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
-                    load_conditions(output_img_paths, self.reso)
+        if self.use_stereo:
+            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
+                        load_conditions_stereo(output_img_paths, self.reso)
+        else:
+            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
+                        load_conditions(output_img_paths, self.reso)
+                        
         output_fxs, output_fys, output_cxs, output_cys = output_cks[:, 0, 0], output_cks[:, 1, 1], output_cks[:, 0, 2], output_cks[:, 1, 2]
         
         # compute image fovs and pixel directions
@@ -369,18 +378,19 @@ class KITTI360Dataset(Dataset):
 if __name__=="__main__":
     
     dataset_params = {
-        "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
-        "train_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
-        "val_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "test_filelist":"/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "data_version":"bin_infos_8.0_reordered",
+        "datapath":"/media/zliu/data12/dataset/KITTI/VSRD_Format/",
+        "train_filelist":"/home/zliu/Desktop/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
+        "val_filelist":"/home/zliu/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "test_filelist":"/home/zliu/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "data_version":"bin_infos_8.0",
         "resolution":[224, 840], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",
         "sequence":'2013_05_28_drive_0000_sync',
         "use_center":True,
         "use_first": False,
         "use_last": False,
-        "supp_view_nums": 10
+        "supp_view_nums": 8,
+        "use_stereo": False
     }
     
     dataset = KITTI360Dataset(**dataset_params)
