@@ -45,6 +45,7 @@ test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/F
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
+use_stereo=False
 
 
 dataset_params = dict(
@@ -67,7 +68,8 @@ dataset_params = dict(
     num_workers=8,
     num_workers_val=8,
     num_workers_test=4,
-    supp_view_nums=supp_view_nums
+    supp_view_nums=supp_view_nums,
+    use_stereo=use_stereo
 )
 
 num_cams = 2
