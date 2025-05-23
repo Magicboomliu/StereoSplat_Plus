@@ -43,8 +43,9 @@ train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/
 val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0_reordered"
-supp_view_nums=8
+data_version="bin_infos_8.0"
+supp_view_nums=6
+use_stereo=False
 
 
 dataset_params = dict(
@@ -67,7 +68,8 @@ dataset_params = dict(
     num_workers=8,
     num_workers_val=8,
     num_workers_test=4,
-    supp_view_nums=supp_view_nums
+    supp_view_nums=supp_view_nums,
+    use_stereo = use_stereo
 )
 
 num_cams = 2
@@ -117,7 +119,7 @@ _ffn_dim_ = _dim_ * 2
 
 # unit is a little bigger than the x_range,y_range and the z_range
 tpv_h_ = 192
-tpv_w_ = 19
+tpv_w_ = 192
 tpv_z_ = 16
 scale_h = 1
 scale_w = 1

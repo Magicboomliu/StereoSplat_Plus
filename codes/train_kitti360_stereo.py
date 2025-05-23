@@ -122,7 +122,11 @@ def main(args):
 
     # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
-    
+
+    if "use_stereo" in dataset_config.keys():
+        use_stereo = dataset_config.use_stereo
+    else:
+        use_stereo = False
     
     train_params = {
         "datapath":dataset_config.datapath,
@@ -136,7 +140,8 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
-        "supp_view_nums": dataset_config.supp_view_nums
+        "supp_view_nums": dataset_config.supp_view_nums,
+        "use_stereo": use_stereo
         
     }
 
@@ -152,7 +157,8 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
-        "supp_view_nums": 3
+        "supp_view_nums": 3,
+        "use_stereo": use_stereo
         
     }
     
