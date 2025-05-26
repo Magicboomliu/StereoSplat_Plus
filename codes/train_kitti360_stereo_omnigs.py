@@ -183,10 +183,6 @@ def main(args):
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
 
-    # resume and load
-    epoch = 0
-    global_iter = 0
-    first_epoch = 0
 
     # resume and load
     epoch = 0
