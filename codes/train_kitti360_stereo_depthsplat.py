@@ -5,7 +5,9 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-import data.KITTI360.dataloader as datasets
+
+import depthsplat.src.datasets_stereo_matching.KITTI360.dataloader as datasets
+
 
 import mmcv
 import mmengine
@@ -81,6 +83,7 @@ def main(args):
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
     
+
     max_num_epochs = cfg.max_epochs # default is 30
     # configure logger
     if accelerator.is_main_process:
@@ -99,42 +102,27 @@ def main(args):
     '''Define the Dataloader Here'''
     dataset = getattr(datasets, dataset_config.dataset_name)
 
-    if "use_stereo" in dataset_config.keys():
-        use_stereo = dataset_config.use_stereo
-    else:
-        use_stereo = False
-    
+        
     train_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
         "val_filelist":dataset_config.val_filelist,
         "test_filelist":dataset_config.val_filelist,
-        "data_version":dataset_config.data_version,
         "resolution":dataset_config.resolution, 
         "split":"train",
-        "sequence":dataset_config.sequence,
-        "use_center":dataset_config.use_center,
-        "use_first": dataset_config.use_first,
-        "use_last": dataset_config.use_last,
-        "supp_view_nums": dataset_config.supp_view_nums,
-        "use_stereo": use_stereo
-        
-    }
+        "use_projected_lidar":dataset_config.use_projected_lidar,
+        "use_pseudo_depth":dataset_config.use_pseudo_depth }
+    
 
     val_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
         "val_filelist":dataset_config.val_filelist,
         "test_filelist":dataset_config.val_filelist,
-        "data_version":dataset_config.data_version,
         "resolution":dataset_config.resolution, 
         "split":"val",
-        "sequence":dataset_config.sequence,
-        "use_center":dataset_config.use_center,
-        "use_first": dataset_config.use_first,
-        "use_last": dataset_config.use_last,
-        "supp_view_nums": 3,
-        "use_stereo": use_stereo
+        "use_projected_lidar":True,
+        "use_pseudo_depth":True
         
     }
     
@@ -151,7 +139,7 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
     
-    
+
     '''Define the network here, here is the depth estimatro only.'''
     encoder_cfg = cfg.model.encoder
     depth_estimator_unimatch = MultiViewUniMatch(
@@ -230,8 +218,7 @@ def main(args):
                 path = dirs[-1]
             else:
                 path = None
-
-
+                
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
@@ -249,7 +236,8 @@ def main(args):
 
     # training
     print_freq = cfg.print_freq
-
+    print("Begin Training the Depth Estimator...")
+    
     while epoch < max_num_epochs:
         my_model.train()
         data_time_s = time.time()
@@ -259,10 +247,9 @@ def main(args):
             data_time_e = time.time()
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
-                
-                my_model(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                my_model(batch, "train", iter=global_iter, cfg=cfg)
                 quit()
-        
+    
         
 
     

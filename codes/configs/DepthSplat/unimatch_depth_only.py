@@ -24,26 +24,16 @@ mixed_precision = "no"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
-
 seed=42
 
-
 # only using the center for training
-use_center, use_first, use_last = True, False, False
 resolution = [224, 840]
-
-# LiDAR Range id different
-point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
 datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
-train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
-#train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/small_train.txt"
-val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
-supp_view_nums=3
-use_stereo=False
+train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
+val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+use_projected_lidar=True
+use_pseudo_depth=True
 
 # Dataset Configuration
 dataset_params = dict(
@@ -53,23 +43,19 @@ dataset_params = dict(
     train_filelist=train_filelist,
     val_filelist=val_filelist,
     test_filelist=test_filelist,
-    sequence=sequence,
-    data_version=data_version,
     resolution=resolution,
-    pc_range=point_cloud_range,
-    use_center=use_center,
-    use_first=use_first,
-    use_last=use_last,
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
     num_workers_val=8,
     num_workers_test=4,
-    supp_view_nums=supp_view_nums,
-    use_stereo=use_stereo
+    use_projected_lidar =use_projected_lidar,
+    use_pseudo_depth=use_pseudo_depth
 )
 
+min_depth=0.3
+max_depth=100
 
 # Model Part: Definition
 model = dict(
