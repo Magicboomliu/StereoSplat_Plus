@@ -27,7 +27,7 @@ report_to = "tensorboard"
 seed=42
 
 # only using the center for training
-resolution = [224, 840]
+resolution = [224, 832]
 datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
 train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
 val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
