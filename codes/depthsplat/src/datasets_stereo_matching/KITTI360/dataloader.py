@@ -29,7 +29,6 @@ from depthsplat.src.datasets_stereo_matching.KITTI360.transforms.loading import 
 import matplotlib.pyplot as plt
 
 
-
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
         lines = f.readlines()
