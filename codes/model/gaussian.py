@@ -270,7 +270,7 @@ class GaussianRenderer:
                         tanfovy=tan_half_fovy,
                         bg=self.bg_color if bg_color is None else bg_color,
                         scale_modifier=scale_modifier,
-                        viewmatrix=w2c,
+                        viewmatrix=w2c, # world to cam matrix
                         projmatrix=proj,
                         sh_degree=0,
                         campos=cam_p, # center cam

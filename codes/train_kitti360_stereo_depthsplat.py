@@ -20,12 +20,8 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
-
-
-
-from depthsplat.src.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
-
-
+from depthsplat.src.models.model_warpper import ModelWarpper
+from depthsplat.src.models.encoder.unimatch.mv_unimatch  import MultiViewUniMatch
 
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
@@ -167,18 +163,19 @@ def main(args):
             grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
         )
     
-    n_parameters = sum(p.numel() for p in depth_estimator_unimatch.parameters() if p.requires_grad)
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch)
+    
+    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
     if logger is not None:
         logger.info(f'Number of params: {n_parameters}')
     
-    
-    
-    '''Define the Optimizers'''
+    ''' Define the optimizers '''
     # 假设 model 已经构建好
     param_groups = [
         {"params": [], "lr": 2e-4},             # 默认组
         {"params": [], "lr": 2e-4 * 0.01},      # 'pretrained' 组，lr_mult=0.01
     ]
+    
     for name, param in depth_estimator_unimatch.named_parameters():
         if not param.requires_grad:
             continue
@@ -188,8 +185,6 @@ def main(args):
             param_groups[0]["params"].append(param)
 
     optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
-
-
     # learning rate scheme
     warm_up = torch.optim.lr_scheduler.LinearLR(
         optimizer,
@@ -201,15 +196,17 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warm_up, scheduler], milestones=[cfg.warmup_steps*accelerator.num_processes])
 
 
+    ###########################################-----------------############################################################
+
+
     # move to the accelerate
     my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
-        depth_estimator_unimatch, optimizer, train_dataloader, val_dataloader, scheduler
-    )
+        my_model, optimizer, train_dataloader, val_dataloader, scheduler)
+    
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
         
-
     # resume and load
     epoch = 0
     global_iter = 0
@@ -218,6 +215,7 @@ def main(args):
     # Potentially load in the weights and states from a previous save
     if args.resume_from:
         cfg.resume_from = args.resume_from
+    
     if cfg.resume_from:
         if cfg.resume_from == "None":
             path = None
@@ -262,7 +260,7 @@ def main(args):
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
-
+                my_model(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
                 quit()
         
         
