@@ -18,6 +18,7 @@ from PIL import Image
 import torchvision.transforms as T
 from .encoder.unimatch.mv_unimatch import MultiViewUniMatch
 import numpy as np
+from .loss import depth_l1_loss,depth_loss
 
 
 @dataclass
@@ -26,8 +27,9 @@ class OptimizerCfg:
     warm_up_steps: int
     lr_monodepth: float
     weight_decay: float
-    
-    
+
+
+
 class ModelWarpper(nn.Module):
     def __init__(self, 
                  depth_estimator=None,
@@ -44,6 +46,8 @@ class ModelWarpper(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
+
+
     
 
     def forward(self,batch, mode="train", iter=0, cfg=None):
@@ -58,6 +62,15 @@ class ModelWarpper(nn.Module):
         intrinsics = batch['intrinsics'] # [B,V,3,3]
         extrinsics = batch['extrinsics'] # [B,V,4,4]
         nn_matrix = batch['nn_matrix'] #[B,V,K]
+        
+        
+        pseudo_depth = batch['pseudo_depths']
+        sparse_gt_depth = batch['sparse_depths']
+
+        mask = sparse_gt_depth>0
+        mask = mask.float()
+
+        
         
         num_of_cameras = images.shape[1]
         
@@ -87,10 +100,22 @@ class ModelWarpper(nn.Module):
         )
         
         
-        print(results_dict.keys()) 
+        # loss here
+        psuedo_depth_loss = depth_l1_loss(depth_pred=results_dict['depth_preds'][0],
+                                          depth_gt=pseudo_depth)
+        
+        gt_sparse_lidar_loss = 0
+        
+        total_loss = psuedo_depth_loss * 0.5 + gt_sparse_lidar_loss*1.0
+
+        loss_terms = {}
+        def set_loss(key, split, loss_value, loss_weight=1.0):
+            loss_terms[f"{split}/loss_{key}"] = loss_value.item()
+            loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight
+            
+        set_loss("Total_Loss","train",total_loss,loss_weight=1.0)
+        
         # dict_keys(['features_cnn_all_scales', 'features_cnn', 'features_mv', 'features_mono_intermediate', 'features_mono', 'depth_preds', 'match_probs'])
-        quit()
+        return total_loss, loss_terms,results_dict
         
-        
-        pass
 

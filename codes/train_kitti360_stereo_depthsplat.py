@@ -247,13 +247,80 @@ def main(args):
             data_time_e = time.time()
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
-                my_model(batch, "train", iter=global_iter, cfg=cfg)
-                quit()
-    
+                try:
+                    loss,log,result_dicts = my_model(batch, "train", iter=global_iter, cfg=cfg)
+                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        continue  # 直接跳过当前 iteration
+                    
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
         
+                except:
+                    torch.cuda.empty_cache()
+                    print(batch['bin_token'])
+                    print("Here is Error Encounter......")
+                    continue  # 或 return / break
 
+                if accelerator.sync_gradients:
+                    grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+                optimizer.step()
+                scheduler.step()
+
+            accelerator.wait_for_everyone()
+            
+            if accelerator.sync_gradients and accelerator.is_main_process:
+                if global_iter % cfg.save_freq == 0:
+                    if accelerator.is_main_process:
+                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
+                        accelerator.save_state(save_file_name)
+                        dst_file = osp.join(args.work_dir, 'latest')
+                        mmengine.utils.symlink(save_file_name, dst_file)
+                        if logger is not None:
+                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+
+                # TODO here
+                # if global_iter % cfg.val_freq == 0:
+                #     my_model.eval()
+                #     if accelerator.is_main_process:
+                #         for i_iter_val, batch_val in enumerate(val_dataloader):
+                #             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                #             val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                #                                 "step-{}/batch-{}".format(global_iter, i_iter_val))
+                #             log_val = my_model.validation_step(batch_val, val_batch_save_dir)
+                #             log.update(log_val)
+                #     my_model.train()
+
+
+        
+            time_e = time.time()
+            # print loss log regularly
+            if global_iter % print_freq == 0 and accelerator.is_main_process:
+                lr = optimizer.param_groups[0]['lr']
+                losses_str = ""
+                for loss_k, loss_v in log.items():
+                    losses_str += ("%s: %.3f, " % (loss_k, loss_v))
+                if logger is not None:
+                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
+                        epoch, i_iter, len(train_dataloader), 
+                        loss.item(), losses_str, grad_norm, lr,
+                        time_e - time_s, data_time_e - data_time_s
+                    ))
+            
+            global_iter += 1
     
+            # dump loss log to tensorboard
+            accelerator.log(log, step=global_iter)
 
+            data_time_s = time.time()
+            time_s = time.time()
+
+        epoch += 1
+
+    # Create the pipeline using the trained modules and save it.
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
+    
 
         
         
