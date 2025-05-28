@@ -13,8 +13,6 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
-
-
 def read_annotation(annotation_filename):
 
     with open(annotation_filename) as file:
@@ -24,18 +22,13 @@ def read_annotation(annotation_filename):
     
     return extrinsic_matrix
 
-
-
 def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,use_pseudo_depth=True):
-
     imgs = []
     sparse_depths = []
     pseudo_depths = []
     cKs = [] # instrincs
     cTs = [] # extrincs
 
-
-    
     def maybe_resize(img, tgt_reso, ck):
         if not isinstance(img, PIL.Image.Image):
             img = Image.fromarray(img)
@@ -103,9 +96,9 @@ def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,us
         assert os.path.exists(gt_projected_sparse_depth_path_left_abs)
         assert os.path.exists(gt_projected_sparse_depth_path_right_abs)
         
-        
         sparse_gt_left = load_the_Metric3DV2_results(path=gt_projected_sparse_depth_path_left_abs) #(H,W)
         sparse_gt_right = load_the_Metric3DV2_results(path=gt_projected_sparse_depth_path_right_abs)
+
 
         if resize_flag:
             sparse_gt_left = Image.fromarray(sparse_gt_left)
@@ -115,7 +108,6 @@ def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,us
             sparse_gt_right = Image.fromarray(sparse_gt_right)
             sparse_gt_right = sparse_gt_right.resize((reso[1], reso[0]), Image.BILINEAR)
             sparse_gt_right = np.array(sparse_gt_right)
-        
         
         sparse_depths.append(sparse_gt_left)
         sparse_depths.append(sparse_gt_right)
