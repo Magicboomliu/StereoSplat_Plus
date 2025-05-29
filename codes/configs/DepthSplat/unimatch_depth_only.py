@@ -12,13 +12,13 @@ output_dir = "outputs/depthsplat_depth_estimation_only_224x840"
 lr = 2e-4
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 12000
+save_freq = 10000
 val_freq = 5000
 max_epochs = 50
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 50000
+max_train_steps = 500000
 warmup_steps = 1000
 mixed_precision = "no"
 gradient_accumulation_steps = 1

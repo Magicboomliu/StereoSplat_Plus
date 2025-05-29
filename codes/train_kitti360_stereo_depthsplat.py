@@ -7,7 +7,7 @@ from diffusers.optimization import get_scheduler
 import math
 
 import depthsplat.src.datasets_stereo_matching.KITTI360.dataloader as datasets
-
+import json
 
 import mmcv
 import mmengine
@@ -44,6 +44,61 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
 
     logger.propagate = False
     return logger
+
+
+def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
+    """
+    Computes MAE and MSE between predicted and GT depth maps, with optional valid range filtering.
+
+    Args:
+        depth_pred (torch.Tensor): Predicted depth, shape [B, V, H, W]
+        depth_gt (torch.Tensor): Ground truth depth, shape [B, V, H, W]
+        valid_min (float): minimum valid GT depth
+        valid_max (float): maximum valid GT depth
+
+    Returns:
+        mae (torch.Tensor): scalar mean absolute error
+        mse (torch.Tensor): scalar mean squared error
+    """
+    assert depth_pred.shape == depth_gt.shape, "Shape mismatch between prediction and GT"
+
+    # Create valid mask (only use pixels with valid GT depth)
+    valid_mask = (depth_gt > valid_min) & (depth_gt < valid_max)
+
+    # Compute errors
+    abs_error = torch.abs(depth_pred - depth_gt)
+    sq_error = (depth_pred - depth_gt) ** 2
+
+    # Apply mask
+    abs_error = abs_error[valid_mask]
+    sq_error = sq_error[valid_mask]
+
+    # Final metrics
+    mae = abs_error.mean()
+    mse = sq_error.mean()
+
+    return mae, mse
+
+
+def save_dict_to_json(data_dict, save_path, overwrite=True):
+    """
+    Save a dictionary to a JSON file.
+
+    Args:
+        data_dict (dict): Dictionary to save
+        save_path (str): Full path to the JSON file (e.g., "./results/result.json")
+        overwrite (bool): Whether to overwrite the file if it exists
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    if not overwrite and os.path.exists(save_path):
+        print(f"[Warning] File already exists: {save_path}. Skipping save.")
+        return
+
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump(data_dict, f, indent=4, ensure_ascii=False)
+
+    print(f"[Info] Saved dictionary to: {save_path}")
 
 
 def main(args):
@@ -171,6 +226,7 @@ def main(args):
             param_groups[1]["params"].append(param)
         else:
             param_groups[0]["params"].append(param)
+    
 
     optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
     # learning rate scheme
@@ -280,16 +336,50 @@ def main(args):
                             logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
 
                 # TODO here
-                # if global_iter % cfg.val_freq == 0:
-                #     my_model.eval()
-                #     if accelerator.is_main_process:
-                #         for i_iter_val, batch_val in enumerate(val_dataloader):
-                #             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                #             val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
-                #                                 "step-{}/batch-{}".format(global_iter, i_iter_val))
-                #             log_val = my_model.validation_step(batch_val, val_batch_save_dir)
-                #             log.update(log_val)
-                #     my_model.train()
+                if global_iter % cfg.val_freq ==0:
+                    my_model.eval()
+                    if accelerator.is_main_process:
+                        MAE_Meter = 0
+                        MSE_Meter = 0
+                        for i_iter_val, batch_val in enumerate(val_dataloader):
+                            
+                            with torch.no_grad():
+                                pred_depth_val = my_model(batch_val, "val", iter=global_iter, cfg=cfg)
+                                psuedo_gt_depth_val = batch_val['pseudo_depths']
+                                
+    
+                            
+                            
+                            current_mae,current_mse = compute_depth_mae_mse(depth_pred=pred_depth_val,
+                                                                            depth_gt=psuedo_gt_depth_val)
+                            
+                            MAE_Meter+=current_mae
+                            MSE_Meter+=current_mse
+                            
+                            if i_iter_val%5==0:
+                                print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                                logger.info('MAE is {}, MSE is {}'.format(current_mae,current_mse))
+ 
+                        MAE_Meter = MAE_Meter/(i_iter_val+1)
+                        MSE_Meter = MSE_Meter/(i_iter_val+1)
+                        val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                                                "step-{}/batch-{}".format(global_iter, i_iter_val))
+                        os.makedirs(val_batch_save_dir,exist_ok=True)
+                        
+                        saved_val_mae_mse_batch = os.path.join(val_batch_save_dir,
+                                                               'pred.json')
+                        saved_val_results = dict()
+                        saved_val_results['mae'] = MAE_Meter 
+                        saved_val_results['mse'] = MSE_Meter
+                        
+                        
+                        save_dict_to_json(data_dict=saved_val_results,
+                                          save_path=saved_val_mae_mse_batch)
+                        
+                        
+                    my_model.train()
+                    
+
 
 
         

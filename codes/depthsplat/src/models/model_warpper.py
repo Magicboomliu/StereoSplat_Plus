@@ -47,6 +47,8 @@ class ModelWarpper(nn.Module):
     def dtype(self):
         return next(self.parameters()).dtype
 
+    
+    
 
     
 
@@ -83,6 +85,7 @@ class ModelWarpper(nn.Module):
         
         height, width = images.shape[3:]
         
+        intrinsics = intrinsics.clone()
         # Normalized the instrinsics -----> Maybe not neccssary
         intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
         intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height
@@ -98,7 +101,6 @@ class ModelWarpper(nn.Module):
             extrinsics=extrinsics,
             nn_matrix=nn_matrix
         )
-        
         
         # loss here
         psuedo_depth_loss = depth_l1_loss(depth_pred=results_dict['depth_preds'][0],
@@ -116,6 +118,9 @@ class ModelWarpper(nn.Module):
         set_loss("Total_Loss","train",total_loss,loss_weight=1.0)
         
         # dict_keys(['features_cnn_all_scales', 'features_cnn', 'features_mv', 'features_mono_intermediate', 'features_mono', 'depth_preds', 'match_probs'])
-        return total_loss, loss_terms,results_dict
         
+        if mode=='train':
+            return total_loss, loss_terms,results_dict
+        elif mode=='val' or mode=='test':
+            return results_dict['depth_preds'][0]
 
