@@ -48,8 +48,8 @@ def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,us
     
     annotation_file_path_left = os.path.join(datapath,current_filemname)
     annotation_file_path_right = annotation_file_path_left.replace("image_00","image_01")
-    assert os.path.exists(annotation_file_path_left)
-    assert os.path.exists(annotation_file_path_right)
+    assert os.path.exists(annotation_file_path_left), "Missing the Path is {}".format(annotation_file_path_left)
+    assert os.path.exists(annotation_file_path_right),"Missing the Path is {}".format(annotation_file_path_right)
 
     left_image_path = current_filemname.replace("annotations",'data_2d_raw').replace(".json",".png")
     left_image_path_abs = os.path.join(datapath,left_image_path)
