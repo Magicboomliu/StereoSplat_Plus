@@ -27,6 +27,7 @@ from depthsplat.src.datasets_stereo_matching.KITTI360.transforms.loading import 
 
 # debug here
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 def read_text_lines(filepath):
@@ -270,7 +271,7 @@ if __name__=="__main__":
     
 
     
-    for idx, sample in enumerate(train_dataloader):
+    for sample in tqdm(train_dataloader):
         
         imgs = sample['imgs']
         intrinsics = sample['intrinsics']
@@ -279,46 +280,9 @@ if __name__=="__main__":
         pseudo_depths = sample['pseudo_depths']
         nn_matrix = sample['nn_matrix']
         
-        # print(imgs.shape)        #[B, 2, 3, 224, 832]
-        # print(intrinsics.shape)  #[B, 2, 3, 3]
-        # print(extrinsics.shape)  #[B,2,4,4]
-        # print(sparse_depths.shape) #[B,2,H,W]
-        # print(pseudo_depths.shape) #[B,2,H,W]
-        # print(nn_matrix.shape)     #[B,2,H,W]
-        
-        warped_left =warp_image2_to_image1(image2=imgs[:,1,:,:,:],depth_map1=pseudo_depths[:,0:1,:,:],
-                              K=intrinsics,T=extrinsics)
-        
-        warped_right = warp_image1_to_image2(image1=imgs[:,0,:,:,:],depth_map2=pseudo_depths[:,1:2,:,:],
-                              K=intrinsics,T=extrinsics)
-        
-
-        
-        plt.subplot(2,2,1)
-        plt.axis('off')
-        plt.title("left image")
-        plt.imshow(imgs[0,0].permute(1,2,0).cpu().numpy())
-        plt.subplot(2,2,2)
-        plt.axis('off')
-        plt.title("right image")
-        plt.imshow(imgs[0,1].permute(1,2,0).cpu().numpy())
-        
-        plt.subplot(2,2,3)
-        plt.axis('off')
-        plt.title("warped_left")
-        plt.imshow(warped_left[0].permute(1,2,0).cpu().numpy())
-        plt.subplot(2,2,4)
-        plt.axis('off')
-        plt.title("right image")
-        plt.imshow(warped_right[0].permute(1,2,0).cpu().numpy())    
-        
-        plt.savefig("1.png")
+    print("Done")
         
         
         
-
-        
-        quit()
-    
 
     

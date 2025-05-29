@@ -17,7 +17,6 @@ from .visualization.encoder_visualizer_depthsplat_cfg import EncoderVisualizerDe
 import torchvision.transforms as T
 import torch.nn.functional as F
 
-
 # depth estimator
 from .unimatch.mv_unimatch import MultiViewUniMatch
 from .unimatch.dpt_head import DPTHead

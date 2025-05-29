@@ -303,20 +303,15 @@ def main(args):
             data_time_e = time.time()
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
-                try:
-                    loss,log,result_dicts = my_model(batch, "train", iter=global_iter, cfg=cfg)
-                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        continue  # 直接跳过当前 iteration
-                    
-                    with torch.autograd.detect_anomaly():
-                        accelerator.backward(loss)
-        
-                except:
-                    torch.cuda.empty_cache()
-                    print(batch['bin_token'])
-                    print("Here is Error Encounter......")
-                    continue  # 或 return / break
+
+                loss,log,result_dicts = my_model(batch, "train", iter=global_iter, cfg=cfg)
+                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                if torch.isnan(loss) or torch.isinf(loss):
+                    continue  # 直接跳过当前 iteration
+                
+                with torch.autograd.detect_anomaly():
+                    accelerator.backward(loss)
+  
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
@@ -335,31 +330,25 @@ def main(args):
                         if logger is not None:
                             logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
 
-                # TODO here
+
                 if global_iter % cfg.val_freq ==0:
                     my_model.eval()
                     if accelerator.is_main_process:
                         MAE_Meter = 0
                         MSE_Meter = 0
                         for i_iter_val, batch_val in enumerate(val_dataloader):
-                            
                             with torch.no_grad():
                                 pred_depth_val = my_model(batch_val, "val", iter=global_iter, cfg=cfg)
                                 psuedo_gt_depth_val = batch_val['pseudo_depths']
-                                
-    
-                            
-                            
-                            current_mae,current_mse = compute_depth_mae_mse(depth_pred=pred_depth_val,
-                                                                            depth_gt=psuedo_gt_depth_val)
-                            
-                            MAE_Meter+=current_mae
-                            MSE_Meter+=current_mse
-                            
-                            if i_iter_val%5==0:
-                                print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                                logger.info('MAE is {}, MSE is {}'.format(current_mae,current_mse))
- 
+                                current_mae,current_mse = compute_depth_mae_mse(depth_pred=pred_depth_val,
+                                                                                depth_gt=psuedo_gt_depth_val)
+                                MAE_Meter+=current_mae
+                                MSE_Meter+=current_mse
+      
+                                if i_iter_val%5==0:
+                                    print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                                    logger.info('MAE is {}, MSE is {}'.format(current_mae,current_mse))
+
                         MAE_Meter = MAE_Meter/(i_iter_val+1)
                         MSE_Meter = MSE_Meter/(i_iter_val+1)
                         val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
@@ -369,20 +358,13 @@ def main(args):
                         saved_val_mae_mse_batch = os.path.join(val_batch_save_dir,
                                                                'pred.json')
                         saved_val_results = dict()
-                        saved_val_results['mae'] = MAE_Meter 
-                        saved_val_results['mse'] = MSE_Meter
-                        
-                        
+                        saved_val_results['mae'] = MAE_Meter.data.item() 
+                        saved_val_results['mse'] = MSE_Meter.data.item()
                         save_dict_to_json(data_dict=saved_val_results,
                                           save_path=saved_val_mae_mse_batch)
-                        
-                        
                     my_model.train()
                     
 
-
-
-        
             time_e = time.time()
             # print loss log regularly
             if global_iter % print_freq == 0 and accelerator.is_main_process:
