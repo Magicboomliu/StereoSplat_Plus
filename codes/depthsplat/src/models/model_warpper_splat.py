@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol, runtime_checkable
-
 import moviepy.editor as mpy
 import wandb
 from einops import pack, rearrange, repeat, einsum
@@ -19,8 +18,8 @@ import torchvision.transforms as T
 
 #FIXME Here
 from encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from encoder.unimatch.dpt_head import DPTHead
 import numpy as np
-
 
 
 @dataclass
@@ -39,7 +38,12 @@ class ModelWarpper(nn.Module):
                  ):
         super().__init__()
         
+        # depth estimation
         self.depth_estimator = depth_estimator
+        
+        # 3D Gaussains Estimation Head
+        
+        
     @property
     def device(self):
         return next(self.parameters()).device
@@ -101,10 +105,11 @@ class ModelWarpper(nn.Module):
 if __name__=="__main__":
     
     class CFG(object):
-        def __init__(self,max_train_steps,max_depth,min_depth):
+        def __init__(self,max_train_steps,max_depth,min_depth,train_depth_only):
             self.max_train_steps= max_train_steps
             self.max_depth = max_depth
             self.min_depth = min_depth
+            self.train_depth_only = train_depth_only
             
     
     input_images = torch.randn(1,2,3,224,832).cuda() # batch is 2, 0 is left and the 1 is the right
