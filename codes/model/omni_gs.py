@@ -891,16 +891,16 @@ class OmniGaussian(BaseModule):
                          output_the_predicted_images=False
                          ):
         
-        # saved as a batch
-        os.makedirs(save_dir, exist_ok=True)
+        # # saved as a batch
+        # os.makedirs(save_dir, exist_ok=True)
         
-        saved_omni_folder = os.path.join(save_dir,"omni")
-        saved_pixel_folder = os.path.join(save_dir,'pixel')
-        saved_volume_folder = os.path.join(save_dir,'volume')
+        # saved_omni_folder = os.path.join(save_dir,"omni")
+        # saved_pixel_folder = os.path.join(save_dir,'pixel')
+        # saved_volume_folder = os.path.join(save_dir,'volume')
         
-        os.makedirs(saved_omni_folder,exist_ok=True)
-        os.makedirs(saved_pixel_folder,exist_ok=True)
-        os.makedirs(saved_volume_folder,exist_ok=True)
+        # os.makedirs(saved_omni_folder,exist_ok=True)
+        # os.makedirs(saved_pixel_folder,exist_ok=True)
+        # os.makedirs(saved_volume_folder,exist_ok=True)
         
         batch_size = render_pkg_fuse["image"].shape[0]
         
@@ -967,33 +967,33 @@ class OmniGaussian(BaseModule):
                 renderer.save_ply(gaussians_reformat, gs_save_path)
         
     
-        # visualizations
-        if output_the_predicted_images:
+        # # visualizations
+        # if output_the_predicted_images:
             
             
-            for i in range(batch_size):
+        #     for i in range(batch_size):
                 
-                current_bin_token_name = bin_token_list[i]
-                save_vis(saved_omni_folder, i, n_rand_view, render_pkg_fuse, gaussians_all, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
-                        current_bin_token_name
-                        )
+        #         current_bin_token_name = bin_token_list[i]
+        #         save_vis(saved_omni_folder, i, n_rand_view, render_pkg_fuse, gaussians_all, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
+        #                 current_bin_token_name
+        #                 )
             
             
-            if render_pkg_pixel is not None:
-                for i in range(batch_size):
-                    current_bin_token_name = bin_token_list[i]
-                    save_vis(saved_pixel_folder, i, n_rand_view, render_pkg_pixel, None, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
-                            current_bin_token_name
-                            )
+        #     if render_pkg_pixel is not None:
+        #         for i in range(batch_size):
+        #             current_bin_token_name = bin_token_list[i]
+        #             save_vis(saved_pixel_folder, i, n_rand_view, render_pkg_pixel, None, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
+        #                     current_bin_token_name
+        #                     )
             
             
             
-            if render_pkg_volume is not None:
-                for i in range(batch_size):
-                    current_bin_token_name = bin_token_list[i]
-                    save_vis(saved_volume_folder, i, n_rand_view, render_pkg_volume, None, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
-                            current_bin_token_name
-                            )
+        #     if render_pkg_volume is not None:
+        #         for i in range(batch_size):
+        #             current_bin_token_name = bin_token_list[i]
+        #             save_vis(saved_volume_folder, i, n_rand_view, render_pkg_volume, None, rgbs_gt, depths_m_gt, mask_dptm, self.renderer,
+        #                     current_bin_token_name
+        #                     )
 
         
         
