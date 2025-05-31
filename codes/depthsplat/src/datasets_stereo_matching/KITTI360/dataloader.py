@@ -270,7 +270,6 @@ if __name__=="__main__":
     )
     
 
-    
     for sample in tqdm(train_dataloader):
         
         imgs = sample['imgs']
