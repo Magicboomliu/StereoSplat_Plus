@@ -10,15 +10,12 @@ import sys
 sys.path.append("..")
 from data.KITTI360 import dataloader as datasets
 
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
-
 from tqdm import tqdm
-
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
@@ -35,7 +32,6 @@ import json
 import math
 from tqdm import tqdm
 import pickle
-
 
 def compute_depth_mae_mse_sparse(est_depth, gt_depth):
     """
@@ -145,6 +141,31 @@ def save_depth_batch_as_jet(depth_batch, save_dir="jet_depths"):
         depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_JET)
         cv2.imwrite(f"{save_dir}/depth_{i:02d}.png", depth_color)
 
+
+
+def seperate_rendered_views(mode='FLC',batch_results=None):
+    # make sure the input tensor shape is [B,V,3,H,W]
+    # type select from rgb or depth
+    
+    results_dict = {}
+    
+    if mode=='FLC':
+        results_dict["center_l"] = batch_results[:,4,:,:,:] # [B,3,H,W]
+        results_dict["center_r"] = batch_results[:,5,:,:,:] # [B,3,H,W]
+        results_dict["first_l"] = batch_results[:,0,:,:,:] # [B,3,H,W]
+        results_dict["first_r"] = batch_results[:,1,:,:,:] # [B,3,H,W]
+        
+        results_dict["last_l"] = batch_results[:,2,:,:,:] # [B,3,H,W]
+        results_dict["last_r"] = batch_results[:,3,:,:,:] # [B,3,H,W]
+    
+    
+    else:
+        raise NotImplementedError
+
+    return results_dict
+
+
+
 def main(args):
     # load config
     cfg = Config.fromfile(args.py_config)
@@ -191,6 +212,7 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
+        "use_stereo": dataset_config.use_stereo
         
     }
     
@@ -214,13 +236,14 @@ def main(args):
     else:
         path = None
 
+
     if path:
         accelerator.print(f"Loading from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
-        global_iter = int((os.path.basename(os.path.normpath(path))).split("-")[1]) 
-        print(f'Successfully loaded from iter{global_iter}')
+        print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
+
 
 
     rendered_rgb_by_omni_list = []
@@ -239,13 +262,46 @@ def main(args):
     with torch.no_grad():
         my_model.eval()
         for batch in tqdm(val_dataloader):
-            
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            
             # peform the log inference validations: visualization results inside
-            log_val,(rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgb_gt, metric_v2_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,bin_token_list,args.output_vis)
+            log_val,(rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), \
+            (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch), \
+                (rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),\
+                    rgb_gt, metric_v2_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,
+                                                                                              bin_token_list,args.output_vis)
+            
+            
+            if dataset_config.use_center and dataset_config.data_version=="bin_infos_8.0":
+                # here the input is the 6 channels,[B,V,3,H,W]
+                rgb_sep_rendered_omni_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_rgb_by_omni_batch)
+                depth_sep_rendered_omni_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_depth_by_omni_batch)
+                
+    
+                rgb_sep_rendered_volume_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_rgb_by_volume_batch)
+                depth_sep_rendered_volume_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_depth_by_volume_batch)
+                
+
+    
+                rgb_sep_rendered_pixel_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_rgb_by_pixel_batch)
+                depth_sep_rendered_pixel_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rendered_depth_by_pixel_batch)
+                
+                
+                rgb_sep_rendered_gt_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=rgb_gt)
+                
+
+
+                
+                print("OK")
+                quit()
             
             # get the metrics
             rendered_rgb_by_omni_list.append(rendered_rgb_by_omni_batch)
