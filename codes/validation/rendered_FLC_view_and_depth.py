@@ -32,6 +32,7 @@ import json
 import math
 from tqdm import tqdm
 import pickle
+import matplotlib.pyplot as plt
 
 def compute_depth_mae_mse_sparse(est_depth, gt_depth):
     """
@@ -96,24 +97,20 @@ def compute_depth_errors(gt_depth: np.ndarray, aligned_depth: np.ndarray, valid_
 
 
 def compute_psnr_ssim(img1, img2):
-    """
-    img1, img2: tensors of shape [B, 6, 3, H, W], values in [0,1]
-    Returns: mean PSNR and SSIM over all views and batch
-    """
-    B, V, C, H, W = img1.shape
+
+    B, C, H, W = img1.shape
     psnr_vals = []
     ssim_vals = []
 
     for b in range(B):
-        for v in range(V):
-            pred = img1[b, v].unsqueeze(0)  # [1, 3, H, W]
-            target = img2[b, v].unsqueeze(0)
+            pred = img1[b].unsqueeze(0)  # [1, 3, H, W]
+            target = img2[b].unsqueeze(0)
             psnr_val = psnr(pred, target, data_range=1.0)
             ssim_val = ssim(pred, target, data_range=1.0)
             psnr_vals.append(psnr_val)
             ssim_vals.append(ssim_val)
 
-    return torch.stack(psnr_vals).mean(), torch.stack(ssim_vals).mean()
+    return torch.stack(psnr_vals).mean().data.item(), torch.stack(ssim_vals).mean().data.item()
 
 
 def saved_into_json(data_dict,path):
@@ -164,6 +161,82 @@ def seperate_rendered_views(mode='FLC',batch_results=None):
 
     return results_dict
 
+
+class Basic_Meter(object):
+    def __init__(self,psnr,ssim,mae,mse):
+        self.psnr = psnr
+        self.ssim = ssim
+        self.mae = mae
+        self.mse = mse
+        self.counter = 0
+    
+    def update(self,psnr,ssim,mae,mse):
+        self.psnr +=psnr
+        self.ssim +=ssim
+        self.mae +=mae
+        self.mse +=mse
+        self.counter = self.counter+1
+    
+    def get_stats(self):
+        if self.counter ==0:
+            return{
+            "psnr": 0,
+            "ssim": 0,
+            "mae": 0,
+            "mse":0
+                
+            }
+        else:
+            return {
+                "psnr": self.psnr/self.counter,
+                "ssim": self.ssim/self.counter,
+                "mae": self.mae/self.counter,
+                "mse":self.mse/self.counter
+            }
+        
+def convert_depth_to_disp(factor=328.318735,depth=None):
+    
+    mask = depth>0
+    mask = mask.astype(np.float32)
+
+    disparity = factor / (depth +1e-3)
+    disparity = disparity * mask
+    disparity = np.clip(disparity,a_max=220,a_min=0)
+    
+    disparity = kitti_colormap(disparity)
+    return disparity
+
+
+def kitti_colormap(disparity, maxval=-1):
+	"""
+	A utility function to reproduce KITTI fake colormap
+	Arguments:
+	  - disparity: numpy float32 array of dimension HxW
+	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
+	
+	Returns a numpy uint8 array of shape HxWx3.
+	"""
+	if maxval < 0:
+		maxval = np.max(disparity)
+
+	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
+	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
+	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
+
+	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
+	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
+	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
+	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
+	index = np.argmax(diffs, axis=-1)-1
+
+	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
+
+
+	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
+	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
+	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
+
+	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 
 def main(args):
@@ -243,19 +316,58 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-
-
-
-    rendered_rgb_by_omni_list = []
-    rendered_rgb_by_volume_list = []
-    rendered_rgb_by_pixel_list = []
-    gt_rgb_imgs_list = []
     
+    meter_rendered_results_omni_dict = {
+        "center_l": Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'center_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
+    }
+
+    meter_rendered_results_pixel_dict = {
+        "center_l": Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'center_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
+    }
+
+    meter_rendered_results_volume_dict = {
+        "center_l": Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'center_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'first_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
+        'last_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
+    }
+
+    def update_results_metrics(meter_dict,pred_rgb,gt_rgb,pred_depth,gt_depth):
+        for key in meter_dict.keys():
+            psnr, ssim = compute_psnr_ssim(img1=pred_rgb[key].cpu(),
+                                              img2=gt_rgb[key].cpu())
+            mse,mae = compute_depth_errors(gt_depth=gt_depth[key].cpu().numpy(),
+                                                 aligned_depth=pred_depth[key].cpu().numpy(),
+                                                 valid_mask=(gt_depth[key].cpu().numpy()>0))
+            meter_dict[key].update(psnr,ssim,mae,mse)
+
+    def output_meter_into_dict(meter_dict):
+        for key in meter_dict.keys():
+            meter_dict[key] =  meter_dict[key].get_stats()
+        return meter_dict
+
+
+    sub_folder_omni = os.path.join(args.output_dir,"omni")
+    sub_folder_pixel = os.path.join(args.output_dir,"pixel")
+    sub_folder_volume = os.path.join(args.output_dir,"volume")
+    sub_folder_GT = os.path.join(args.output_dir,"GT")
     
-    rendered_depth_by_omni_list = []
-    rendered_depth_by_volume_list = []
-    rendered_depth_by_pixel_list = []
-    gt_depth_list = []
+    os.makedirs(sub_folder_omni,exist_ok=True)
+    os.makedirs(sub_folder_pixel,exist_ok=True)
+    os.makedirs(sub_folder_volume,exist_ok=True)
+    os.makedirs(sub_folder_GT,exist_ok=True)
 
 
     # doing the predicted images 
@@ -264,14 +376,13 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-            
+
             # peform the log inference validations: visualization results inside
             log_val,(rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), \
             (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch), \
                 (rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),\
-                    rgb_gt, metric_v2_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,
+                    rgb_gt, sparse_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,
                                                                                               bin_token_list,args.output_vis)
-            
             
             if dataset_config.use_center and dataset_config.data_version=="bin_infos_8.0":
                 # here the input is the 6 channels,[B,V,3,H,W]
@@ -280,100 +391,289 @@ def main(args):
                 depth_sep_rendered_omni_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_depth_by_omni_batch)
                 
-    
+                # ---    
                 rgb_sep_rendered_volume_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_rgb_by_volume_batch)
                 depth_sep_rendered_volume_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_depth_by_volume_batch)
-                
-
-    
+                # --- 
                 rgb_sep_rendered_pixel_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_rgb_by_pixel_batch)
                 depth_sep_rendered_pixel_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_depth_by_pixel_batch)
-                
-                
+                # --- 
                 rgb_sep_rendered_gt_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rgb_gt)
+                depth_sep_rendered_gt_batch = seperate_rendered_views(mode='FLC',
+                                                                  batch_results=sparse_depth_batch)
                 
+                
+                update_results_metrics(meter_dict=meter_rendered_results_omni_dict,
+                                       pred_rgb=rgb_sep_rendered_omni_batch,
+                                       pred_depth=depth_sep_rendered_omni_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                update_results_metrics(meter_dict=meter_rendered_results_volume_dict,
+                                       pred_rgb=rgb_sep_rendered_volume_batch,
+                                       pred_depth=depth_sep_rendered_volume_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                update_results_metrics(meter_dict=meter_rendered_results_pixel_dict,
+                                       pred_rgb=rgb_sep_rendered_pixel_batch,
+                                       pred_depth=depth_sep_rendered_pixel_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                
+                
+                if args.output_vis:
+                    # Omni-Scene
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(rgb_sep_rendered_omni_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(rgb_sep_rendered_omni_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_omni,bin_token_list[0][:-4]+"_omni.png"),bbox_inches='tight')
+                    
+                    # Omni-Scene Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_omni,bin_token_list[0][:-4]+"_depth_omni.png"),bbox_inches='tight')
+
+                    
+                    # Pixel
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_pixel,bin_token_list[0][:-4]+"_pixel.png"),bbox_inches='tight')
+                    
+
+                    # Pixel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_pixel,bin_token_list[0][:-4]+"_depth_pixel.png"),bbox_inches='tight')
+
+                    
+                    
+                    # Voxel
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(rgb_sep_rendered_volume_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(rgb_sep_rendered_volume_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_volume,bin_token_list[0][:-4]+"_voxel.png"),bbox_inches='tight')
 
 
-                
-                print("OK")
-                quit()
-            
-            # get the metrics
-            rendered_rgb_by_omni_list.append(rendered_rgb_by_omni_batch)
-            rendered_rgb_by_pixel_list.append(rendered_rgb_by_pixel_batch)
-            rendered_rgb_by_volume_list.append(rendered_rgb_by_volume_batch)
-            gt_rgb_imgs_list.append(rgb_gt)
-            
-            rendered_depth_by_omni_list.append(rendered_depth_by_omni_batch)
-            rendered_depth_by_pixel_list.append(rendered_depth_by_pixel_batch)
-            rendered_depth_by_volume_list.append(rendered_depth_by_volume_batch)
-            
-            
-            projected_depth_tensor_list_batch = []
-            for img_name in batch['outputs']['input_image_path']:
-                img_name = img_name[0]
-                project_lidar_path = img_name.replace("data_2d_raw","projected_sparse_lidar/data_2d_raw")
-                
-                assert os.path.exists(project_lidar_path)
-                project_lidar = load_the_sparse_gt_lidar(project_lidar_path)
-                project_lidar = F.interpolate(torch.from_numpy(project_lidar).unsqueeze(0).unsqueeze(0),size=[224,840],
-                              mode='bilinear')
-                project_lidar = project_lidar.squeeze(0).squeeze(0)
-                project_lidar  = project_lidar.unsqueeze(0).unsqueeze(0).unsqueeze(0).to(rendered_depth_by_omni_batch.device)
-                projected_depth_tensor_list_batch.append(project_lidar)
-                
-            
-            projected_depth_tensor_batch = torch.cat(projected_depth_tensor_list_batch,dim=1)
-            gt_depth_list.append(projected_depth_tensor_batch)
+                    # Voxel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_volume,bin_token_list[0][:-4]+"_depth_volume.png"),bbox_inches='tight')
+
+                    
+
+
+                    # RGB
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(rgb_sep_rendered_gt_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(rgb_sep_rendered_gt_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_GT,bin_token_list[0][:-4]+"_GT.png"),bbox_inches='tight')
+                    
+                    # Voxel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_GT,bin_token_list[0][:-4]+"_depth_GT.png"),bbox_inches='tight')
     
     
     
-    rendered_rgb_by_omni_all = torch.cat(rendered_rgb_by_omni_list,dim=0).cpu()
-    rendered_rgb_by_pixel_all = torch.cat(rendered_rgb_by_pixel_list,dim=0).cpu()
-    rendered_rgb_by_volume_all = torch.cat(rendered_rgb_by_volume_list,dim=0).cpu()
-    gt_rgb_all = torch.cat(gt_rgb_imgs_list,dim=0).cpu()
-    
-    rendered_depth_by_omni_all = torch.cat(rendered_depth_by_omni_list,dim=0).cpu()
-    rendered_depth_by_pixel_all = torch.cat(rendered_depth_by_pixel_list,dim=0).cpu()
-    rendered_depth_by_volume_all = torch.cat(rendered_depth_by_volume_list,dim=0).cpu()
-    gt_depth_all = torch.cat(gt_depth_list,dim=0).cpu()
-    
-    mae_omni, mse_omni = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_omni_all,gt_depth=gt_depth_all)
-    mae_pixel, mse_pixel = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_pixel_all,gt_depth=gt_depth_all)
-    mae_volume, mse_volume = compute_depth_mae_mse_sparse(est_depth=rendered_depth_by_volume_all,gt_depth=gt_depth_all)
-    
-    ## PSNR and SSIM
-    psnr_omni, ssim_omni = compute_psnr_ssim(rendered_rgb_by_omni_all,gt_rgb_all)
-    psnr_pixel, ssim_pixel = compute_psnr_ssim(rendered_rgb_by_pixel_all,gt_rgb_all)
-    psnr_volume, ssim_volumne = compute_psnr_ssim(rendered_rgb_by_volume_all,gt_rgb_all)
-    
-    sub_folder_omni = os.path.join(args.output_dir,"omni")
-    sub_folder_pixel = os.path.join(args.output_dir,"pixel")
-    sub_folder_volume = os.path.join(args.output_dir,"volume")
-    
-    os.makedirs(sub_folder_omni,exist_ok=True)
-    os.makedirs(sub_folder_pixel,exist_ok=True)
-    os.makedirs(sub_folder_volume,exist_ok=True)
+
+
     
         
-    saved_into_json(data_dict={"psnr":psnr_omni.item(),"ssim":ssim_omni.item(),
-                               "depth_mae": mae_omni-3                               
-                               },
+    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_omni_dict),
                     path = os.path.join(sub_folder_omni,"metric.json"))    
     
-    saved_into_json(data_dict={"psnr":psnr_pixel.item(),"ssim":ssim_pixel.item(),
-                               "depth_mae": mae_pixel-3
-                               },
+    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_pixel_dict),
                     path = os.path.join(sub_folder_pixel,"metric.json"))
     
-    saved_into_json(data_dict={"psnr":psnr_volume.item(),"ssim":ssim_volumne.item(),
-                               "depth_mae":mae_volume-3
-                               },
+    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_volume_dict),
                     path = os.path.join(sub_folder_volume,"metric.json"))
 
 

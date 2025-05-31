@@ -162,7 +162,7 @@ class OmniGaussian(BaseModule):
         plucker = torch.cat([torch.cross(rays_o, rays_d, dim=2), rays_d], dim=2)
         return plucker
     
-    def get_data(self, batch):
+    def get_data(self, batch,mode='train'):
 
         # ================== batch data process ================== #
         device_id = self.device
@@ -203,6 +203,9 @@ class OmniGaussian(BaseModule):
         data_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
 
         data_dict["bin_token"] = batch["bin_token"]
+        
+        if mode!='train':
+            data_dict['output_sparse_gt_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
 
         return data_dict
     
@@ -220,7 +223,7 @@ class OmniGaussian(BaseModule):
         
         
         """Forward training function."""
-        data_dict = self.get_data(batch)
+        data_dict = self.get_data(batch,mode=split)
         img = data_dict["imgs"] #[B,6,3,H,W]
         
         bs = img.shape[0]
@@ -916,6 +919,8 @@ class OmniGaussian(BaseModule):
         confs_m_gt = confs_m_gt.unsqueeze(2).repeat(1, 1, 3, 1, 1).cpu()
         mask_dptm = batch_gt["mask_dptm"].unsqueeze(2).repeat(1, 1, 3, 1, 1).cpu()
         
+        sparse_gt_depth_data = batch_gt['output_sparse_gt_depth'].unsqueeze(2)
+        
         
         rendered_rgb_by_volume_batch = render_pkg_volume["image"]
         rendered_depth_by_volume_batch = render_pkg_volume['depth']
@@ -997,5 +1002,5 @@ class OmniGaussian(BaseModule):
 
         
         
-        return (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgbs_gt,metric_v2_depth_batch 
+        return (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgbs_gt,sparse_gt_depth_data 
     
