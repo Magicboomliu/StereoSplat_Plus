@@ -150,9 +150,9 @@ def seperate_rendered_views(mode='FLC',batch_results=None):
         results_dict["center_l"] = batch_results[:,4,:,:,:] # [B,3,H,W]
         results_dict["center_r"] = batch_results[:,5,:,:,:] # [B,3,H,W]
         results_dict["first_l"] = batch_results[:,0,:,:,:] # [B,3,H,W]
-        results_dict["first_r"] = batch_results[:,1,:,:,:] # [B,3,H,W]
+        results_dict["first_r"] = batch_results[:,2,:,:,:] # [B,3,H,W]
         
-        results_dict["last_l"] = batch_results[:,2,:,:,:] # [B,3,H,W]
+        results_dict["last_l"] = batch_results[:,1,:,:,:] # [B,3,H,W]
         results_dict["last_r"] = batch_results[:,3,:,:,:] # [B,3,H,W]
     
     
@@ -369,6 +369,7 @@ def main(args):
     os.makedirs(sub_folder_volume,exist_ok=True)
     os.makedirs(sub_folder_GT,exist_ok=True)
 
+    
 
     # doing the predicted images 
     with torch.no_grad():
@@ -384,7 +385,7 @@ def main(args):
                     rgb_gt, sparse_depth_batch  = my_model.validation_step_with_bin_tokens(batch, args.output_dir,
                                                                                               bin_token_list,args.output_vis)
             
-            if dataset_config.use_center and dataset_config.data_version=="bin_infos_8.0":
+            if dataset_config.use_center:
                 # here the input is the 6 channels,[B,V,3,H,W]
                 rgb_sep_rendered_omni_batch = seperate_rendered_views(mode='FLC',
                                                                   batch_results=rendered_rgb_by_omni_batch)
@@ -663,18 +664,16 @@ def main(args):
     
     
     
-
-
     
+    if not args.output_vis:
+        saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_omni_dict),
+                        path = os.path.join(sub_folder_omni,"metric.json"))    
         
-    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_omni_dict),
-                    path = os.path.join(sub_folder_omni,"metric.json"))    
-    
-    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_pixel_dict),
-                    path = os.path.join(sub_folder_pixel,"metric.json"))
-    
-    saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_volume_dict),
-                    path = os.path.join(sub_folder_volume,"metric.json"))
+        saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_pixel_dict),
+                        path = os.path.join(sub_folder_pixel,"metric.json"))
+        
+        saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_volume_dict),
+                        path = os.path.join(sub_folder_volume,"metric.json"))
 
 
 

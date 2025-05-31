@@ -301,10 +301,10 @@ def load_conditions_stereo(img_paths, reso):
         # get sparse projected lidar
         sparse_gt_lidar_path = img_path.replace("data_2d_raw", "projected_sparse_lidar/data_2d_raw")
         assert os.path.exists(sparse_gt_lidar_path)
-        sparse_gt_lidar_data = load_the_Metric3DV2_results(depthm_path)
+        sparse_gt_lidar_data = load_the_Metric3DV2_results(sparse_gt_lidar_path)
         
         if resize_flag:
-            sparse_gt_lidar_data  = resize_the_sparse_lidar(depth_range=sparse_gt_lidar_data,
+            sparse_gt_lidar_data  = resize_the_sparse_lidar(depthmap=sparse_gt_lidar_data,
                                 raw_K=raw_ck,
                                 after_K=ck,
                                 height=reso[0],
