@@ -51,6 +51,74 @@ def load_the_Metric3DV2_results(path,scale=256):
     return img
 
 
+def img2cam_sparse(depth_map: np.ndarray, K: np.ndarray) -> np.ndarray:
+    """
+    将稀疏深度图转换为相机坐标系下的 3D 点。
+    
+    Args:
+        depth_map: (H, W) 稀疏深度图（0 表示无效）
+        K: (3, 3) 相机内参矩阵
+
+    Returns:
+        cam_points: (N, 3) 相机坐标系下的 3D 点（仅保留有效像素）
+    """
+    H, W = depth_map.shape
+    fx = K[0, 0]
+    fy = K[1, 1]
+    cx = K[0, 2]
+    cy = K[1, 2]
+    
+    # 找出有效像素 (非零深度)
+    valid_mask = depth_map > 0
+    v, u = np.where(valid_mask)      # v: row index, u: col index
+    z = depth_map[v, u]              # 有效深度值
+
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+
+    cam_points = np.stack([x, y, z], axis=-1)  # (N, 3)
+    return cam_points
+
+def cam2image(points,K,height,width,depth_range=100):
+    # camera points
+    '''
+    [3,N]
+    '''
+    ndim = points.ndim
+    if ndim == 2:
+        points = np.expand_dims(points, 0) #[1,3,N]
+
+    points_proj = np.matmul(K[:3,:3].reshape([1,3,3]), points) #[1,3,N]
+    depth = points_proj[:,2,:]
+    depth[depth==0] = -1e-6
+    u = np.round(points_proj[:,0,:]/np.abs(depth)).astype(np.int32)
+    v = np.round(points_proj[:,1,:]/np.abs(depth)).astype(np.int32)
+
+    if ndim==2:
+        u = u[0]; v=v[0]; depth=depth[0]
+
+
+    u = u.astype(np.int32)
+    v = v.astype(np.int32)
+    # prepare depth map for visualization
+    depthMap = np.zeros((height, width))
+    depthImage = np.zeros((height, width, 3))
+    mask = np.logical_and(np.logical_and(np.logical_and(u>=0, u<width), v>=0), v<height)
+    # visualize points within depth range meters
+    mask = np.logical_and(np.logical_and(mask, depth>0), depth<depth_range)
+    depthMap[v[mask],u[mask]] = depth[mask]
+    
+    return depthMap
+
+def resize_the_sparse_lidar(depthmap,raw_K,after_K,height,width,depth_range=100):
+    
+    points_cam = img2cam_sparse(depth_map=depthmap,K=raw_K)
+
+    resize_gt_sparse_depth = cam2image(points=points_cam.T,K=after_K,height=height,width=width,
+                                       depth_range=depth_range)
+    
+    return resize_gt_sparse_depth
+
 
 def load_conditions(img_paths, reso):
     
@@ -72,7 +140,8 @@ def load_conditions(img_paths, reso):
     depths = [] # depths normalized
     depths_m = [] # depths with metric
     confs_m = []  # confidence
-    
+
+    sparse_gt_depth_list = []
 
     for img_path in img_paths:      
         if "image_00/data_rect" in img_path:
@@ -108,6 +177,20 @@ def load_conditions(img_paths, reso):
             disp = Image.fromarray(disp)
             disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
             disp = np.array(disp)
+
+        # get sparse projected lidar
+        sparse_gt_lidar_path = img_path.replace("data_2d_raw", "projected_sparse_lidar/data_2d_raw")
+        assert os.path.exists(sparse_gt_lidar_path)
+        sparse_gt_lidar_data = load_the_Metric3DV2_results(sparse_gt_lidar_path)
+        
+        if resize_flag:
+            sparse_gt_lidar_data  = resize_the_sparse_lidar(depthmap=sparse_gt_lidar_data,
+                                raw_K=raw_ck,
+                                after_K=ck,
+                                height=reso[0],
+                                width=reso[1])
+        
+        sparse_gt_depth_list.append(sparse_gt_lidar_data)
 
         
         # inverse disparity to relative depth
@@ -148,7 +231,10 @@ def load_conditions(img_paths, reso):
     confs_m = torch.from_numpy(np.stack(confs_m, axis=0)).float()  # [v h w]  ---->[6,H,W]
     cks = torch.as_tensor(cks, dtype=torch.float32)
 
-    return imgs, depths, depths_m, confs_m, cks
+    
+    sparse_gts = torch.from_numpy(np.stack(sparse_gt_depth_list,axis=0)).float()
+
+    return imgs, depths, depths_m, confs_m, cks,sparse_gts
 
 
 
@@ -172,6 +258,8 @@ def load_conditions_stereo(img_paths, reso):
     depths = [] # depths normalized
     depths_m = [] # depths with metric
     confs_m = []  # confidence
+    
+    sparse_gt_depth_list = []
     
 
     for img_path in img_paths:      
@@ -208,7 +296,22 @@ def load_conditions_stereo(img_paths, reso):
             disp = Image.fromarray(disp)
             disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
             disp = np.array(disp)
-
+            
+        
+        # get sparse projected lidar
+        sparse_gt_lidar_path = img_path.replace("data_2d_raw", "projected_sparse_lidar/data_2d_raw")
+        assert os.path.exists(sparse_gt_lidar_path)
+        sparse_gt_lidar_data = load_the_Metric3DV2_results(depthm_path)
+        
+        if resize_flag:
+            sparse_gt_lidar_data  = resize_the_sparse_lidar(depth_range=sparse_gt_lidar_data,
+                                raw_K=raw_ck,
+                                after_K=ck,
+                                height=reso[0],
+                                width=reso[1])
+        
+        sparse_gt_depth_list.append(sparse_gt_lidar_data)
+        
         
         # inverse disparity to relative depth
         # clamping the farthest depth to 50x of the nearest
@@ -245,8 +348,10 @@ def load_conditions_stereo(img_paths, reso):
     depths_m = torch.from_numpy(np.stack(depths_m, axis=0)).float()  # [v h w] ---->[6,H,W]
     confs_m = torch.from_numpy(np.stack(confs_m, axis=0)).float()  # [v h w]  ---->[6,H,W]
     cks = torch.as_tensor(cks, dtype=torch.float32)
+    
+    sparse_gts = torch.from_numpy(np.stack(sparse_gt_depth_list,axis=0)).float()
 
-    return imgs, depths, depths_m, confs_m, cks
+    return imgs, depths, depths_m, confs_m, cks,sparse_gts
 
 
 

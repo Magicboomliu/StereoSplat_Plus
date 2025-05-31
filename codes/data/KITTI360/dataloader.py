@@ -210,10 +210,10 @@ class KITTI360Dataset(Dataset):
         input_w2cs = torch.from_numpy(input_w2cs).float()  # 更快、更标准
         
         if self.use_stereo:
-            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks = \
+            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks,input_sparse_gt_depth = \
                         load_conditions_stereo(input_img_paths, self.reso)     
         else:
-            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks = \
+            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks,input_sparse_gt_depth  = \
                         load_conditions(input_img_paths, self.reso)   
 
         input_cks = torch.as_tensor(input_cks, dtype=torch.float32) #(6,3,3)--> Camera Intrinsics
@@ -296,10 +296,10 @@ class KITTI360Dataset(Dataset):
                 
         # load and modify images (cropped or resized if necessary), and modify intrinsics accordingly
         if self.use_stereo:
-            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
+            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks,out_sparse_gts = \
                         load_conditions_stereo(output_img_paths, self.reso)
         else:
-            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks = \
+            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks,out_sparse_gts = \
                         load_conditions(output_img_paths, self.reso)
                         
         output_fxs, output_fys, output_cxs, output_cys = output_cks[:, 0, 0], output_cks[:, 1, 1], output_cks[:, 0, 2], output_cks[:, 1, 2]
@@ -320,6 +320,11 @@ class KITTI360Dataset(Dataset):
         output_depths = torch.cat([output_depths, input_depths], dim=0)
         output_depths_m = torch.cat([output_depths_m, input_depths_m], dim=0)
         output_confs_m = torch.cat([output_confs_m, input_confs_m], dim=0)
+        
+        if self.split=="val" or self.split=='test':
+            output_sparse_depth_gts = torch.cat([out_sparse_gts,input_sparse_gt_depth],dim=0)
+        
+        
         output_c2ws = torch.cat([output_c2ws, input_c2ws], dim=0) # first 2 dimension is the novel final ,final dimension is the input view
         output_fovxs = torch.cat([output_fovxs, input_fovxs], dim=0)
         output_fovys = torch.cat([output_fovys, input_fovys], dim=0)
@@ -348,12 +353,24 @@ class KITTI360Dataset(Dataset):
         
         input_dict_vol = {"w2i": input_w2is} # volume based methods
 
-        output_dict = {"rgb": output_imgs, "depth": output_depths,
-                       "depth_m": output_depths_m, "conf_m": output_confs_m,
-                       "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-                       "rays_o": output_rays_o, "rays_d": output_rays_d,
-                       "input_image_path":output_img_paths+ input_img_paths
-                       }
+        
+        if self.split=='train':
+        
+            output_dict = {"rgb": output_imgs, "depth": output_depths,
+                        "depth_m": output_depths_m, "conf_m": output_confs_m,
+                        "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
+                        "rays_o": output_rays_o, "rays_d": output_rays_d,
+                        "input_image_path":output_img_paths+ input_img_paths
+                        }
+        else:
+            output_dict = {"rgb": output_imgs, "depth": output_depths,
+                        "depth_m": output_depths_m, 
+                        'sparse_gt_depth':output_sparse_depth_gts,
+                        "conf_m": output_confs_m,
+                        "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
+                        "rays_o": output_rays_o, "rays_d": output_rays_d,
+                        "input_image_path":output_img_paths+ input_img_paths
+                        }
 
         return {
             "bin_token": bin_token_name,
