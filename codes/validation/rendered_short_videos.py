@@ -122,6 +122,13 @@ def main(args):
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
 
     
+    if cfg.use_center:
+        mode = 's_center'
+    elif cfg.use_first:
+        mode = 's_first'
+    else:
+        raise NotImplementedError
+    
     
     
     with torch.no_grad():
@@ -131,9 +138,12 @@ def main(args):
             data_time_e = time.time()
             if torch.cuda.device_count() > 1:
                 # pred results and the bin tokens   
-                preds, bin_tokens = my_model.module.forward_demo_kitti360(batch)
+                preds, bin_tokens = my_model.module.forward_demo_kitti360(batch,
+                                                                          mode=mode)
             else:
-                preds, bin_tokens = my_model.forward_demo_kitti360(batch)
+                preds, bin_tokens = my_model.forward_demo_kitti360(batch,
+                                                                   mode=mode)
+                
         
             bs = preds["img"].shape[0]  
             pred_imgs = preds["img"] #(4,960,3,224,400)
