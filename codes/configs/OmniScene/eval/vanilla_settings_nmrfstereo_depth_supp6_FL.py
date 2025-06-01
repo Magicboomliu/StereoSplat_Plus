@@ -31,19 +31,19 @@ use_checkpoint = True
 seed = 0
 
 # only using the center for training
-use_center, use_first, use_last = True, False, False
+use_center, use_first, use_last = False, True, False
 resolution = [224, 840]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
-train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
 #train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/small_train.txt"
 val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0_reordered"
+data_version="bin_infos_8.0"
 supp_view_nums=6
 use_stereo=True
 
@@ -69,7 +69,7 @@ dataset_params = dict(
     num_workers_val=8,
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
-    use_stereo = use_stereo
+    use_stereo=use_stereo
 )
 
 num_cams = 2
@@ -212,7 +212,7 @@ model = dict(
         style='pytorch',
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='pretrained/dino_resnet50_pretrain.pth',
+            checkpoint='/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/pretrained/dino_resnet50_pretrain.pth',
             prefix=None)),
     
     neck=dict(

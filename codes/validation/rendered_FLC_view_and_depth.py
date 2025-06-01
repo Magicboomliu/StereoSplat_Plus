@@ -155,6 +155,14 @@ def seperate_rendered_views(mode='FLC',batch_results=None):
         results_dict["last_l"] = batch_results[:,1,:,:,:] # [B,3,H,W]
         results_dict["last_r"] = batch_results[:,3,:,:,:] # [B,3,H,W]
     
+    elif mode=='CLF':
+        results_dict["center_l"] = batch_results[:,0,:,:,:] # [B,3,H,W]
+        results_dict["center_r"] = batch_results[:,2,:,:,:] # [B,3,H,W]
+        results_dict["first_l"] = batch_results[:,4,:,:,:] # [B,3,H,W]
+        results_dict["first_r"] = batch_results[:,5,:,:,:] # [B,3,H,W]
+        
+        results_dict["last_l"] = batch_results[:,1,:,:,:] # [B,3,H,W]
+        results_dict["last_r"] = batch_results[:,3,:,:,:] # [B,3,H,W]
     
     else:
         raise NotImplementedError
@@ -663,7 +671,284 @@ def main(args):
                     plt.savefig(os.path.join(sub_folder_GT,bin_token_list[0][:-4]+"_depth_GT.png"),bbox_inches='tight')
     
     
+            elif dataset_config.use_first:
+                # here the input is the 6 channels,[B,V,3,H,W]
+                rgb_sep_rendered_omni_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_rgb_by_omni_batch)
+                depth_sep_rendered_omni_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_depth_by_omni_batch)
+                
+                # ---    
+                rgb_sep_rendered_volume_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_rgb_by_volume_batch)
+                depth_sep_rendered_volume_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_depth_by_volume_batch)
+                # --- 
+                rgb_sep_rendered_pixel_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_rgb_by_pixel_batch)
+                depth_sep_rendered_pixel_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rendered_depth_by_pixel_batch)
+                # --- 
+                rgb_sep_rendered_gt_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=rgb_gt)
+                depth_sep_rendered_gt_batch = seperate_rendered_views(mode='CLF',
+                                                                  batch_results=sparse_depth_batch)
+                
+                
+                update_results_metrics(meter_dict=meter_rendered_results_omni_dict,
+                                       pred_rgb=rgb_sep_rendered_omni_batch,
+                                       pred_depth=depth_sep_rendered_omni_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                update_results_metrics(meter_dict=meter_rendered_results_volume_dict,
+                                       pred_rgb=rgb_sep_rendered_volume_batch,
+                                       pred_depth=depth_sep_rendered_volume_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                update_results_metrics(meter_dict=meter_rendered_results_pixel_dict,
+                                       pred_rgb=rgb_sep_rendered_pixel_batch,
+                                       pred_depth=depth_sep_rendered_pixel_batch,
+                                       gt_rgb=rgb_sep_rendered_gt_batch,
+                                       gt_depth=depth_sep_rendered_gt_batch)
+                
+                
+                
+                if args.output_vis:
+                    # Omni-Scene
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(rgb_sep_rendered_omni_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(rgb_sep_rendered_omni_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_omni_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_omni,bin_token_list[0][:-4]+"_omni.png"),bbox_inches='tight')
+                    
+                    # Omni-Scene Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_omni_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_omni,bin_token_list[0][:-4]+"_depth_omni.png"),bbox_inches='tight')
+
+                    
+                    # Pixel
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_pixel_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_pixel,bin_token_list[0][:-4]+"_pixel.png"),bbox_inches='tight')
+                    
+
+                    # Pixel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_pixel_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_pixel,bin_token_list[0][:-4]+"_depth_pixel.png"),bbox_inches='tight')
+
+                    
+                    
+                    # Voxel
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(rgb_sep_rendered_volume_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(rgb_sep_rendered_volume_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_volume_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_volume,bin_token_list[0][:-4]+"_voxel.png"),bbox_inches='tight')
+
+
+                    # Voxel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_volume_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_volume,bin_token_list[0][:-4]+"_depth_volume.png"),bbox_inches='tight')
+
+                    
+
+
+                    # RGB
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):INPUT")
+                    plt.imshow(rgb_sep_rendered_gt_batch['first_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):INPUT")
+                    plt.imshow(rgb_sep_rendered_gt_batch['first_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['center_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['center_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['last_l'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rgb_sep_rendered_gt_batch['last_r'].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(sub_folder_GT,bin_token_list[0][:-4]+"_GT.png"),bbox_inches='tight')
+                    
+                    # Voxel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['first_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['first_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['center_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['center_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['last_l'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=depth_sep_rendered_gt_batch['last_r'].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(sub_folder_GT,bin_token_list[0][:-4]+"_depth_GT.png"),bbox_inches='tight')
     
+
     
     if not args.output_vis:
         saved_into_json(data_dict=output_meter_into_dict(meter_rendered_results_omni_dict),
