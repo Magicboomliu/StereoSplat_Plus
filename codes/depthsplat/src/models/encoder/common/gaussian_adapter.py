@@ -31,9 +31,17 @@ class GaussianAdapterCfg:
 class GaussianAdapter(nn.Module):
     cfg: GaussianAdapterCfg 
 
-    def __init__(self, cfg: GaussianAdapterCfg):
+    def __init__(self,
+                 gaussian_scale_min,
+                 gaussian_scale_max,
+                 sh_degree,
+                 **kwargs
+                        ):
         super().__init__()
-        self.cfg = cfg
+        self.cfg = GaussianAdapterCfg(gaussian_scale_max=gaussian_scale_max,
+                                      gaussian_scale_min=gaussian_scale_min,
+                                      sh_degree=sh_degree
+                                      )
 
         # Create a mask for the spherical harmonics coefficients. This ensures that at
         # initialization, the coefficients are biased towards having a large DC
@@ -80,7 +88,15 @@ class GaussianAdapter(nn.Module):
         
         '''
         
+        # print(extrinsics.shape) #(B,V,1,1,1,4,4)
+        # print(intrinsics.shape) #(B,V,1,1,1,3,3)
+        
         scales, rotations, sh = raw_gaussians.split((3, 4, 3 * self.d_sh), dim=-1)
+        
+        # print(scales.shape) # torch.Size([1, 2, 186368, 1, 1, 3])
+        # print(rotations.shape) # torch.Size([1, 2, 186368, 1, 1, 4])
+        # print(sh.shape) # torch.Size([1, 2, 186368, 1, 1, 27])
+        # quit()
 
         #  softplus 激活 + 截断（保证 scale 有效、非负）
         # softplus(x - 4) 让初始 scale 更小更平滑。

@@ -20,7 +20,8 @@ import torchvision.transforms as T
 from encoder.unimatch.mv_unimatch import MultiViewUniMatch
 from encoder.unimatch.dpt_head import DPTHead
 import numpy as np
-
+from encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+from torch import Tensor, nn
 
 @dataclass
 class OptimizerCfg:
@@ -31,17 +32,20 @@ class OptimizerCfg:
 
 
 
+
 class ModelWarpper(nn.Module):
     def __init__(self, 
                  depth_estimator=None,
+                 gaussain_head = None,
                  **kwargs,
                  ):
         super().__init__()
         
         # depth estimation
-        self.depth_estimator = depth_estimator
+        self.depth_estimator = depth_estimator        
         
         # 3D Gaussains Estimation Head
+        self.gaussains_estimation_head = gaussain_head
         
         
     @property
@@ -53,6 +57,8 @@ class ModelWarpper(nn.Module):
 
 
     def forward(self,batch, mode="train", iter=0, cfg=None):
+        
+        return_depth = cfg.return_depth
         
         iter_end = cfg.max_train_steps 
         
@@ -99,17 +105,33 @@ class ModelWarpper(nn.Module):
             extrinsics=extrinsics,
             nn_matrix=nn_matrix
         )
+
+        if cfg.train_depth_only:
+            pass
         
+        else:
+            # estimated the gs 
+            estimated_raw_gaussains_dict = self.gaussains_estimation_head(imgs=images,
+                                           extrinsics=extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth)
+            
+            
+
+        
+
 
 
 if __name__=="__main__":
     
     class CFG(object):
-        def __init__(self,max_train_steps,max_depth,min_depth,train_depth_only):
+        def __init__(self,max_train_steps,max_depth,min_depth,train_depth_only,return_depth):
             self.max_train_steps= max_train_steps
             self.max_depth = max_depth
             self.min_depth = min_depth
             self.train_depth_only = train_depth_only
+            self.return_depth = return_depth
             
     
     input_images = torch.randn(1,2,3,224,832).cuda() # batch is 2, 0 is left and the 1 is the right
@@ -139,6 +161,7 @@ if __name__=="__main__":
     intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/224
 
     
+    # Define the Unimatch Branch
     depth_estimator_unimatch = MultiViewUniMatch(
             num_scales=1, # default is 1
             upsample_factor=4, # upsample factor is 4
@@ -147,13 +170,35 @@ if __name__=="__main__":
             unet_channels=192, # 128
             grid_sample_disable_cudnn=False, # False, Grid Sampling 
         )
-    
     depth_estimator_unimatch = depth_estimator_unimatch
     
-    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch)
+    
+    # Define the the gaussain head
+    gaussian_adapter_config = {"gaussian_scale_min": 1e-10,
+                                "gaussian_scale_max": 3,
+                                "sh_degree": 2 }
+    
+    gaussain_color_branch_config = {
+            "large_gaussian_head": False,
+            "color_large_unet": False,
+            "init_sh_input_img": True,
+            "feature_upsampler_channels": 64,
+            "gaussian_regressor_channels": 64,
+            "num_surfaces":1}
+    
+    gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type='vits',
+                                             upsample_factor=4,
+                                             num_scales=1,
+                                             gaussian_head_settings_dict=gaussian_adapter_config,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+        
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head)
     
     my_model = my_model.cuda()
     
+
     
     batch = dict()
     batch['imgs'] = input_images.cuda()
@@ -163,7 +208,10 @@ if __name__=="__main__":
     batch['pseudo_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
     batch['sparse_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
     
-    cfg = CFG(max_train_steps=1000,max_depth=150,min_depth=0.3)
+    cfg = CFG(max_train_steps=1000,max_depth=150,min_depth=0.3,
+              train_depth_only=False,return_depth=True)
     
     with torch.no_grad():
         my_model(batch, mode="train", iter=0, cfg=cfg)
+    
+    quit()
