@@ -90,6 +90,7 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
+        "use_stereo": dataset_config.use_stereo
         
     }
     
@@ -116,11 +117,13 @@ def main(args):
     if path:
         accelerator.print(f"Loading from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
-        global_iter = int((os.path.basename(os.path.normpath(path))).split("-")[1]) 
-        print(f'Successfully loaded from iter{global_iter}')
+        print('Successfully loaded from path {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
 
+    
+    
+    
     with torch.no_grad():
         my_model.eval()
         for batch in tqdm(val_dataloader):
