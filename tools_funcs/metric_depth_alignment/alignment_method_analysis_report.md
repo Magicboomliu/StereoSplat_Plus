@@ -2,24 +2,23 @@
 
 
 #### Candidates Monocular Depth Estimator  
-- DepthAnythingV2 
-- Metric3D V2
-- DepthPro(TODO)
+- DepthAnythingV2 (MonoDepth)
+- Metric3D V2 (MonoDepth)
+- NMRFStereo (Stereo Matching)
 
 #### Metrics for KITTI360 sequence 0000:  
 
 Note: all the predicted depth are using the alignment algorthims for scale matching, we report the average `MAE` and average `MSE` for performance evaluation. 
-
 ---
-|  Network Method 	|  Alignmnet Method  	| Average MAE 	| Average MSE 	|
-|:---------------:	|:------------------:	|:-----------:	|:-----------:	|
-| DepthAnythingV2 	|    Least Square    	|     2.07    	|    17.85    	|
-| DepthAnythingV2 	| Medium Scale Align 	|     1.97    	|    22.53    	|
-|   Metric3D-V2   	|        None        	|     1.56    	|    16.80    	|
-|   Metric3D-V2   	|    Least Square    	|     1.70    	|    14.96    	|
-|   Metric3D-V2   	| Medium Scale Align 	|     1.68    	|    16.09    	|
---- 
-
+|    TYPE   	|  Network Method 	|  Alignmnet Method  	| Averge MAE(Left) 	| Average MSE(Right) 	| Average MAE(Left) 	| Average MSE(Right) 	|
+|:---------:	|:---------------:	|:------------------:	|:----------------:	|:------------------:	|:-----------------:	|:------------------:	|
+| Monocular 	| DepthAnythingV2 	|    Least Square    	|       2.07       	|        17.85       	|        2.08       	|        18.21       	|
+|           	| DepthAnythingV2 	| Medium Scale Align 	|       1.90       	|        22.54       	|        1.93       	|        22.92       	|
+|           	|   Metric3D-V2   	|        None        	|       1.56       	|        16.83       	|        1.58       	|        17.12       	|
+|           	|   Metric3D-V2   	|    Least Square    	|       1.70       	|        14.96       	|        1.75       	|        15.39       	|
+|           	|   Metric3D-V2   	| Medium Scale Align 	|       1.68       	|        16.09       	|        1.73       	|        16.73       	|
+|   Stereo  	|   NMRF-Stereo   	|        None        	|       1.19       	|        14.52       	|        1.21       	|        15.14       	|
+---
 
 ```
 python rel_depth_to_metirc.py
