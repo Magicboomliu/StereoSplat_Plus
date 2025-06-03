@@ -10,8 +10,8 @@ from diff_gaussian_rasterization import (
 from einops import einsum, rearrange, repeat
 from jaxtyping import Float
 from torch import Tensor
-from ..encoder.geometry.projection import get_fov,homogenize_points
-
+# from ..encoder.geometry.projection import get_fov,homogenize_points
+from .projection import get_fov,homogenize_points
 
 def get_projection_matrix(
     near: Float[Tensor, " batch"],
@@ -44,22 +44,23 @@ def get_projection_matrix(
 
 
 def render_cuda(
-    extrinsics: Float[Tensor, "batch 4 4"],
-    intrinsics: Float[Tensor, "batch 3 3"],
-    near: Float[Tensor, " batch"],
-    far: Float[Tensor, " batch"],
-    image_shape: tuple[int, int],
-    background_color: Float[Tensor, "batch 3"],
-    gaussian_means: Float[Tensor, "batch gaussian 3"],
-    gaussian_covariances: Float[Tensor, "batch gaussian 3 3"],
-    gaussian_sh_coefficients: Float[Tensor, "batch gaussian 3 d_sh"],
-    gaussian_opacities: Float[Tensor, "batch gaussian"],
-    scale_invariant: bool = True,
+    extrinsics: Float[Tensor, "batch 4 4"], # extrinsics: 相机的外参，shape [B, 4, 4]
+    intrinsics: Float[Tensor, "batch 3 3"], # intrinsics: 相机的内参，shape [B, 3, 3]
+    near: Float[Tensor, " batch"],          # near, far: 近平面、远平面距离，shape [B], like 0.1
+    far: Float[Tensor, " batch"],           # near, far: 近平面、远平面距离，shape [B], like 1000
+    image_shape: tuple[int, int],           # current image size
+    background_color: Float[Tensor, "batch 3"],                         # 背景颜色 [B, 3]
+    gaussian_means: Float[Tensor, "batch gaussian 3"],                  #高斯球体的中心 [B, G, 3]
+    gaussian_covariances: Float[Tensor, "batch gaussian 3 3"],          # 高斯球体的协方差矩阵 [B, G, 3, 3]
+    gaussian_sh_coefficients: Float[Tensor, "batch gaussian 3 d_sh"],   # 球谐（SH）系数 [B, G, 3, d_sh]，用于颜色建模
+    gaussian_opacities: Float[Tensor, "batch gaussian"],                    # 每个高斯的不透明度 [B, G]
+    scale_invariant: bool = True,                   # 是否进行 scale normalization，通常用于防止数值不稳定
     use_sh: bool = True,
 ) -> Float[Tensor, "batch 3 height width"]:
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
     # Make sure everything is in a range where numerical issues don't appear.
+    # 对场景进行缩放，使最近的物体靠近 1，便于数值稳定。
     if scale_invariant:
         scale = 1 / near
         extrinsics = extrinsics.clone()
@@ -69,16 +70,23 @@ def render_cuda(
         near = near * scale
         far = far * scale
 
+    # SH 维度通常是 ((degree+1)^2)，
+    # 比如 d_sh=9 表示 degree=2。
+    # shs 维度会被调换为 [B, G, n_sh, 3]
+    
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1
     shs = rearrange(gaussian_sh_coefficients, "b g xyz n -> b g n xyz").contiguous()
 
+
     b, _, _ = extrinsics.shape
     h, w = image_shape
 
+    # 得到 OpenGL 风格的投影矩阵与视图矩阵，组合后形成完整的 full_projection 投影。
     fov_x, fov_y = get_fov(intrinsics).unbind(dim=-1)
-    tan_fov_x = (0.5 * fov_x).tan()
-    tan_fov_y = (0.5 * fov_y).tan()
+    tan_fov_x = (0.5 * fov_x).tan() # tan half FOV_x
+    tan_fov_y = (0.5 * fov_y).tan() # tan half FOV_y
+    
 
     projection_matrix = get_projection_matrix(near, far, fov_x, fov_y)
     projection_matrix = rearrange(projection_matrix, "b i j -> b j i")
@@ -87,6 +95,10 @@ def render_cuda(
 
     all_images = []
     all_radii = []
+    all_depths = []
+    
+    all_aplhas = []
+    
     for i in range(b):
         # Set up a tensor for the gradients of the screen-space means.
         mean_gradients = torch.zeros_like(gaussian_means[i], requires_grad=True)
@@ -94,7 +106,13 @@ def render_cuda(
             mean_gradients.retain_grad()
         except Exception:
             pass
-
+        
+        '''
+        ---- viewmatrix	View Matrix(视图矩阵)	       世界坐标 -> 相机坐标	        World → Camera
+        ---- projmatrix	Projection Matrix(投影矩阵)	    相机坐标 -> NDC坐标(投影)
+        
+                P(proj) = projmatrix * viewmatrix * P(world)
+        '''
         settings = GaussianRasterizationSettings(
             image_height=h,
             image_width=w,
@@ -102,8 +120,8 @@ def render_cuda(
             tanfovy=tan_fov_y[i].item(),
             bg=background_color[i],
             scale_modifier=1.0,
-            viewmatrix=view_matrix[i],
-            projmatrix=full_projection[i],
+            viewmatrix=view_matrix[i], # view matrix is usually from world to camera coordinate: W2C Matrix
+            projmatrix=full_projection[i], # projection matrix: 投影矩阵把 相机坐标系下的点 映射到 标准化设备坐标系（NDC），也就是 [-1, 1] 区间，用于 rasterization。
             sh_degree=degree,
             campos=extrinsics[i, :3, 3],
             prefiltered=False,  # This matches the original usage.
@@ -113,7 +131,7 @@ def render_cuda(
 
         row, col = torch.triu_indices(3, 3)
 
-        image, radii = rasterizer(
+        image, radii, rendered_depth, rendered_alpha = rasterizer(
             means3D=gaussian_means[i],
             means2D=mean_gradients,
             shs=shs[i] if use_sh else None,
@@ -123,7 +141,10 @@ def render_cuda(
         )
         all_images.append(image)
         all_radii.append(radii)
-    return torch.stack(all_images)
+        all_depths.append(rendered_depth)
+        all_aplhas.append(rendered_alpha)
+        
+    return torch.stack(all_images), torch.stack(all_depths), torch.stack(all_aplhas)
 
 
 def render_cuda_orthographic(
