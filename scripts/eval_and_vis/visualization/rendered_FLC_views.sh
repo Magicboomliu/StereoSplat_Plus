@@ -1,9 +1,9 @@
 Render_KITTI360_OmniScene_LFC_Views(){
 cd ../../..
 cd codes/validation
-configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/eval/vanilla_settings_nmrfstereo_depth_supp6_FL.py"
-output_dir="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/Visualizations_And_Evaluations/20250601/Vanilla_Settings_NMRFStereo_Depth_Supp6"
-load_from="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/NMRFStereo_Based/6_View_Supp/checkpoint-45000/"
+configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/eval/vanilla_settings_nmrfstereo_depth_supp6.py"
+output_dir="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/Visualizations_And_Evaluations/20250531/Vanilla_Settings_NMRFStereo_Depth_Dynamic_Input_Train_Supp6/"
+load_from="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/NMRFStereo_Based/adaptive_input_training/omni_gs_kitti360_novelview_r50_224x840/checkpoint-48000/"
 validation_list="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 
 # demo.txt
