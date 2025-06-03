@@ -1,13 +1,12 @@
+
 from dataclasses import dataclass
 from typing import Literal
-
 import torch
+
 from einops import rearrange, repeat
 from jaxtyping import Float
 from torch import Tensor
 
-from ...dataset import DatasetCfg
-from ..types import Gaussians
 from .cuda_splatting import DepthRenderingMode, render_cuda, render_depth_cuda
 from .decoder import Decoder, DecoderOutput
 
@@ -15,6 +14,14 @@ from .decoder import Decoder, DecoderOutput
 @dataclass
 class DecoderSplattingCUDACfg:
     name: Literal["splatting_cuda"]
+
+@dataclass
+class Gaussians:
+    means: Float[Tensor, "batch gaussian dim"]
+    covariances: Float[Tensor, "batch gaussian dim dim"]
+    harmonics: Float[Tensor, "batch gaussian 3 d_sh"]
+    opacities: Float[Tensor, "batch gaussian"]
+
 
 
 class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):

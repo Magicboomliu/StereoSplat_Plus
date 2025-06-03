@@ -31,8 +31,6 @@ class OptimizerCfg:
     weight_decay: float
 
 
-
-
 class ModelWarpper(nn.Module):
     def __init__(self, 
                  depth_estimator=None,
@@ -40,14 +38,13 @@ class ModelWarpper(nn.Module):
                  **kwargs,
                  ):
         super().__init__()
-        
-        # depth estimation
+        # Depth Estimation
         self.depth_estimator = depth_estimator        
         
         # 3D Gaussains Estimation Head
         self.gaussains_estimation_head = gaussain_head
-        
-        
+    
+    
     @property
     def device(self):
         return next(self.parameters()).device
@@ -61,7 +58,6 @@ class ModelWarpper(nn.Module):
         return_depth = cfg.return_depth
         
         iter_end = cfg.max_train_steps 
-        
         depth_max_value = cfg.max_depth # 100
         depth_min_value = cfg.min_depth # 0.3    
         
@@ -77,18 +73,14 @@ class ModelWarpper(nn.Module):
         mask = sparse_gt_depth>0
         mask = mask.float()
 
-        
         num_of_cameras = images.shape[1]
-        
         min_depth=1.0 / depth_max_value  # inverse depth range
         max_depth=1.0 / depth_min_value
-        
-        
+                
         min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(images)
         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(images)
         
         height, width = images.shape[3:]
-        
         intrinsics = intrinsics.clone()
         # Normalized the instrinsics -----> Maybe not neccssary
         intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
