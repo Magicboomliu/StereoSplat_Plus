@@ -57,7 +57,6 @@ class OptimizerCfg:
     lr_monodepth: float
     weight_decay: float
 
-
 @dataclass
 class TestCfg:
     output_path: Path
@@ -74,7 +73,6 @@ class TestCfg:
     render_chunk_size: int | None
     stablize_camera: bool
     stab_camera_kernel: int
-
 
 @dataclass
 class TrainCfg:
@@ -93,7 +91,6 @@ class TrainCfg:
     forward_depth_only: bool
     train_ignore_large_loss: float
     no_log_projections: bool
-
 
 @runtime_checkable
 class TrajectoryFn(Protocol):

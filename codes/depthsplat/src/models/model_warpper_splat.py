@@ -23,6 +23,10 @@ import numpy as np
 from encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
 from torch import Tensor, nn
 
+# Decoder Here
+from decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
+
+
 @dataclass
 class OptimizerCfg:
     lr: float
@@ -35,6 +39,8 @@ class ModelWarpper(nn.Module):
     def __init__(self, 
                  depth_estimator=None,
                  gaussain_head = None,
+                 
+                 decoder_branch = None,
                  **kwargs,
                  ):
         super().__init__()
@@ -43,7 +49,9 @@ class ModelWarpper(nn.Module):
         
         # 3D Gaussains Estimation Head
         self.gaussains_estimation_head = gaussain_head
-    
+
+        # decoder branch
+        self.decoder_branch = decoder_branch
     
     @property
     def device(self):
@@ -51,7 +59,6 @@ class ModelWarpper(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
-
 
     def forward(self,batch, mode="train", iter=0, cfg=None):
         
@@ -63,6 +70,7 @@ class ModelWarpper(nn.Module):
         
         images = batch['imgs'] # [B,V,3,H,W]
         bs = images.shape[0]
+     
         intrinsics = batch['intrinsics'] # [B,V,3,3]
         extrinsics = batch['extrinsics'] # [B,V,4,4]
         nn_matrix = batch['nn_matrix'] #[B,V,K]
@@ -108,13 +116,41 @@ class ModelWarpper(nn.Module):
                                            intrinsics = intrinsics,
                                            results_dict=results_dict,
                                            return_depth=return_depth)
-            
+        
+        # return values
+        if len(estimated_raw_gaussains_dict.keys())>1:
+            pred_depths = estimated_raw_gaussains_dict["depths"]
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+        else:
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+            pred_depths = None
+          
+
+
+        # 3DGS decoder
+        rendered_results = self.decoder_branch(gaussians=estimated_raw_gaussains_dict["gaussians"],
+                                               extrinsics= extrinsics,
+                                               intrinsics = intrinsics,
+                                               near = batch['near'].float(),
+                                               far = batch['far'].float(),
+                                               image_shape=(height,width),
+                                               depth_mode = 'depth'
+                                               )
+        
+        rendered_color = rendered_results['color']
+        rendered_depth = rendered_results['depth']
+        rendered_alpha = rendered_results['alpha']
+        
+        print(rendered_color.shape) 
+        print(rendered_depth.shape)
+        print(rendered_alpha.shape)
+        quit()
+        
+        
+
             
 
         
-
-
-
 if __name__=="__main__":
     
     class CFG(object):
@@ -124,12 +160,20 @@ if __name__=="__main__":
             self.min_depth = min_depth
             self.train_depth_only = train_depth_only
             self.return_depth = return_depth
+    
+    class DatasetCFG(object):
+        def __init__(self,background_color=[0.0, 0.0, 0.0]):
+            self.background_color = background_color
+
             
+    #----------------------------------------------------------------------------------------------#
+    #---------------------------------Input Images and Inputs--------------------------------------#
+    #----------------------------------     And Inputs       --------------------------------------#
+    #----------------------------------------------------------------------------------------------#
     
     input_images = torch.randn(1,2,3,224,832).cuda() # batch is 2, 0 is left and the 1 is the right
-    
     b, v, _, h, w = input_images.shape
-        
+    
     cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=input_images.device)  # [2, 2]
     cameras_dist_index = cameras_dist_index.unsqueeze(0).expand(1, -1, -1)  # [B, 2, 2]
     intrinsics =   torch.Tensor([[552.554261,   0,       682.049453],
@@ -153,6 +197,17 @@ if __name__=="__main__":
     intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/224
 
     
+    z_near = 0.1
+    z_far = 1000.0
+    
+    
+    z_near_batch = torch.from_numpy(np.array([z_near])).unsqueeze(0).repeat(1,2)
+    z_far_batch = torch.from_numpy(np.array([z_far])).unsqueeze(0).repeat(1,2)
+    
+
+    
+
+    '''   Encoder Part of This Model  '''
     # Define the Unimatch Branch
     depth_estimator_unimatch = MultiViewUniMatch(
             num_scales=1, # default is 1
@@ -184,14 +239,23 @@ if __name__=="__main__":
                                              gaussian_head_settings_dict=gaussian_adapter_config,
                                              gaussians_color_branch_dict=gaussain_color_branch_config)
     
-        
+    
+    dataset_cfg = DatasetCFG(background_color=[0.0,0.0,0.0])
+
+    depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_cfg)
+    
+    
+
+    
+    
     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
-                            gaussain_head=gaussain_head)
+                            gaussain_head=gaussain_head,
+                            decoder_branch=depthsplattercuda_decoder
+                            )
     
     my_model = my_model.cuda()
     
 
-    
     batch = dict()
     batch['imgs'] = input_images.cuda()
     batch['intrinsics']= intrinsics.cuda()
@@ -199,6 +263,10 @@ if __name__=="__main__":
     batch['nn_matrix'] = cameras_dist_index.cuda()
     batch['pseudo_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
     batch['sparse_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
+    
+    batch['near'] = z_near_batch.cuda()
+    batch['far'] = z_far_batch.cuda()
+    
     
     cfg = CFG(max_train_steps=1000,max_depth=150,min_depth=0.3,
               train_depth_only=False,return_depth=True)
