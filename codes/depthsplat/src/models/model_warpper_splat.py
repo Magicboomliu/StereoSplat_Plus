@@ -15,14 +15,12 @@ import os
 import math
 from PIL import Image
 import torchvision.transforms as T
-
 #FIXME Here
 from encoder.unimatch.mv_unimatch import MultiViewUniMatch
 from encoder.unimatch.dpt_head import DPTHead
 import numpy as np
 from encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
 from torch import Tensor, nn
-
 # Decoder Here
 from decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
 
@@ -137,19 +135,17 @@ class ModelWarpper(nn.Module):
                                                depth_mode = 'depth'
                                                )
         
-        rendered_color = rendered_results['color']
-        rendered_depth = rendered_results['depth']
-        rendered_alpha = rendered_results['alpha']
+        rendered_color = rendered_results['color'] # torch.Size([1, 2, 3, 224, 832])
+        rendered_depth = rendered_results['depth'] # torch.Size([1, 2, 1, 224, 832])
+        rendered_alpha = rendered_results['alpha'] # torch.Size([1, 2, 1, 224, 832])
         
-        print(rendered_color.shape) 
-        print(rendered_depth.shape)
-        print(rendered_alpha.shape)
-        quit()
         
+        # calculate the loss here
+        
+
         
 
             
-
         
 if __name__=="__main__":
     

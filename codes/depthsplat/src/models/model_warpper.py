@@ -48,9 +48,6 @@ class ModelWarpper(nn.Module):
         return next(self.parameters()).dtype
 
     
-    
-
-    
 
     def forward(self,batch, mode="train", iter=0, cfg=None):
         

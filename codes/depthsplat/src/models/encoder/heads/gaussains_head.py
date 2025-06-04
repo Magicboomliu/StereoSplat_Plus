@@ -116,7 +116,6 @@ class Gaussains_Estimator_Head(nn.Module):
                 results_dict,
                 return_depth=True):
         
-        
         depth_preds = results_dict['depth_preds']
         # [B, V, H, W]
         depth = depth_preds[-1]
