@@ -78,6 +78,7 @@ def main(args):
     if args.validation_list!='None':
         dataset_config.val_filelist = args.validation_list
     
+    
     val_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
@@ -90,9 +91,9 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
-        "use_stereo": dataset_config.use_stereo
-        
+        "depth_info_dict":dataset_config.depth_info_params
     }
+    
     
     val_dataset = dataset(**val_params)
 
