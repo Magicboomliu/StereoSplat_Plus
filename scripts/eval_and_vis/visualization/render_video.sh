@@ -1,11 +1,10 @@
 Render_KITTI360_OmniScene_Render_Videos(){
 cd ../../..
 cd codes/validation
-configs_path="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/codes/configs/OmniScene/eval/vanilla_settings_nmrfstereo_depth_supp6_FL.py"
-output_dir="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/Visualizations_And_Evaluations/20250601/Vanilla_Settings_NMRFStereo_Depth_Dynamic_Input_Train_Supp6/rendered_videos"
-load_from="/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/NMRFStereo_Based/adaptive_input_training/omni_gs_kitti360_novelview_r50_224x840/checkpoint-48000/"
-validation_list="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
-#configs 
+configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omniscene_vanilla_settings.py"
+output_dir="/data/feedforward_outputs/visualization_outputs/omniscene_vanilla_settings/rendered_videos"
+load_from="/data/feedforward_outputs/checkpoint-48000/"
+validation_list="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
 # - Multi GPUs YAML: accelerate_config.yaml
 
