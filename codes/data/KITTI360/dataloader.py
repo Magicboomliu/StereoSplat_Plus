@@ -28,7 +28,7 @@ from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
-from data.KITTI360.transforms.loading import load_info, load_conditions,load_conditions_stereo
+from data.KITTI360.transforms.loading import load_info,load_conditions
 
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
@@ -50,12 +50,11 @@ class KITTI360Dataset(Dataset):
         data_version:str,
         resolution: list,
         split: str = "train",
-        sequence:str ='2013_05_28_drive_0000_sync',
         use_center: bool = True,
         use_first: bool = False,
         use_last: bool = False,
         supp_view_nums: int=0,
-        use_stereo: bool = False,
+        depth_info_dict: dict=None,
         **kwargs,
         ):
         super().__init__()
@@ -63,7 +62,9 @@ class KITTI360Dataset(Dataset):
         self.datapath = datapath
         self.data_version = data_version
         self.supp_view_nums = supp_view_nums
-        self.use_stereo = use_stereo
+        
+        self.depth_info_dict = depth_info_dict
+        
         
         self.camera_types = [
             "CAM_LEFT",
@@ -80,10 +81,8 @@ class KITTI360Dataset(Dataset):
         ]
         
         self.reso = resolution
-        # using the center as the input
+
         self.use_center = use_center
-        
-        # using the last or first for input， or just for validations
         self.use_first = use_first
         self.use_last = use_last
         
@@ -122,78 +121,22 @@ class KITTI360Dataset(Dataset):
     def __getitem__(self, index):
         
         bin_token_name = self.bin_tokens[index]
-        abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)
-        
+        abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)    
         bin_info = self._load_pkl_file(abs_bin_token_fname)
         
         
-    
-
-        center_idx = 0
-        first_idx = 1
-        last_idx = 2
-        
-        if self.split=='train':
-            # Adaptive Input
-            if 'dynamic_input_frame_idx' in bin_info['sensor_info'].keys():
-                dynamic_input_frame_idx = bin_info['sensor_info']['dynamic_input_frame_idx']
-                if dynamic_input_frame_idx==0:
-                    center_idx = dynamic_input_frame_idx
-                    first_idx = 1
-                    last_idx = 2
-                elif dynamic_input_frame_idx==1:
-                    center_idx = dynamic_input_frame_idx # First as Center
-                    first_idx = 0 # Center as First
-                    last_idx = 2 # Last still Last
-                elif dynamic_input_frame_idx==2:
-                    center_idx = dynamic_input_frame_idx # Last as Center
-                    first_idx = 1 # First is still frist
-                    last_idx = 0 # Center as Last
-                else:
-                    # change the center and the current dynamic input idx
-                    
-                    swap_elements(bin_info['sensor_info']['LIDAR_TOP'],0,dynamic_input_frame_idx)
-                    swap_elements(bin_info['sensor_info']['CAM_LEFT'],0,dynamic_input_frame_idx)
-                    swap_elements(bin_info['sensor_info']['CAM_RIGHT'],0,dynamic_input_frame_idx)
-                    
-                    center_idx = 0
-                    first_idx = 1
-                    last_idx = 2
-                
-                
-            else:
-                dynamic_input_frame_idx = 0
-                center_idx = dynamic_input_frame_idx
-                first_idx = 1
-                last_idx = 2
-        
-        
-        
-        else:
-            if self.use_center:
-                center_idx = 0
-                first_idx = 1
-                last_idx = 2
-            elif self.use_first:
-                center_idx = 0
-                first_idx = 1
-                last_idx = 2
-                
-                
-        
-        
         # center
-        sensor_info_center = {sensor: bin_info["sensor_info"][sensor][center_idx] for sensor in self.camera_types + ["LIDAR_TOP"]}
+        sensor_info_center = {sensor: bin_info["sensor_info"][sensor][0] for sensor in self.camera_types + ["LIDAR_TOP"]}
         # first 
-        sensor_info_first = {sensor: bin_info["sensor_info"][sensor][first_idx] for sensor in self.camera_types_first + ["LIDAR_TOP"]}
+        sensor_info_first = {sensor: bin_info["sensor_info"][sensor][1] for sensor in self.camera_types_first + ["LIDAR_TOP"]}
         # last
-        sensor_info_last = {sensor: bin_info["sensor_info"][sensor][last_idx] for sensor in self.camera_types_last + ["LIDAR_TOP"]}
+        sensor_info_last = {sensor: bin_info["sensor_info"][sensor][2] for sensor in self.camera_types_last + ["LIDAR_TOP"]}
+
 
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
         if self.use_center:
             for cam in self.camera_types:
-
                 info = copy.deepcopy(sensor_info_center[cam]) # all the infors
                 img_path, c2w, w2c = load_info(info)
                 img_path = os.path.join(self.datapath,img_path)
@@ -227,13 +170,20 @@ class KITTI360Dataset(Dataset):
         input_w2cs = np.array(input_w2cs)  # 变成统一的 (2, 4, 4) ndarray
         input_w2cs = torch.from_numpy(input_w2cs).float()  # 更快、更标准
         
-        if self.use_stereo:
-            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks,input_sparse_gt_depth = \
-                        load_conditions_stereo(input_img_paths, self.reso)     
-        else:
-            input_imgs, input_depths, input_depths_m, input_confs_m, input_cks,input_sparse_gt_depth  = \
-                        load_conditions(input_img_paths, self.reso)   
+        
+        
+        input_imgs, input_cks, input_depths_dict = load_conditions(img_paths=input_img_paths,
+                                                                   reso=self.reso,
+                                                                   depth_info_params=self.depth_info_dict)
 
+        if self.depth_info_dict.use_pseudo_depth:
+            input_depths = input_depths_dict['depths']
+            input_depths_m = input_depths_dict['depths_m']
+            input_confs_m = input_depths_dict['confs_m']
+        if self.depth_info_dict.use_sparse_lidar:
+            input_sparse_gt_depth = input_depths_dict['sparse_gts']
+        
+            
         input_cks = torch.as_tensor(input_cks, dtype=torch.float32) #(6,3,3)--> Camera Intrinsics
         
 
@@ -281,24 +231,34 @@ class KITTI360Dataset(Dataset):
         # for training, using a certain number of the views for training.
         if self.split=="train":
             assert frame_num >=self.supp_view_nums, "only got {} frames for bin{}".format(frame_num, bin_token_name)
-            if self.use_center:
-                # Need to be modfieed here
-                uniform_selected_supplement_views = self.supp_view_nums -3 # split the first/center/last frame.
-                candidates_views = list(range(frame_num))[3:]
-                if uniform_selected_supplement_views>0:
-                    supplement_view_ids = self._uniform_sample(ordered_list=candidates_views,N=uniform_selected_supplement_views)
-                    rend_indices = [[1, 2]+ supplement_view_ids] * len(self.camera_types)                   
+            # except for the first/central/last view ----> Add New supervision views
+            extra_uniform_selected_supervision_view = self.supp_view_nums -3 
+            candidates_supervision_views_indices = list(range(frame_num))[3:]
+            if extra_uniform_selected_supervision_view>0:
+                selected_candidates_view_indices = self._uniform_sample(ordered_list=candidates_supervision_views_indices,
+                                                    N=extra_uniform_selected_supervision_view)
+                if self.use_center:
+                    rend_indices = [[1, 2]+ selected_candidates_view_indices] * len(self.camera_types)
+                if self.use_first:
+                    rend_indices = [[0, 2]+ selected_candidates_view_indices] * len(self.camera_types)
                 else:
-                    rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
+                    rend_indices = [[0]] * len(self.camera_types)
             else:
-                rend_indices = [[0]] * len(self.camera_types)
+                if self.use_center:
+                    rend_indices = [[1, 2]] * len(self.camera_types)
+                if self.use_first:
+                    rend_indices = [[0, 2]] * len(self.camera_types)
+                else:
+                    rend_indices = [[0]] * len(self.camera_types)
+            
+            
         
         # for valiation and the testing
         else:
             assert frame_num >=3, "only got {} frames for bin{}".format(frame_num, bin_token_name)
             if self.use_center:
                 rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
-            elif self.use_first:
+            if self.use_first:
                 rend_indices = [[0, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Second and the Last
             else:
                 rend_indices = [[0]] * len(self.camera_types)
@@ -315,14 +275,19 @@ class KITTI360Dataset(Dataset):
                 output_w2cs.append(w2c)
         output_c2ws = torch.as_tensor(output_c2ws, dtype=torch.float32)  #(2*N,4,4)-->(2*6)
                 
-        # load and modify images (cropped or resized if necessary), and modify intrinsics accordingly
-        if self.use_stereo:
-            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks,out_sparse_gts = \
-                        load_conditions_stereo(output_img_paths, self.reso)
-        else:
-            output_imgs, output_depths, output_depths_m, output_confs_m, output_cks,out_sparse_gts = \
-                        load_conditions(output_img_paths, self.reso)
+       
+
+        output_imgs, output_cks,output_depths_dict  = \
+                        load_conditions(output_img_paths, self.reso,self.depth_info_dict)
                         
+
+        if self.depth_info_dict.use_pseudo_depth:
+            output_depths = output_depths_dict['depths']
+            output_depths_m = output_depths_dict['depths_m']
+            output_confs_m = output_depths_dict['confs_m']
+        if self.depth_info_dict.use_sparse_lidar:
+            output_sparse_gt_depth = output_depths_dict['sparse_gts']
+        
         output_fxs, output_fys, output_cxs, output_cys = output_cks[:, 0, 0], output_cks[:, 1, 1], output_cks[:, 0, 2], output_cks[:, 1, 2]
         
         # compute image fovs and pixel directions
@@ -342,8 +307,9 @@ class KITTI360Dataset(Dataset):
         output_depths_m = torch.cat([output_depths_m, input_depths_m], dim=0)
         output_confs_m = torch.cat([output_confs_m, input_confs_m], dim=0)
         
-        if self.split=="val" or self.split=='test':
-            output_sparse_depth_gts = torch.cat([out_sparse_gts,input_sparse_gt_depth],dim=0)
+
+        if self.depth_info_dict.use_sparse_lidar:
+            output_sparse_depth_gts = torch.cat([output_sparse_gt_depth,input_sparse_gt_depth],dim=0)
         
         
         output_c2ws = torch.cat([output_c2ws, input_c2ws], dim=0) # first 2 dimension is the novel final ,final dimension is the input view
@@ -367,31 +333,53 @@ class KITTI360Dataset(Dataset):
 
         # pack data
         input_dict = {"rgb": input_imgs} # images
-        input_dict_pix = {"depth_m": input_depths_m, "conf_m": input_confs_m,
-                          "ck": input_cks, "c2w": input_c2ws,
+
+        input_dict_pix = {"ck": input_cks, "c2w": input_c2ws,
                           "cx": input_cxs, "cy": input_cys, "fx": input_fxs, "fy": input_fys,
-                          "rays_o": input_rays_o, "rays_d": input_rays_d} 
+                          "rays_o": input_rays_o, "rays_d": input_rays_d}
+        
+        if self.depth_info_dict.use_pseudo_depth:
+            input_dict_pix.update({
+                                    "depth_m":input_depths_m,
+                                    "conf_m":input_confs_m
+                                    })
+            
+        if self.depth_info_dict.use_sparse_lidar:
+            input_dict_pix.update({
+                                    "sparse_gt_depth":input_sparse_gt_depth
+                                    })
+        
         
         input_dict_vol = {"w2i": input_w2is} # volume based methods
 
         
-        if self.split=='train':
+        # if self.split=='train':
+        output_dict = {"rgb": output_imgs, 
+                    "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
+                    "rays_o": output_rays_o, "rays_d": output_rays_d,
+                    "input_image_path":output_img_paths+ input_img_paths
+                    }
         
-            output_dict = {"rgb": output_imgs, "depth": output_depths,
-                        "depth_m": output_depths_m, "conf_m": output_confs_m,
-                        "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-                        "rays_o": output_rays_o, "rays_d": output_rays_d,
-                        "input_image_path":output_img_paths+ input_img_paths
-                        }
-        else:
-            output_dict = {"rgb": output_imgs, "depth": output_depths,
-                        "depth_m": output_depths_m, 
-                        'sparse_gt_depth':output_sparse_depth_gts,
-                        "conf_m": output_confs_m,
-                        "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-                        "rays_o": output_rays_o, "rays_d": output_rays_d,
-                        "input_image_path":output_img_paths+ input_img_paths
-                        }
+        if self.depth_info_dict.use_pseudo_depth:
+            output_dict.update({
+                "depth": output_depths,
+                    "depth_m": output_depths_m, "conf_m": output_confs_m
+            })
+        if self.depth_info_dict.use_sparse_lidar:
+            output_dict.update({
+                'sparse_gt_depth':output_sparse_depth_gts,
+            })
+                
+  
+        # else:
+        #     output_dict = {"rgb": output_imgs, "depth": output_depths,
+        #                 "depth_m": output_depths_m, 
+        #                 'sparse_gt_depth':output_sparse_depth_gts,
+        #                 "conf_m": output_confs_m,
+        #                 "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
+        #                 "rays_o": output_rays_o, "rays_d": output_rays_d,
+        #                 "input_image_path":output_img_paths+ input_img_paths
+        #                 }
 
         return {
             "bin_token": bin_token_name,
