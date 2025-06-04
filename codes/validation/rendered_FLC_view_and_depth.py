@@ -293,9 +293,9 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
-        "use_stereo": dataset_config.use_stereo
-        
+        "depth_info_dict":dataset_config.depth_info_params
     }
+    
     
     val_dataset = dataset(**val_params)
 
