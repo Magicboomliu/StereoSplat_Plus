@@ -238,7 +238,10 @@ def main(args):
                 optimizer.zero_grad()
                 
                 # try:
-                loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                if args.gpus<=1:
+                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                else:
+                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
                 loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                 
@@ -278,7 +281,11 @@ def main(args):
                             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
                             val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
                                                 "step-{}/batch-{}".format(global_iter, i_iter_val))
-                            log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
+                            
+                            if args.gpus<=1:
+                                log_val = my_model.validation_step(batch_val, val_batch_save_dir)
+                            else:
+                                log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
                             log.update(log_val)
                     my_model.train()
             
