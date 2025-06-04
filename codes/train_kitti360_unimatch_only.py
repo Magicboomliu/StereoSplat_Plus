@@ -284,6 +284,9 @@ def main(args):
     else:
         resume_step = -1
     
+
+    
+    
     if accelerator.is_main_process:
         print('work dir: ', args.work_dir)
         print("max iteration steps: ",cfg.max_train_steps)

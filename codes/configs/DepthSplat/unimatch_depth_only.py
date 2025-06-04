@@ -28,10 +28,10 @@ seed=42
 
 # only using the center for training
 resolution = [224, 832]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
-train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
-val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
-test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+datapath = "/data/KITTI/KITTI360_For_docker"
+train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
+val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
 use_projected_lidar=True
 use_pseudo_depth=True
 
@@ -44,9 +44,9 @@ dataset_params = dict(
     val_filelist=val_filelist,
     test_filelist=test_filelist,
     resolution=resolution,
-    batch_size_train=3,
+    batch_size_train=1,
     batch_size_val=1,
-    batch_size_test=4,
+    batch_size_test=2,
     num_workers=8,
     num_workers_val=8,
     num_workers_test=4,
