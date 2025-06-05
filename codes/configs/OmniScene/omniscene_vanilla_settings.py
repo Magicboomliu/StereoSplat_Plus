@@ -36,7 +36,6 @@ use_center, use_first, use_last = False, True, False
 # resolution = [224, 840]
 resolution = [168, 632]
 
-
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 

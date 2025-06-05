@@ -27,24 +27,31 @@ report_to = "tensorboard"
 
 seed=42
 
+
 # only using the center for training
-use_center, use_first, use_last = True, False, False
+use_center, use_first, use_last = False, True, False
 resolution = [224, 840]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
-datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
-train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
-#train_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/small_train.txt"
-val_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/Feedforward_Based_3DGS/more_supp_vanilla/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/data/KITTI/KITTI360_For_docker"
+train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-use_stereo=False
 
-# Dataset Configuration
+
+depth_info_params = dict(
+    use_pseudo_depth=True,
+    pseudo_depth_type='NMRFStereo', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
+    use_sparse_lidar=True
+    )
+
+
+
 dataset_params = dict(
     dataset_name="KITTI360Dataset",
     seed=seed,
@@ -66,5 +73,19 @@ dataset_params = dict(
     num_workers_val=8,
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
-    use_stereo=use_stereo
+    depth_info_params = depth_info_params
+)
+
+num_cams = 2
+near = 0.1
+far = 1000.0
+
+# define the 3D Space including the 
+# image resolution
+# Z-Near Planar
+# Z-Far Planar
+camera_args = dict(
+    resolution=resolution,
+    znear=near,
+    zfar=far
 )

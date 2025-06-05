@@ -13,6 +13,76 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
+def img2cam_sparse(depth_map: np.ndarray, K: np.ndarray) -> np.ndarray:
+    """
+    将稀疏深度图转换为相机坐标系下的 3D 点。
+    
+    Args:
+        depth_map: (H, W) 稀疏深度图（0 表示无效）
+        K: (3, 3) 相机内参矩阵
+
+    Returns:
+        cam_points: (N, 3) 相机坐标系下的 3D 点（仅保留有效像素）
+    """
+    H, W = depth_map.shape
+    fx = K[0, 0]
+    fy = K[1, 1]
+    cx = K[0, 2]
+    cy = K[1, 2]
+    
+    # 找出有效像素 (非零深度)
+    valid_mask = depth_map > 0
+    v, u = np.where(valid_mask)      # v: row index, u: col index
+    z = depth_map[v, u]              # 有效深度值
+
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+
+    cam_points = np.stack([x, y, z], axis=-1)  # (N, 3)
+    return cam_points
+
+def cam2image(points,K,height,width,depth_range=100):
+    # camera points
+    '''
+    [3,N]
+    '''
+    ndim = points.ndim
+    if ndim == 2:
+        points = np.expand_dims(points, 0) #[1,3,N]
+
+    points_proj = np.matmul(K[:3,:3].reshape([1,3,3]), points) #[1,3,N]
+    depth = points_proj[:,2,:]
+    depth[depth==0] = -1e-6
+    u = np.round(points_proj[:,0,:]/np.abs(depth)).astype(np.int32)
+    v = np.round(points_proj[:,1,:]/np.abs(depth)).astype(np.int32)
+
+    if ndim==2:
+        u = u[0]; v=v[0]; depth=depth[0]
+
+
+    u = u.astype(np.int32)
+    v = v.astype(np.int32)
+    # prepare depth map for visualization
+    depthMap = np.zeros((height, width))
+    depthImage = np.zeros((height, width, 3))
+    mask = np.logical_and(np.logical_and(np.logical_and(u>=0, u<width), v>=0), v<height)
+    # visualize points within depth range meters
+    mask = np.logical_and(np.logical_and(mask, depth>0), depth<depth_range)
+    depthMap[v[mask],u[mask]] = depth[mask]
+    
+    return depthMap
+
+def resize_the_sparse_lidar(depthmap,raw_K,after_K,height,width,depth_range=100):
+    
+    points_cam = img2cam_sparse(depth_map=depthmap,K=raw_K)
+
+    resize_gt_sparse_depth = cam2image(points=points_cam.T,K=after_K,height=height,width=width,
+                                       depth_range=depth_range)
+    
+    return resize_gt_sparse_depth
+
+
+
 def read_annotation(annotation_filename):
 
     with open(annotation_filename) as file:
@@ -86,6 +156,7 @@ def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,us
     cTs.append(c2w_left)
     cTs.append(c2w_right)
     
+    # revise the information here
     if use_projected_lidar:
         gt_projected_sparse_depth_path_left = current_filemname.replace("annotations","projected_sparse_lidar/data_2d_raw").replace(".json",".png")
         gt_projected_sparse_depth_path_right = gt_projected_sparse_depth_path_left.replace("image_00","image_01")
@@ -101,14 +172,19 @@ def load_condiations(annotation_path, reso,datapath, use_projected_lidar=True,us
 
 
         if resize_flag:
-            sparse_gt_left = Image.fromarray(sparse_gt_left)
-            sparse_gt_left = sparse_gt_left.resize((reso[1], reso[0]), Image.BILINEAR)
-            sparse_gt_left = np.array(sparse_gt_left)
             
-            sparse_gt_right = Image.fromarray(sparse_gt_right)
-            sparse_gt_right = sparse_gt_right.resize((reso[1], reso[0]), Image.BILINEAR)
-            sparse_gt_right = np.array(sparse_gt_right)
-        
+            sparse_gt_left = resize_the_sparse_lidar(depthmap=sparse_gt_left,
+                                                     raw_K=raw_ck,
+                                                     after_K=ck,
+                                                     height=reso[0],
+                                                     width=reso[1])
+            
+            sparse_gt_right = resize_the_sparse_lidar(depthmap=sparse_gt_right,
+                                                      raw_K=raw_ck,
+                                                      after_K=ck,
+                                                      height=reso[0],
+                                                      width=reso[1])
+            
         sparse_depths.append(sparse_gt_left)
         sparse_depths.append(sparse_gt_right)
         
