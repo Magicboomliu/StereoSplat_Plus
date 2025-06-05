@@ -21,9 +21,15 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 
 import warnings
 warnings.filterwarnings("ignore")
-
 torch.autograd.set_detect_anomaly(True)
 
+from depthsplat.src.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.src.models.encoder.unimatch.dpt_head import DPTHead
+import numpy as np
+from depthsplat.src.models.encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+from torch import Tensor,nn
+from depthsplat.src.models.decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
+from depthsplat.src.models.model_warpper_splat import ModelWarpper
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -44,6 +50,9 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     logger.propagate = False
     return logger
 
+class DecoderCFG(object):
+    def __init__(self,background_color=[0.0, 0.0, 0.0]):
+        self.background_color = background_color
 
 def main(args):
 
@@ -81,10 +90,8 @@ def main(args):
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
-    
     max_num_epochs = cfg.max_epochs # default is 30
-    
-    
+
     # configure logger
     if accelerator.is_main_process:
         os.makedirs(args.work_dir, exist_ok=True)
@@ -99,35 +106,8 @@ def main(args):
         logger.info(f'Config:\n{cfg.pretty_text}')
 
 
-    # build model
-    from builder import builder as model_builder
-    my_model = model_builder.build(cfg.model).to(accelerator.device)
-    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
-    if logger is not None:
-        logger.info(f'Number of params: {n_parameters}')
-
-    optimizers = my_model.configure_optimizers(cfg.lr) # default is 1e-4
-    optimizer = optimizers[0]
-    
-
-    # learning rate scheme
-    warm_up = torch.optim.lr_scheduler.LinearLR(
-        optimizer,
-        1 / (cfg.warmup_steps*accelerator.num_processes),
-        1,
-        total_iters=cfg.warmup_steps*accelerator.num_processes,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.max_train_steps*accelerator.num_processes, eta_min=cfg.lr * 0.1)
-    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warm_up, scheduler], milestones=[cfg.warmup_steps*accelerator.num_processes])
-
     # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
-
-    if "use_stereo" in dataset_config.keys():
-        use_stereo = dataset_config.use_stereo
-    else:
-        use_stereo = False
-    
     train_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
@@ -141,8 +121,7 @@ def main(args):
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
-        "use_stereo": use_stereo
-        
+        "depth_info_dict":dataset_config.depth_info_params
     }
 
     val_params = {
@@ -158,9 +137,9 @@ def main(args):
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
-        "use_stereo": use_stereo
-        
+        "depth_info_dict":dataset_config.depth_info_params
     }
+
     
     # Define the dataloader
     train_dataset = dataset(**train_params)
@@ -175,14 +154,88 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
     
+    '''     Model Configuration   '''
+    encoder_cfg = cfg.model.encoder
+    
+    # depth unimatch model
+    depth_estimator_unimatch = MultiViewUniMatch(
+            num_scales=encoder_cfg.num_scales, # default is 1
+            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
+            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
+            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
+            unet_channels=encoder_cfg.depth_unet_channels, # 128
+            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
+        )
+    
+    # 3dgs head: define the the gaussain head
+    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
+    # color branch
+    gaussain_color_branch_config = {
+            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
+            "color_large_unet": cfg.model.encoder.color_large_unet,
+            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
+            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
+            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
+            "num_surfaces":cfg.model.encoder.num_surfaces}
+    
+    # gaussain head estimation
+    gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+                                             upsample_factor=cfg.model.encoder.upsample_factor,
+                                             num_scales=cfg.model.encoder.num_scales,
+                                             gaussian_head_settings_dict=gaussian_adapter_config,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    dataset_config = DecoderCFG(background_color=cfg.background_color)
+    depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_config)
+    
+    
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head,
+                            decoder_branch=depthsplattercuda_decoder,
+                            unimatch_weight = cfg.unimatch_weights_path
+                            )
+    
+    
+
+
+    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
+    if logger is not None:
+        logger.info(f'Number of params: {n_parameters}')
+    
+    ''' Define the optimizers '''
+    # 假设 model 已经构建好
+    param_groups = [
+        {"params": [], "lr": cfg.lr},             # 默认组
+        {"params": [], "lr": cfg.lr * 0.01},      # 'pretrained' 组，lr_mult=0.01
+    ]
+    
+    for name, param in depth_estimator_unimatch.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "pretrained" in name:
+            param_groups[1]["params"].append(param)
+        else:
+            param_groups[0]["params"].append(param)
+    
+
+    optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
+    # learning rate scheme
+    warm_up = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        1 / (cfg.warmup_steps*accelerator.num_processes),
+        1,
+        total_iters=cfg.warmup_steps*accelerator.num_processes,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.max_train_steps*accelerator.num_processes, eta_min=cfg.lr * 0.1)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warm_up, scheduler], milestones=[cfg.warmup_steps*accelerator.num_processes])
+
+
     # move to the accelerate
     my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
         my_model, optimizer, train_dataloader, val_dataloader, scheduler
     )
-
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
-
 
     # resume and load
     epoch = 0
@@ -207,8 +260,6 @@ def main(args):
             else:
                 path = None
 
-    
-
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
@@ -217,6 +268,7 @@ def main(args):
         resume_step = global_iter % num_update_steps_per_epoch
         if accelerator.is_main_process:
             print(f'successfully resumed from epoch{first_epoch}-iter{global_iter}')
+    
     else:
         resume_step = -1
     
@@ -226,7 +278,7 @@ def main(args):
 
     # training
     print_freq = cfg.print_freq
-        
+
     while epoch < max_num_epochs:
         my_model.train()
         data_time_s = time.time()
@@ -237,88 +289,26 @@ def main(args):
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
-                # try:
+                input_batch_data = batch['inputs_pix'] 
+                # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 'input_image_path', 
+                # 'depth', 'depth_m', 'conf_m', 'sparse_gt_depth'])
+                output_batch_data = batch['outputs'] 
+                
+                
                 if args.gpus<=1:
-                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
                 else:
-                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
-
-                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
                 
-                if torch.isnan(loss) or torch.isinf(loss):
-                    continue  # 直接跳过当前 iteration
                 
-                with torch.autograd.detect_anomaly():
-                    accelerator.backward(loss)
-                # except:
-                #     torch.cuda.empty_cache()
-                #     print(batch['bin_token'])
-                #     print("Here is Error Encounter......")
-                #     continue  # 或 return / break
-
-                if accelerator.sync_gradients:
-                    grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
-                optimizer.step()
-                scheduler.step()
-
-
-            # Checks if the accelerator has performed an optimization step behind the scenes
-            accelerator.wait_for_everyone()
-            if accelerator.sync_gradients and accelerator.is_main_process:
-                if global_iter % cfg.save_freq == 0:
-                    if accelerator.is_main_process:
-                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
-                        accelerator.save_state(save_file_name)
-                        dst_file = osp.join(args.work_dir, 'latest')
-                        mmengine.utils.symlink(save_file_name, dst_file)
-                        if logger is not None:
-                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
-                
-                if global_iter % cfg.val_freq == 0:
-                    my_model.eval()
-                    if accelerator.is_main_process:
-                        for i_iter_val, batch_val in enumerate(val_dataloader):
-                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                            val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
-                                                "step-{}/batch-{}".format(global_iter, i_iter_val))
-                            
-                            if args.gpus<=1:
-                                log_val = my_model.validation_step(batch_val, val_batch_save_dir)
-                            else:
-                                log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
-                            log.update(log_val)
-                    my_model.train()
-            
-            time_e = time.time()
-
-            # print loss log regularly
-            if global_iter % print_freq == 0 and accelerator.is_main_process:
-                lr = optimizer.param_groups[0]['lr']
-                losses_str = ""
-                for loss_k, loss_v in log.items():
-                    losses_str += ("%s: %.3f, " % (loss_k, loss_v))
-                if logger is not None:
-                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
-                        epoch, i_iter, len(train_dataloader), 
-                        loss.item(), losses_str, grad_norm, lr,
-                        time_e - time_s, data_time_e - data_time_s
-                    ))
-
-            global_iter += 1
-
-            # dump loss log to tensorboard
-            accelerator.log(log, step=global_iter)
-
-            data_time_s = time.time()
-            time_s = time.time()
-
-        epoch += 1
-
-    # Create the pipeline using the trained modules and save it.
-    accelerator.wait_for_everyone()
-    accelerator.end_training()
+                print(input_batch_data.keys())
+                print(output_batch_data.keys())
+                print(batch.keys())
+                quit()
     
     
+
+
     
 if __name__ == '__main__':
     # Training settings
@@ -326,7 +316,6 @@ if __name__ == '__main__':
     parser.add_argument('--py-config')
     parser.add_argument('--work-dir', type=str)
     parser.add_argument('--resume-from', type=str, default='')
-
     args = parser.parse_args()
     
     ngpus = torch.cuda.device_count()
