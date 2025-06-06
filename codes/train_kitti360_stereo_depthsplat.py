@@ -296,17 +296,58 @@ def main(args):
                 
                 
                 if args.gpus<=1:
-                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    loss, loss_terms,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
                 else:
-                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    loss, loss_terms,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
                 
                 
-                print(input_batch_data.keys())
-                print(output_batch_data.keys())
-                print(batch.keys())
-                quit()
+                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                if torch.isnan(loss) or torch.isinf(loss):
+                    continue  # 直接跳过当前 iteration
+                
+                with torch.autograd.detect_anomaly():
+                    accelerator.backward(loss)
+                # except:
+                #     torch.cuda.empty_cache()
+                #     print(batch['bin_token'])
+                #     print("Here is Error Encounter......")
+                #     continue  # 或 return / break
+
+                if accelerator.sync_gradients:
+                    grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+                optimizer.step()
+                scheduler.step()
     
     
+
+            # Checks if the accelerator has performed an optimization step behind the scenes
+            accelerator.wait_for_everyone()
+            if accelerator.sync_gradients and accelerator.is_main_process:
+                if global_iter % cfg.save_freq == 0:
+                    if accelerator.is_main_process:
+                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
+                        accelerator.save_state(save_file_name)
+                        dst_file = osp.join(args.work_dir, 'latest')
+                        mmengine.utils.symlink(save_file_name, dst_file)
+                        if logger is not None:
+                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+                
+                if global_iter % cfg.val_freq == 0:
+                    my_model.eval()
+                    if accelerator.is_main_process:
+                        for i_iter_val, batch_val in enumerate(val_dataloader):
+                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                            val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                                                "step-{}/batch-{}".format(global_iter, i_iter_val))
+                            if args.gpus<=1:
+                                log_val = my_model.validation_step(batch_val, val_batch_save_dir)
+                            else:
+                                log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
+                            loss_terms.update(log_val)
+                    my_model.train()
+            
+            time_e = time.time()
+
 
 
     

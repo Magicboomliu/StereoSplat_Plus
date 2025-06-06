@@ -25,7 +25,7 @@ gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
 
-seed=1024
+seed=666
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
@@ -151,4 +151,24 @@ model = dict(
 
         
     )
+)
+
+
+
+
+# Define the Loss Here
+
+loss_settings_dict = dict(
+    
+    depth_estimator_supervision=True,
+    depth_estimator_suppervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    
+    rendered_depth_supervision=True,
+    rendered_depth_supervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    
+    rendered_rgb_supervision=True,
+    rendered_rgb_supervison_type="MSE_LPIPS",
+    lpips_alpha=0.05,
+    rendered_depth_weight=0.01,
+    depth_estimation_weight=0.1,
 )
