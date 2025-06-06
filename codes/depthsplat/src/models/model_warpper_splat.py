@@ -645,6 +645,10 @@ class ModelWarpper(nn.Module):
         os.makedirs(input_depths_path,exist_ok=True)
         
         
+        def save_vis():
+            pass
+        
+        
         
         
         
