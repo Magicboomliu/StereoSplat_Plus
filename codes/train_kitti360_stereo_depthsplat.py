@@ -332,6 +332,7 @@ def main(args):
                         if logger is not None:
                             logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
                 
+                # perform the validation scripts
                 if global_iter % cfg.val_freq == 0:
                     my_model.eval()
                     if accelerator.is_main_process:
@@ -340,9 +341,11 @@ def main(args):
                             val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
                                                 "step-{}/batch-{}".format(global_iter, i_iter_val))
                             if args.gpus<=1:
-                                log_val = my_model.validation_step(batch_val, val_batch_save_dir)
+                                # forward here 
+                                # get the psnr, ssim, mae and mse as well as the saved the visualization results
+                                log_val = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
                             else:
-                                log_val = my_model.module.validation_step(batch_val, val_batch_save_dir)
+                                log_val = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
                             loss_terms.update(log_val)
                     my_model.train()
             

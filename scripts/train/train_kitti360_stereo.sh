@@ -39,7 +39,7 @@ TRAIN_KITTI360_DepthSplat(){
 cd ../..
 cd codes
 configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_kitti360_stereo_224x840.py"
-work_dir="/data/feedforward_outputs/output_models/DepthSplat/depth_estimation_224x840"
+work_dir="/data/feedforward_outputs/output_models/DepthSplat/depth_splat_simple_224x840"
 resume_from="None"
 
 #configs 
