@@ -33,6 +33,9 @@ from depthsplat.src.models.model_warpper_splat import ModelWarpper
 
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
         return None
@@ -284,36 +287,41 @@ def main(args):
         data_time_s = time.time()
         time_s = time.time()
         for i_iter, batch in enumerate(train_dataloader):
-            # forward + backward + optimize
             data_time_e = time.time()
-            with accelerator.accumulate(my_model):
-                optimizer.zero_grad()
-                # input_batch_data = batch['inputs_pix'] 
-                # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 'input_image_path', 
-                # 'depth', 'depth_m', 'conf_m', 'sparse_gt_depth'])
-                # output_batch_data = batch['outputs']        
-                if args.gpus<=1:
-                    loss, logs,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
-                else:
-                    loss, logs,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
-                
-                
-                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
-                if torch.isnan(loss) or torch.isinf(loss):
-                    continue  # 直接跳过当前 iteration
-                
-                with torch.autograd.detect_anomaly():
-                    accelerator.backward(loss)
-                # except:
-                #     torch.cuda.empty_cache()
-                #     print(batch['bin_token'])
-                #     print("Here is Error Encounter......")
-                #     continue  # 或 return / break
 
-                if accelerator.sync_gradients:
-                    grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
-                optimizer.step()
-                scheduler.step()
+            try:
+                with accelerator.accumulate(my_model):
+                    optimizer.zero_grad()
+                    if args.gpus <= 1:
+                        out = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    else:
+                        out = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
+
+                    loss, logs, rendered_color, rendered_depth, rendered_alpha, estimated_raw_gaussains_dict = out
+
+                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
+                        continue  # 跳过当前 batch
+
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
+
+                    if accelerator.sync_gradients:
+                        grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+
+                    optimizer.step()
+                    scheduler.step()
+
+                accelerator.wait_for_everyone()
+
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                    torch.cuda.empty_cache()
+                    continue
+                else:
+                    raise e  # 其他错误照常抛出
     
     
             # Checks if the accelerator has performed an optimization step behind the scenes
@@ -327,6 +335,10 @@ def main(args):
                         mmengine.utils.symlink(save_file_name, dst_file)
                         if logger is not None:
                             logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+                
+                
+                if global_iter % 100 == 0:
+                    torch.cuda.empty_cache()
                 
                 # perform the validation scripts
                 if global_iter % cfg.val_freq == 0:

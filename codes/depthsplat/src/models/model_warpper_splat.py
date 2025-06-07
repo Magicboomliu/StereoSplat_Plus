@@ -101,6 +101,8 @@ class ModelWarpper(nn.Module):
         
         # preception loss here
         self.perceptual_loss = LPIPS().eval()
+        for param in self.perceptual_loss.parameters():
+            param.requires_grad = False
         
         
     @property

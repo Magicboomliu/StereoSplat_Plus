@@ -1,7 +1,7 @@
 TRAIN_KITTI360_OmniScene(){
 cd ../..
 cd codes
-configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/OmniScene/omniscene_vanilla_settings.py"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/OmniScene/omniscene_vanilla_settings.py"
 work_dir="/data/feedforward_outputs/Vanilla_OmniScene"
 resume_from="None"
 
@@ -20,7 +20,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 TRAIN_KITTI360_Unimatch_Only(){
 cd ../..
 cd codes
-configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/DepthSplat/unimatch_depth_only.py"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/unimatch_depth_only.py"
 work_dir="/data/feedforward_outputs/output_models/Unimatch/depth_estimation_224x840"
 resume_from="/data/feedforward_outputs/output_models/Unimatch/checkpoint-90000/"
 
@@ -38,15 +38,15 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 TRAIN_KITTI360_DepthSplat(){
 cd ../..
 cd codes
-configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_kitti360_stereo_224x840.py"
-work_dir="/data/feedforward_outputs/output_models/DepthSplat/depth_splat_simple_224x840"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_kitti360_stereo_224x840.py"
+work_dir="/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_simple_version"
 resume_from="None"
 
 #configs 
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
 # - Multi GPUs YAML: accelerate_config.yaml
-
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml train_kitti360_stereo_depthsplat.py \
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=1,2,3 accelerate launch --config-file accelerate_config.yaml train_kitti360_stereo_depthsplat.py \
     --py-config $configs_path \
     --work-dir  $work_dir \
     --resume-from $resume_from
