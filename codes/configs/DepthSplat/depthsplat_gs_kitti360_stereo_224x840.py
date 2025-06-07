@@ -15,19 +15,19 @@ lr = 2e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
-val_freq = 2000
+val_freq = 4000
 max_epochs = 150
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 50000
+max_train_steps = 100000
 warmup_steps = 1000
 mixed_precision = "no"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
 
-seed=666
+seed=42
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
