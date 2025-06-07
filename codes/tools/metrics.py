@@ -7,6 +7,54 @@ from lpips import LPIPS
 from skimage.metrics import structural_similarity
 from torch import Tensor
 from torchmetrics import PearsonCorrCoef
+import json
+
+class RGB_Quality_Meter(object):
+    def __init__(self,psnr,ssim):
+        self.psnr = psnr
+        self.ssim = ssim
+        self.counter = 0
+        
+    def update(self,psnr,ssim):
+        self.psnr +=psnr
+        self.ssim +=ssim
+        self.counter = self.counter +1
+        
+    def get_stats(self):
+        if self.counter==0:
+            return {"psnr":0,
+                    "ssim":0}
+        else:
+            return {
+                "psnr": self.psnr * 1.0 / self.counter,
+                "ssim": self.ssim * 1.0 /self.counter
+            }
+
+class Depth_Quality_Meter(object):
+    def __init__(self,mae,mse):
+        self.mae = mae
+        self.mse = mse
+        self.counter =0
+    
+    def update(self,mae,mse):
+        self.mae +=mae
+        self.mse +=mse
+        self.counter +=1
+        
+    def get_stats(self):
+        if self.counter==0:
+            return {"mae":0,
+                    "mse":0}
+        else:
+            return {
+                "mae": self.mae * 1.0 / self.counter,
+                "mse": self.mse * 1.0 /self.counter
+            }
+
+
+def saved_into_json(data_dict,path):
+    with open(path, "w") as f:
+        json.dump(data_dict, f, indent=4)
 
 
 @torch.no_grad()

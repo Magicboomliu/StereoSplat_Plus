@@ -7,6 +7,8 @@ _base_ = [
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
 output_dir = "outputs/depthsplat_kitti360_stereo_224x840"
+validation_vis_progress=True
+
 
 # learning rate setiing
 lr = 2e-4

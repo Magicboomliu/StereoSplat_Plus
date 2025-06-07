@@ -28,9 +28,8 @@ from safetensors.torch import load_file
 import matplotlib.pyplot as plt
 from .rgb_loss import LPIPS
 from .utils import maybe_resize
-
 from .metrics import compute_depth_mae_mse,compute_psnr_ssim,convert_depth_to_disp,kitti_colormap,save_dict_to_json
-
+import skimage.io
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -64,7 +63,6 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     mse = sq_error.mean()
 
     return mae, mse
-
 
 @dataclass
 class OptimizerCfg:
@@ -246,7 +244,7 @@ class ModelWarpper(nn.Module):
         z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
         z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
 
-        
+
         
         rendered_results = self.decoder_branch(gaussians=estimated_raw_gaussains_dict["gaussians"],
                                                extrinsics= render_c2w,
@@ -260,13 +258,10 @@ class ModelWarpper(nn.Module):
         rendered_color = rendered_results['color'] # torch.Size([1, V, 3, 224, 832])
         rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
         rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
-        
         rendered_depth = rendered_depth.squeeze(2)
         rendered_alpha = rendered_alpha.squeeze(2)
         
-        
         if mode=='train' or mode=='val':
-    
             # loss here
             # dict_keys(['output_imgs', 'output_depths', 'output_depths_m', 'output_confs_m', 
                         # 'output_positions', 'output_rays_o', 
@@ -428,25 +423,29 @@ class ModelWarpper(nn.Module):
         
     def validation_step(self, batch, val_result_savedir,cfg=None):
         
+        bin_token_name = batch['bin_token'][0][:-4]
+    
+
+        
         # loss and loss terms
-        loss, loss_terms,rendered_color,\
-            rendered_depth,rendered_alpha,estimated_raw_gaussains_dict,\
-                predicted_input_depth,input_sparse_gt_depth,\
-                    output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
-                                                        cfg=cfg)
+        with torch.no_grad():
+            loss, loss_terms,rendered_color,\
+                rendered_depth,rendered_alpha,estimated_raw_gaussains_dict,\
+                    predicted_input_depth,input_sparse_gt_depth,\
+                        output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
+                                                            cfg=cfg)
         
         batch_data_for_eval = {
         "output_gt_rgb": output_rgb,
         "output_gt_sparse_depth": sparse_depth_gt,
         "input_images": input_images,
         "input_gt_sparse_gt": input_sparse_gt_depth,
-        
         "predicted_input_depth": predicted_input_depth,
         "rendered_rgb": rendered_color,
         "rendered_depth": rendered_depth,
         "rendered_alpha": rendered_alpha,
-        "estimated_raw_gs": estimated_raw_gaussains_dict
-        
+        "estimated_raw_gs": estimated_raw_gaussains_dict,
+        "bin_token_name": bin_token_name
         }
         
         # saved into the val_result_dir: the visualiation results
@@ -457,12 +456,11 @@ class ModelWarpper(nn.Module):
         # GT Depths
         # Estimated Depths
         
-        self.save_val_results(batch_data_for_eval,val_result_savedir)
+        output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = self.save_val_results(batch_data_for_eval,val_result_savedir,cfg=cfg)
         
-        
-        return loss_terms
+        return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
     
-    def save_val_results(self,batch_data_for_eval,saved_dir):
+    def save_val_results(self,batch_data_for_eval,saved_dir,cfg):
         
         '''input batch data for evaluation'''
         
@@ -473,15 +471,15 @@ class ModelWarpper(nn.Module):
         
         # rendered center
         center_frame_left_est =  output_rendered_rgb[:,0,:,:,:]
-        center_frame_right_est = output_rendered_rgb[:,1,:,:,:]
-        last_frame_left_est =  output_rendered_rgb[:,2,:,:,:]
+        center_frame_right_est = output_rendered_rgb[:,2,:,:,:]
+        last_frame_left_est =  output_rendered_rgb[:,1,:,:,:]
         last_frame_right_est =  output_rendered_rgb[:,3,:,:,:]
         first_frame_left_est = output_rendered_rgb[:,4,:,:,:]
         first_frame_right_est = output_rendered_rgb[:,5,:,:,:]
         
         center_frame_left_gt =  output_gt_rgb[:,0,:,:,:]
-        center_frame_right_gt = output_gt_rgb[:,1,:,:,:]
-        last_frame_left_gt =  output_gt_rgb[:,2,:,:,:]
+        center_frame_right_gt = output_gt_rgb[:,2,:,:,:]
+        last_frame_left_gt =  output_gt_rgb[:,1,:,:,:]
         last_frame_right_gt =  output_gt_rgb[:,3,:,:,:]
         first_frame_left_gt = output_gt_rgb[:,4,:,:,:]
         first_frame_right_gt = output_gt_rgb[:,5,:,:,:]
@@ -495,32 +493,32 @@ class ModelWarpper(nn.Module):
         
         output_rgb_meter_dict['center_view'] = dict()
         output_rgb_meter_dict['center_view']['left'] = dict()
-        output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr
-        output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim
+        output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr.data.item()
+        output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim.data.item()
 
         output_rgb_meter_dict['center_view']['right'] = dict()
-        output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr
-        output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim
+        output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr.data.item()
+        output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim.data.item()
         
 
         output_rgb_meter_dict['last_view'] = dict()
         output_rgb_meter_dict['last_view']['left'] = dict()
-        output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr
-        output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim
+        output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr.data.item()
+        output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim.data.item()
 
         output_rgb_meter_dict['last_view']['right'] = dict()
-        output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr
-        output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim
+        output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr.data.item()
+        output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim.data.item()
 
 
         output_rgb_meter_dict['first_view'] = dict()
         output_rgb_meter_dict['first_view']['left'] = dict()
-        output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr
-        output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim
+        output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr.data.item()
+        output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim.data.item()
 
         output_rgb_meter_dict['first_view']['right'] = dict()
-        output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr
-        output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim
+        output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr.data.item()
+        output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim.data.item()
 
         
         # get the MAE and the MSE of the output view
@@ -530,15 +528,15 @@ class ModelWarpper(nn.Module):
         
 
         center_frame_left_est_depth =  output_rendered_depth[:,0,:,:]
-        center_frame_right_est_depth = output_rendered_depth[:,1,:,:]
-        last_frame_left_est_depth =  output_rendered_depth[:,2,:,:]
+        center_frame_right_est_depth = output_rendered_depth[:,2,:,:]
+        last_frame_left_est_depth =  output_rendered_depth[:,1,:,:]
         last_frame_right_est_depth =  output_rendered_depth[:,3,:,:]
         first_frame_left_est_depth = output_rendered_depth[:,4,:,:]
         first_frame_right_est_depth = output_rendered_depth[:,5,:,:]
 
         center_frame_left_gt_depth =  output_gt_depth[:,0,:,:]
-        center_frame_right_gt_depth = output_gt_depth[:,1,:,:]
-        last_frame_left_gt_depth =  output_gt_depth[:,2,:,:]
+        center_frame_right_gt_depth = output_gt_depth[:,2,:,:]
+        last_frame_left_gt_depth =  output_gt_depth[:,1,:,:]
         last_frame_right_gt_depth =  output_gt_depth[:,3,:,:]
         first_frame_left_gt_depth = output_gt_depth[:,4,:,:]
         first_frame_right_gt_depth = output_gt_depth[:,5,:,:]
@@ -563,32 +561,32 @@ class ModelWarpper(nn.Module):
 
         output_depth_meter_dict['center_view'] = dict()
         output_depth_meter_dict['center_view']['left'] = dict()
-        output_depth_meter_dict['center_view']['left']['mae'] = cl_mae
-        output_depth_meter_dict['center_view']['left']['mse'] = cl_mse
+        output_depth_meter_dict['center_view']['left']['mae'] = cl_mae.data.item()
+        output_depth_meter_dict['center_view']['left']['mse'] = cl_mse.data.item()
 
         output_depth_meter_dict['center_view']['right'] = dict()
-        output_depth_meter_dict['center_view']['right']['mae'] = cr_mae
-        output_depth_meter_dict['center_view']['right']['mse'] = cr_mse
+        output_depth_meter_dict['center_view']['right']['mae'] = cr_mae.data.item()
+        output_depth_meter_dict['center_view']['right']['mse'] = cr_mse.data.item()
         
 
         output_depth_meter_dict['last_view'] = dict()
         output_depth_meter_dict['last_view']['left'] = dict()
-        output_depth_meter_dict['last_view']['left']['mae'] = ll_mae
-        output_depth_meter_dict['last_view']['left']['mse'] = ll_mse
+        output_depth_meter_dict['last_view']['left']['mae'] = ll_mae.data.item()
+        output_depth_meter_dict['last_view']['left']['mse'] = ll_mse.data.item()
 
         output_depth_meter_dict['last_view']['right'] = dict()
-        output_depth_meter_dict['last_view']['right']['mae'] = lr_mae
-        output_depth_meter_dict['last_view']['right']['mse'] = lr_mse
+        output_depth_meter_dict['last_view']['right']['mae'] = lr_mae.data.item()
+        output_depth_meter_dict['last_view']['right']['mse'] = lr_mse.data.item()
 
 
         output_depth_meter_dict['first_view'] = dict()
         output_depth_meter_dict['first_view']['left'] = dict()
-        output_depth_meter_dict['first_view']['left']['mae'] = fl_mae
-        output_depth_meter_dict['first_view']['left']['mse'] = fl_mse
+        output_depth_meter_dict['first_view']['left']['mae'] = fl_mae.data.item()
+        output_depth_meter_dict['first_view']['left']['mse'] = fl_mse.data.item()
 
         output_depth_meter_dict['first_view']['right'] = dict()
-        output_depth_meter_dict['first_view']['right']['mae'] = fr_mae
-        output_depth_meter_dict['first_view']['right']['mse'] = fr_mse
+        output_depth_meter_dict['first_view']['right']['mae'] = fr_mae.data.item()
+        output_depth_meter_dict['first_view']['right']['mse'] = fr_mse.data.item()
 
         
         # get the MAE and the MSE of the input view (sterep)
@@ -612,12 +610,14 @@ class ModelWarpper(nn.Module):
         
         input_depth_meter_dict['input_depth'] = dict()
         input_depth_meter_dict['input_depth']['left'] = dict()
-        input_depth_meter_dict['input_depth']['left']['mae'] = input_l_mae
-        input_depth_meter_dict['input_depth']['left']['mse'] = input_l_mse
+        input_depth_meter_dict['input_depth']['left']['mae'] = input_l_mae.data.item()
+        input_depth_meter_dict['input_depth']['left']['mse'] = input_l_mse.data.item()
         
         input_depth_meter_dict['input_depth']['right'] = dict()
-        input_depth_meter_dict['input_depth']['right']['mae'] = input_r_mae
-        input_depth_meter_dict['input_depth']['right']['mse'] = input_r_mse
+        input_depth_meter_dict['input_depth']['right']['mae'] = input_r_mae.data.item()
+        input_depth_meter_dict['input_depth']['right']['mse'] = input_r_mse.data.item()
+        
+        
         
         
         # saved into jsons
@@ -635,24 +635,66 @@ class ModelWarpper(nn.Module):
         
         
         # saved into images.
-        rendered_images_path = os.path.join(saved_dir,"rendered_images")
-        rendered_depths_path = os.path.join(saved_dir,"rendered_depths")       
-        input_depths_path = os.path.join(saved_dir,"input_depths")
-        
         os.makedirs(saved_dir,exist_ok=True)
-        os.makedirs(rendered_images_path,exist_ok=True)
-        os.makedirs(rendered_depths_path,exist_ok=True)
-        os.makedirs(input_depths_path,exist_ok=True)
+
+        if cfg.validation_vis_progress:
+            saved_bin_token_name = batch_data_for_eval["bin_token_name"]
+
+            # saved the output rendered images and the GT Images
+            saved_folder_for_visualization = os.path.join(saved_dir,saved_bin_token_name)
+            os.makedirs(saved_folder_for_visualization,exist_ok=True)
+            
+            center_left_vis = torch.cat([center_frame_left_est,center_frame_left_gt],dim=-2)
+            center_right_vis = torch.cat([center_frame_right_est,center_frame_right_gt],dim=-2)
+            center_view = torch.cat([center_left_vis,center_right_vis],dim=-1)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,'center.png'),(center_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+
+            first_left_vis = torch.cat([first_frame_left_est,first_frame_left_gt],dim=-2)
+            first_right_vis = torch.cat([first_frame_right_est,first_frame_right_gt],dim=-2)
+            first_view = torch.cat([first_left_vis,first_right_vis],dim=-1)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,'first.png'),(first_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+            
+            last_left_vis = torch.cat([last_frame_left_est,last_frame_left_gt],dim=-2)
+            last_right_vis = torch.cat([last_frame_right_est,last_frame_right_gt],dim=-2)
+            last_view = torch.cat([last_left_vis,last_right_vis],dim=-1)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,'last.png'),(last_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+            
+            # saved  the output rendered depths and the GT Sparse depth    
+            center_frame_left_depth_vis = torch.cat([center_frame_left_est_depth,center_frame_left_gt_depth],dim=-2)
+            center_frame_right_depth_vis = torch.cat([center_frame_right_est_depth,center_frame_right_gt_depth],dim=-2)
+            center_depth_vis = torch.cat([center_frame_left_depth_vis,center_frame_right_depth_vis],dim=-1)
+            center_depth_vis = center_depth_vis.squeeze(0).cpu().numpy()
+            center_depth_vis = convert_depth_to_disp(depth=center_depth_vis)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,"center_depth.png"),center_depth_vis)
+            
+            
+            first_frame_left_depth_vis = torch.cat([first_frame_left_est_depth,first_frame_left_gt_depth],dim=-2)
+            first_frame_right_depth_vis = torch.cat([first_frame_right_est_depth,first_frame_right_gt_depth],dim=-2)
+            first_depth_vis = torch.cat([first_frame_left_depth_vis,first_frame_right_depth_vis],dim=-1)
+            first_depth_vis = first_depth_vis.squeeze(0).cpu().numpy()
+            first_depth_vis = convert_depth_to_disp(depth=first_depth_vis)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,"first_depth.png"),first_depth_vis)
+            
+            
+            last_frame_left_depth_vis = torch.cat([last_frame_left_est_depth,last_frame_left_gt_depth],dim=-2)
+            last_frame_right_depth_vis = torch.cat([last_frame_right_est_depth,last_frame_right_gt_depth],dim=-2)
+            last_depth_vis = torch.cat([last_frame_left_depth_vis,last_frame_right_depth_vis],dim=-1)
+            last_depth_vis = last_depth_vis.squeeze(0).cpu().numpy()
+            last_depth_vis = convert_depth_to_disp(depth=last_depth_vis)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,"last_depth.png"),last_depth_vis)
+
+
+            # saved the input images,estimated depths and the GT Sparse Depth        
+            input_depth_estimation_vis = torch.cat([input_depth_estimation_left,input_depth_estimation_right],dim=-2)
+            input_depth_estimation_vis = input_depth_estimation_vis.squeeze(0).cpu().numpy()
+            input_depth_estimation_vis = convert_depth_to_disp(depth=input_depth_estimation_vis)
+            skimage.io.imsave(os.path.join(saved_folder_for_visualization,"input_depth.png"),input_depth_estimation_vis)
         
-        
-        def save_vis():
-            pass
-        
-        
-        
-        
-        
-        return output_depth_meter_dict,output_depth_meter_dict,input_depth_meter_dict
+
+        return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
         
 
             
