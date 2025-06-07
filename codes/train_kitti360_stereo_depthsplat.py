@@ -203,15 +203,12 @@ def main(args):
     n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
     if logger is not None:
         logger.info(f'Number of params: {n_parameters}')
-    
-    ''' Define the optimizers '''
-    # 假设 model 已经构建好
     param_groups = [
         {"params": [], "lr": cfg.lr},             # 默认组
         {"params": [], "lr": cfg.lr * 0.01},      # 'pretrained' 组，lr_mult=0.01
     ]
     
-    for name, param in depth_estimator_unimatch.named_parameters():
+    for name, param in my_model.named_parameters():
         if not param.requires_grad:
             continue
         if "pretrained" in name:
@@ -220,6 +217,9 @@ def main(args):
             param_groups[0]["params"].append(param)
     
 
+    quit()
+    
+    
     optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
     # learning rate scheme
     warm_up = torch.optim.lr_scheduler.LinearLR(
@@ -469,9 +469,6 @@ def main(args):
                         
                         saved_into_json(data_dict=results_dict,
                                         path=os.path.join(overall_val_batch_save_dir,"metric.json"))
-                        
-                        
-                        quit()
                         
                     my_model.train()
             
