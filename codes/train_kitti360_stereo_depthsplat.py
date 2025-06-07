@@ -216,8 +216,6 @@ def main(args):
         else:
             param_groups[0]["params"].append(param)
     
-
-    quit()
     
     
     optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
