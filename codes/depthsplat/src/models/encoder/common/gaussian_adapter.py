@@ -107,6 +107,9 @@ class GaussianAdapter(nn.Module):
             )
 
         assert input_images is not None
+        
+        
+        opacities = opacities.clamp(min=0.001, max=0.999)  # 避免0或1导致渲染异常
 
         # Normalize the quaternion features to yield a valid quaternion.
         rotations = rotations / (rotations.norm(dim=-1, keepdim=True) + eps)
