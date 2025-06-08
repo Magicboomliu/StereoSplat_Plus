@@ -13,19 +13,20 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
-
-
-def load_info(info):
+def load_info(info,cam_type='OpenGL'):
     img_path = info["data_path"]
     # use lidar coordinate of the key frame as the world coordinate
     c2w = info["sensor2lidar_transform"]
     
     
-    # opencv cam -> opengl cam, maybe not necessary!
-    flip_yz = np.eye(4)
-    flip_yz[1, 1] = -1
-    flip_yz[2, 2] = -1
-    c2w = c2w@flip_yz  # current c2w is the opengl coordinate
+    if cam_type=='OpenGL':
+        # opencv cam -> opengl cam, maybe not necessary!
+        flip_yz = np.eye(4)
+        flip_yz[1, 1] = -1
+        flip_yz[2, 2] = -1
+        c2w = c2w@flip_yz  # current c2w is the opengl coordinate
+    else:
+        c2w = c2w
 
     # lidar2cam rotatopnns
     lidar2cam_r = np.linalg.inv(info["sensor2lidar_rotation"])

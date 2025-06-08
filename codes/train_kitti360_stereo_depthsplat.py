@@ -126,7 +126,8 @@ def main(args):
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
-        "depth_info_dict":dataset_config.depth_info_params
+        "depth_info_dict":dataset_config.depth_info_params,
+        "camera_stype": dataset_config.camera_stype
     }
 
     val_params = {
@@ -142,7 +143,8 @@ def main(args):
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
-        "depth_info_dict":dataset_config.depth_info_params
+        "depth_info_dict":dataset_config.depth_info_params,
+        "camera_stype": dataset_config.camera_stype
     }
 
     
@@ -313,7 +315,6 @@ def main(args):
                     optimizer.step()
                     scheduler.step()
 
-                accelerator.wait_for_everyone()
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e):
