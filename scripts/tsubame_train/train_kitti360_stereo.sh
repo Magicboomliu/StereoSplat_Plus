@@ -38,7 +38,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 TRAIN_KITTI360_DepthSplat(){
 cd ../..
 cd codes
-configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_kitti360_stereo_224x840.py"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/DepthSplat/depthsplat_gs_kitti360_stereo_224x840.py"
 work_dir="/gs/output_models/DepthSplat/baseline"
 resume_from="None"
 
