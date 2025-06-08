@@ -338,24 +338,20 @@ class ModelWarpper(nn.Module):
                     depth_loss = pseudo_depth_loss
                     
                 elif cfg.loss_settings_dict.rendered_depth_supervision_type =='sparse_gt_pseudo':
+                    
                     valid_mask_01 = sparse_depth_gt>0
-                    valid_mask_02 = sparse_depth_gt<120
-                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask_01_float = valid_mask_01.float()
+                    fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+                    
+                    valid_mask_02 = fusion_pseudo_with_sparse_gt >0
+                    valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
+                    valid_mask = valid_mask_02 * valid_mask_03
                     valid_mask = valid_mask.bool()
                     
-                    sparse_depth_loss = F.l1_loss(sparse_depth_gt[valid_mask],rendered_depth[valid_mask])
+                    sparse_depth_loss = F.l1_loss(fusion_pseudo_with_sparse_gt[valid_mask],rendered_depth[valid_mask])
                     sparse_depth_loss = sparse_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
 
-
-                    valid_mask_01 = pseudo_depth_gt>0
-                    valid_mask_02 = pseudo_depth_gt<120
-                    valid_mask = valid_mask_01 * valid_mask_02
-                    valid_mask = valid_mask.bool()
-                    
-                    pseudo_depth_loss = F.l1_loss(pseudo_depth_gt[valid_mask],rendered_depth[valid_mask])
-                    pseudo_depth_loss = pseudo_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-
-                    depth_loss = (sparse_depth_loss + pseudo_depth_loss) *1.0/2.0
+                    depth_loss = sparse_depth_loss
                     
                 else:
                     raise NotImplementedError
@@ -363,8 +359,7 @@ class ModelWarpper(nn.Module):
                 loss +=depth_loss
                 set_loss(key='rendered_depth_loss',split=mode,loss_value=depth_loss,
                                                     loss_weight=cfg.loss_settings_dict.rendered_depth_weight)
-            
-            
+             
             # depth estimation loss here
             if cfg.loss_settings_dict.depth_estimator_supervision:
                 # everything is OK
@@ -386,26 +381,21 @@ class ModelWarpper(nn.Module):
                     valid_mask = valid_mask.bool()
                     pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_depth[valid_mask],pred_depth[valid_mask])            
                     depth_estimation_loss = pseudo_depth_estimation_loss * cfg.loss_settings_dict.depth_estimation_weight
-
                 
                 elif cfg.loss_settings_dict.depth_estimator_suppervision_type =='sparse_gt_pseudo':
-                    
                     pred_depth = results_dict['depth_preds'][0]
                     valid_mask_01 = input_pseudo_depth>0
-                    valid_mask_02 = input_pseudo_depth<120
-                    valid_mask = valid_mask_01 * valid_mask_02
-                    valid_mask = valid_mask.bool()
-                    pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_depth[valid_mask],pred_depth[valid_mask])            
                     
-
-                    valid_mask_01 = input_sparse_gt_depth>0
-                    valid_mask_02 = input_sparse_gt_depth<120
-                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask_01_float = valid_mask_01.float()
+                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float + (1-valid_mask_01_float)*input_pseudo_depth
+                    valid_mask_02 = input_pseudo_gt_fusion_depth>0
+                    valid_mask_03 = input_pseudo_gt_fusion_depth<150
+                    valid_mask = valid_mask_02 * valid_mask_03
                     valid_mask = valid_mask.bool()
-                    sparse_depth_estimation_loss = F.l1_loss(input_sparse_gt_depth[valid_mask],pred_depth[valid_mask])  
-
+                    pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_gt_fusion_depth[valid_mask],pred_depth[valid_mask])            
                     
-                    depth_estimation_loss = 0.5 *(pseudo_depth_estimation_loss+sparse_depth_estimation_loss) * cfg.loss_settings_dict.depth_estimation_weight
+                    
+                    depth_estimation_loss = pseudo_depth_estimation_loss * cfg.loss_settings_dict.depth_estimation_weight
                     
 
                 loss +=depth_estimation_loss

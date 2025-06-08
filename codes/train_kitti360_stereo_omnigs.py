@@ -159,7 +159,6 @@ def main(args):
         "camera_stype": dataset_config.camera_stype
     }
     
-
     
     # Define the dataloader
     train_dataset = dataset(**train_params)
