@@ -263,6 +263,10 @@ class ModelWarpper(nn.Module):
         rendered_depth = rendered_depth.squeeze(2)
         rendered_alpha = rendered_alpha.squeeze(2)
         
+        rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+        rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+        
+        
         if mode=='train' or mode=='val':
             # loss here
             # dict_keys(['output_imgs', 'output_depths', 'output_depths_m', 'output_confs_m', 
