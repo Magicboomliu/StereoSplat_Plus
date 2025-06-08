@@ -405,18 +405,16 @@ class ModelWarpper(nn.Module):
             
             if mode=='train':
                 return loss, loss_terms,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict
+            
             elif mode=='val':
                 return loss, loss_terms,rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict,predicted_input_depth,input_sparse_gt_depth,output_rgb,sparse_depth_gt,input_images
             
-            
         elif mode=='test':
-            
             return rendered_color,rendered_depth,rendered_alpha,estimated_raw_gaussains_dict
 
         else:
             raise NotImplementedError
-
-        
+    
     def validation_step(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
