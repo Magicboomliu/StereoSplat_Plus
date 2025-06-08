@@ -15,7 +15,7 @@ lr = 2e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
-val_freq = 4000
+val_freq = 3000
 max_epochs = 150
 save_epoch_freq = -1
 
@@ -45,6 +45,7 @@ sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+camera_stype='OpenCV' # select from openCV and openGL
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -74,7 +75,8 @@ dataset_params = dict(
     num_workers_val=8,
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
-    depth_info_params = depth_info_params
+    depth_info_params = depth_info_params,
+    camera_stype=camera_stype
 )
 
 num_cams = 2

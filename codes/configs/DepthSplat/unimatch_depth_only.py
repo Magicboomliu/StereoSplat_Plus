@@ -29,9 +29,9 @@ seed=42
 # only using the center for training
 resolution = [224, 832]
 datapath = "/data/KITTI/KITTI360_For_docker"
-train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
-val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
-test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/train.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/depth_estimation_trainval/val.txt"
 use_projected_lidar=True
 use_pseudo_depth=True
 
