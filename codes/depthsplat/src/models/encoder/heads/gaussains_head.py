@@ -125,6 +125,7 @@ class Gaussains_Estimator_Head(nn.Module):
         h,w = depth.shape[-2:]
         
 
+
         # features [BV, C, H, W]
         features = self.feature_upsampler(results_dict["features_mono_intermediate"],
                                           cnn_features=results_dict["features_cnn_all_scales"][::-1],
@@ -177,15 +178,13 @@ class Gaussains_Estimator_Head(nn.Module):
         # have been normalized
         xy_ray, _ = sample_image_grid((h, w), device) #(H,W,2)
         
-        xy_ray = rearrange(xy_ray, "h w xy -> (h w) () xy") #(H*W,1,2)
 
+        xy_ray = rearrange(xy_ray, "h w xy -> (h w) () xy") #(H*W,1,2)
         gaussians = rearrange(
             raw_gaussians,
             "... (srf c) -> ... srf c",
             srf=self.gaussians_color_branch_dict['num_surfaces'],
         ) #(B,V,HW,1,C)
-
-        
         offset_xy = gaussians[..., :2].sigmoid() # offset
         pixel_size = 1 / \
             torch.tensor((w, h), dtype=torch.float32, device=device)

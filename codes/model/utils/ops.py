@@ -316,7 +316,6 @@ def convert_pose(C2W):
     C2W = torch.matmul(C2W, flip_yz)
     return C2W
 
-
 def get_projection_matrix_gaussian(znear, zfar, fovX, fovY, device="cuda"):
     tanHalfFovY = math.tan((fovY / 2))
     tanHalfFovX = math.tan((fovX / 2))
@@ -339,7 +338,6 @@ def get_projection_matrix_gaussian(znear, zfar, fovX, fovY, device="cuda"):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
-
 def get_projection_matrix_gaussian_lgm(znear, zfar, fovX, fovY, device="cuda"):
     tanHalfFovY = math.tan((fovY / 2))
     tanHalfFovX = math.tan((fovX / 2))
@@ -353,14 +351,12 @@ def get_projection_matrix_gaussian_lgm(znear, zfar, fovX, fovY, device="cuda"):
 
     return P
 
-
 def get_fov_gaussian(P):
     tanHalfFovX = 1 / P[0, 0]
     tanHalfFovY = 1 / P[1, 1]
     fovY = math.atan(tanHalfFovY) * 2
     fovX = math.atan(tanHalfFovX) * 2
     return fovX, fovY
-
 
 def get_cam_info_gaussian(c2w, fovx, fovy, znear, zfar):
     '''

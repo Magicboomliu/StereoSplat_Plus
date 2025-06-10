@@ -13,6 +13,7 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
+
 def load_info(info,cam_type='OpenGL'):
     img_path = info["data_path"]
     # use lidar coordinate of the key frame as the world coordinate
@@ -117,6 +118,42 @@ def resize_the_sparse_lidar(depthmap,raw_K,after_K,height,width,depth_range=100)
     
     return resize_gt_sparse_depth
 
+
+def crop_size(h,w,img,K=None,type='pil'):
+    
+    # 光心位置
+    cx, cy = 682.049453, 238.769549
+
+    # 计算裁剪后尺寸（确保光心居中）
+    crop_width = 2 * int(min(cx, w - cx))  # 1364
+    crop_height = 2 * int(min(cy, h - cy))  # 274
+
+    # 确定裁剪区域（优先裁右侧和上方）
+    x_start = 0  # 左侧不裁
+    x_end = x_start + crop_width  # 右侧裁到1364
+    y_start = h - crop_height  # 从上方裁掉102行（376-274=102）
+    y_end = h  # 保留下方所有行
+
+    # 执行裁剪
+    cropped_image = img[y_start:y_end, x_start:x_end]
+
+    if type=='pil':
+        cropped_image = Image.fromarray(cropped_image)
+    
+    # 更新内参
+    new_cx = cx - x_start  # 682.049 - 0 = 682.049
+    new_cy = cy - y_start  # 238.769 - 102 ≈ 136.769
+
+    if K is not None:
+        K[0,2] = new_cx
+        K[1,2] = new_cy
+
+        return K, cropped_image
+    else:
+        return cropped_image
+    
+
+
 def load_conditions(img_paths, reso,depth_info_params):
     
     def maybe_resize(img, tgt_reso, ck):
@@ -133,6 +170,9 @@ def load_conditions(img_paths, reso,depth_info_params):
             resize_flag = True
         return np.array(img), ck, resize_flag
     
+    
+    
+
     imgs, cks = [], []
     
     if depth_info_params.use_pseudo_depth:
@@ -157,10 +197,16 @@ def load_conditions(img_paths, reso,depth_info_params):
         
         else:
             raise NotImplementedError
-            
+        
+        # cropping to make sure the
+        
         img = Image.open(img_path)
         h, w = img.height, img.width
+        
+        # crop the images for new cx,cy
+        raw_ck, img  = crop_size(h=h,w=w,img=np.array(img),K=raw_ck)
         img, ck, resize_flag = maybe_resize(img, reso, raw_ck)
+
         
         img = HWC3(img)
         imgs.append(img)
@@ -174,7 +220,10 @@ def load_conditions(img_paths, reso,depth_info_params):
             depth_path = img_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw")
             assert os.path.exists(depth_path)
             disp = load_the_depthanytingV2_results(depth_path)
+
+            disp =  crop_size(h=disp.shape[0],w=disp.shape[1],img=disp,type='npy')
     
+            
             if resize_flag:
                 disp = Image.fromarray(disp)
                 disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
@@ -196,6 +245,11 @@ def load_conditions(img_paths, reso,depth_info_params):
             assert os.path.exists(sparse_gt_lidar_path)
             sparse_gt_lidar_data = load_the_Metric3DV2_results(sparse_gt_lidar_path)
             
+            # crop
+            sparse_gt_lidar_data  = crop_size(h=sparse_gt_lidar_data.shape[0],
+                                              w=sparse_gt_lidar_data.shape[1],
+                                              img=sparse_gt_lidar_data,type='npy')
+            
             if resize_flag:
                 sparse_gt_lidar_data  = resize_the_sparse_lidar(depthmap=sparse_gt_lidar_data,
                                     raw_K=raw_ck,
@@ -204,8 +258,6 @@ def load_conditions(img_paths, reso,depth_info_params):
                                     width=reso[1])
             
             sparse_gt_depth_list.append(sparse_gt_lidar_data)
-
-        
 
         
         if depth_info_params.use_pseudo_depth:
@@ -219,6 +271,16 @@ def load_conditions(img_paths, reso,depth_info_params):
                 
                 dptm = load_the_Metric3DV2_results(depthm_path)
                 conf = load_the_Metric3DV2_results(conf_path)
+                
+                # crop
+                dptm  = crop_size(h=dptm.shape[0],
+                                              w=dptm.shape[1],
+                                              img=dptm,type='npy')
+
+                conf  = crop_size(h=conf.shape[0],
+                                              w=conf.shape[1],
+                                              img=conf,type='npy')       
+                
                 
                 if resize_flag:
                     dptm = Image.fromarray(dptm)
@@ -238,7 +300,17 @@ def load_conditions(img_paths, reso,depth_info_params):
                 assert os.path.exists(depthm_path)
                 dptm = load_the_Metric3DV2_results(depthm_path)
                 conf = np.ones_like(dptm)
+
+                # crop
+                dptm  = crop_size(h=dptm.shape[0],
+                                              w=dptm.shape[1],
+                                              img=dptm,type='npy')
+
+                conf  = crop_size(h=conf.shape[0],
+                                              w=conf.shape[1],
+                                              img=conf,type='npy') 
                 
+
                 
                 if resize_flag:
                     dptm = Image.fromarray(dptm)
@@ -253,6 +325,8 @@ def load_conditions(img_paths, reso,depth_info_params):
             
             else:
                 raise NotImplementedError
+        
+        
         
 
 
