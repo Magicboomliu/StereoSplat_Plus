@@ -87,7 +87,6 @@ class GaussianAdapter(nn.Module):
         sh(球谐,3色通道 x sh维数)
         
         '''
-        
         # print(extrinsics.shape) #(B,V,1,1,1,4,4)
         # print(intrinsics.shape) #(B,V,1,1,1,3,3)
         

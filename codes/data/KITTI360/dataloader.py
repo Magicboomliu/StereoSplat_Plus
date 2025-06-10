@@ -55,7 +55,7 @@ class KITTI360Dataset(Dataset):
         use_last: bool = False,
         supp_view_nums: int=0,
         depth_info_dict: dict=None,
-        camera_stype: str='OpenGL',
+        camera_model: str='OpenGL',
         **kwargs,
         ):
         super().__init__()
@@ -66,7 +66,7 @@ class KITTI360Dataset(Dataset):
         
         self.depth_info_dict = depth_info_dict
         
-        self.camera_types = camera_stype
+        self.camera_model = camera_model
         
         
         self.camera_types = [
@@ -127,7 +127,6 @@ class KITTI360Dataset(Dataset):
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)    
         bin_info = self._load_pkl_file(abs_bin_token_fname)
         
-        
         # center
         sensor_info_center = {sensor: bin_info["sensor_info"][sensor][0] for sensor in self.camera_types + ["LIDAR_TOP"]}
         # first 
@@ -141,7 +140,7 @@ class KITTI360Dataset(Dataset):
         if self.use_center:
             for cam in self.camera_types:
                 info = copy.deepcopy(sensor_info_center[cam]) # all the infors
-                img_path, c2w, w2c = load_info(info,cam_type=self.camera_types)
+                img_path, c2w, w2c = load_info(info,cam_type=self.camera_model)
                 img_path = os.path.join(self.datapath,img_path)
                 assert os.path.exists(img_path)
                 input_img_paths.append(img_path)
@@ -151,7 +150,7 @@ class KITTI360Dataset(Dataset):
         if self.use_first:
             for cam in self.camera_types_first:
                 info = copy.deepcopy(sensor_info_first[cam])
-                img_path, c2w, w2c = load_info(info,cam_type=self.camera_types)
+                img_path, c2w, w2c = load_info(info,cam_type=self.camera_model)
                 img_path = os.path.join(self.datapath,img_path)
                 input_img_paths.append(img_path)
                 input_c2ws.append(c2w)
@@ -160,7 +159,7 @@ class KITTI360Dataset(Dataset):
         if self.use_last:
             for cam in self.camera_types_last:
                 info = copy.deepcopy(sensor_info_last[cam])
-                img_path, c2w, w2c = load_info(info,cam_type=self.camera_types)
+                img_path, c2w, w2c = load_info(info,cam_type=self.camera_model)
                 img_path = os.path.join(self.datapath,img_path)
                 input_img_paths.append(img_path)
                 input_c2ws.append(c2w)
@@ -271,7 +270,7 @@ class KITTI360Dataset(Dataset):
             indices = rend_indices[cam_id]
             for ind in indices:
                 info = copy.deepcopy(bin_info["sensor_info"][cam][ind])
-                img_path, c2w, w2c = load_info(info,cam_type=self.camera_types)
+                img_path, c2w, w2c = load_info(info,cam_type=self.camera_model)
                 img_path = os.path.join(self.datapath,img_path)
                 output_img_paths.append(img_path)
                 output_c2ws.append(c2w)

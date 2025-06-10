@@ -165,14 +165,14 @@ model = dict(
 loss_settings_dict = dict(
     
     depth_estimator_supervision=True,
-    depth_estimator_suppervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    depth_estimator_suppervision_type='pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
     rendered_depth_supervision=False,
-    rendered_depth_supervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    rendered_depth_supervision_type='pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
     rendered_rgb_supervision=True,
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,
     rendered_depth_weight=0.01,
-    depth_estimation_weight=0.1,
+    depth_estimation_weight=0.05,
 )

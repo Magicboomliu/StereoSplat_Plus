@@ -6,12 +6,12 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_simple_version/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_from_scatch/outputs_vis/{}".format(exp_name)
 validation_vis_progress=True
 
 
 # learning rate setiing
-lr = 2e-4
+lr = 1e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -31,7 +31,8 @@ seed=42
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
-resolution = [224, 832]
+# resolution = [224, 832]
+resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
@@ -43,9 +44,10 @@ val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/va
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
-supp_view_nums=3
+supp_view_nums=6
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-camera_stype='OpenCV' # select from openCV and openGL
+#unimatch_weights_path=None
+camera_model='OpenCV' # select from openCV and openGL
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -76,7 +78,7 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_stype=camera_stype
+    camera_model=camera_model
 )
 
 num_cams = 2
@@ -164,15 +166,15 @@ model = dict(
 
 loss_settings_dict = dict(
     
-    depth_estimator_supervision=True,
-    depth_estimator_suppervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    depth_estimator_supervision=False,
+    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
     rendered_depth_supervision=False,
-    rendered_depth_supervision_type='sparse_gt', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
     rendered_rgb_supervision=True,
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,
     rendered_depth_weight=0.01,
-    depth_estimation_weight=0.1,
+    depth_estimation_weight=0.05,
 )

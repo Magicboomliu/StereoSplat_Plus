@@ -90,6 +90,8 @@ class ModelWarpper(nn.Module):
         
         self.unimatch_weight  = unimatch_weight
         
+        if self.unimatch_weight=='None':
+            self.unimatch_weight=None
         if self.unimatch_weight is not None:
             state_dict = load_file(self.unimatch_weight)  # 返回的是一个 PyTorch state_dict 格式的字典
         
@@ -200,6 +202,10 @@ class ModelWarpper(nn.Module):
         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
         
         height, width = input_images.shape[3:]
+        
+        # debug here
+        # intrinsics[:,:,0,2] = intrinsics[:,:,0,2] + 13
+        # intrinsics[:,:,1,2] = intrinsics[:,:,1,2] - 30
         intrinsics = intrinsics.clone()
         # Normalized the instrinsics -----> Maybe not neccssary
         intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
@@ -218,13 +224,14 @@ class ModelWarpper(nn.Module):
         
         predicted_input_depth = results_dict['depth_preds'][0]
         
-        
+
         if cfg.train_depth_only:
             pass
         
         
         else:
             # estimated the gs 
+            # change the head here
             estimated_raw_gaussains_dict = self.gaussains_estimation_head(imgs=input_images,
                                            extrinsics=input_extrinsics,
                                            intrinsics = intrinsics,
@@ -247,6 +254,8 @@ class ModelWarpper(nn.Module):
         z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
 
 
+        
+        
         
         rendered_results = self.decoder_branch(gaussians=estimated_raw_gaussains_dict["gaussians"],
                                                extrinsics= render_c2w,
@@ -477,6 +486,17 @@ class ModelWarpper(nn.Module):
         last_frame_right_gt =  output_gt_rgb[:,3,:,:,:]
         first_frame_left_gt = output_gt_rgb[:,4,:,:,:]
         first_frame_right_gt = output_gt_rgb[:,5,:,:,:]
+        
+        
+        # print(first_frame_left_est.shape)
+        # print(first_frame_left_gt.shape)
+        
+        
+        # skimage.io.imsave("/data1/zliu/feedforward_outputs/DepthSplat/Temp_Visualization/Debugs/left_est.png",(first_frame_left_est.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+        # skimage.io.imsave("/data1/zliu/feedforward_outputs/DepthSplat/Temp_Visualization/Debugs/left_gt.png",(first_frame_left_gt.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+        
+   
+        
         
         cl_psnr,cl_ssim = compute_psnr_ssim(pred=center_frame_left_est,target=center_frame_left_gt)
         cr_psnr,cr_ssim = compute_psnr_ssim(pred=center_frame_right_est,target=center_frame_right_gt)

@@ -238,6 +238,9 @@ def get_fov(intrinsics: Float[Tensor, "batch 3 3"]) -> Float[Tensor, "batch 2"]:
         - 来自 camera.to_tensor() 等相机库的变换
         - 不规则的 intrinsics,比如透视裁剪、变形、非标准像素坐标
     '''
+    
+
+    
     intrinsics_inv = intrinsics.inverse()
 
     def process_vector(vector):
@@ -251,4 +254,27 @@ def get_fov(intrinsics: Float[Tensor, "batch 3 3"]) -> Float[Tensor, "batch 2"]:
     bottom = process_vector([0.5, 1, 1])
     fov_x = (left * right).sum(dim=-1).acos()
     fov_y = (top * bottom).sum(dim=-1).acos()
+    
+    # print(fov_x)
+    # print(fov_y)
+    # quit()
+    
+
     return torch.stack((fov_x, fov_y), dim=-1)
+
+
+# def get_fov(intrinsics: torch.Tensor, width=832, height=224):
+#     """
+#     intrinsics: [B, 3, 3] 相机内参矩阵
+#     width: 图像宽度（像素）
+#     height: 图像高度（像素）
+#     return: fov_x, fov_y in radians, shape [B]
+#     """
+#     fx = intrinsics[:, 0, 0] * width  # [B]
+#     fy = intrinsics[:, 1, 1] *height # [B]
+    
+#     fov_x = 2 * torch.atan(width / (2 * fx))  # [B]
+#     fov_y = 2 * torch.atan(height / (2 * fy)) # [B]
+
+    
+#     return torch.stack((fov_x, fov_y), dim=-1)
