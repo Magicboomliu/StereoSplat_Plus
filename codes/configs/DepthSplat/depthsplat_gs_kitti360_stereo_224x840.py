@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_from_scatch/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_all_supervised/outputs_vis/{}".format(exp_name)
 validation_vis_progress=True
 
 
@@ -44,7 +44,7 @@ val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/va
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
-supp_view_nums=6
+supp_view_nums=3
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
@@ -166,10 +166,10 @@ model = dict(
 
 loss_settings_dict = dict(
     
-    depth_estimator_supervision=False,
+    depth_estimator_supervision=True,
     depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
-    rendered_depth_supervision=False,
+    rendered_depth_supervision=True,
     rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
     rendered_rgb_supervision=True,
