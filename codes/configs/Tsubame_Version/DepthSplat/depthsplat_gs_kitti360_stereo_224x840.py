@@ -31,7 +31,7 @@ seed=42
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
-resolution = [224, 832]
+resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
@@ -43,9 +43,9 @@ val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_
 test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
-supp_view_nums=6
+supp_view_nums=3
 unimatch_weights_path="/gs/bs/tga-lab_okmn/zliu/zliu/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
-camera_stype='OpenCV' # select from openCV and openGL
+camera_model='OpenCV' # select from openCV and openGL
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -76,7 +76,7 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_stype=camera_stype
+    camera_model=camera_model
 )
 
 num_cams = 2
@@ -165,11 +165,9 @@ model = dict(
 loss_settings_dict = dict(
     
     depth_estimator_supervision=True,
-    depth_estimator_suppervision_type='pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-    
-    rendered_depth_supervision=False,
-    rendered_depth_supervision_type='pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-    
+    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    rendered_depth_supervision=True,
+    rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     rendered_rgb_supervision=True,
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,

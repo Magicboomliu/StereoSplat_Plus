@@ -10,7 +10,7 @@ output_dir = "/data1/zliu/feedforward_outputs/Vanilla_Omni_Scene/NMRFStereo_Base
 
 
 # learning rate setiing
-lr = 8e-5
+lr = 1e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -34,7 +34,8 @@ seed = 0
 # only using the center for training
 use_center, use_first, use_last = False, True, False
 # resolution = [224, 840]
-resolution = [168, 632]
+# resolution = [168, 632]
+resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
@@ -46,7 +47,7 @@ test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/v
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-camera_stype='OpenGL' # select from openCV and openGL
+camera_model='OpenCV' # select from OpenCV and OpenGL
 
 
 depth_info_params = dict(
@@ -79,7 +80,7 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_stype=camera_stype
+    camera_model=camera_model
 )
 
 num_cams = 2

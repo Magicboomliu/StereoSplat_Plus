@@ -33,13 +33,12 @@ seed = 0
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
-resolution = [224, 840]
+# resolution = [224, 840]
 # resolution = [168, 632]
-
+resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
 datapath = "/data/KITTI/KITTI360_For_docker"
 train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
 val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
@@ -47,6 +46,8 @@ test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainva
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
+camera_model='OpenCV' # select from OpenCV and OpenGL
+
 
 
 depth_info_params = dict(
@@ -78,7 +79,8 @@ dataset_params = dict(
     num_workers_val=8,
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
-    depth_info_params = depth_info_params
+    depth_info_params = depth_info_params,
+    camera_model=camera_model
 )
 
 num_cams = 2

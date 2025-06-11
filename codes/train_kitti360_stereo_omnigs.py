@@ -21,7 +21,6 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 
 import warnings
 warnings.filterwarnings("ignore")
-
 torch.autograd.set_detect_anomaly(True)
 
 
@@ -139,7 +138,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_stype": dataset_config.camera_stype
+        "camera_model": dataset_config.camera_model
     }
 
     val_params = {
@@ -156,7 +155,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_stype": dataset_config.camera_stype
+        "camera_model": dataset_config.camera_model
     }
     
     
