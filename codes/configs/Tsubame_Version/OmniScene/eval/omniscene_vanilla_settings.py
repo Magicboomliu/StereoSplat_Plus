@@ -39,14 +39,14 @@ resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-datapath = "/data/KITTI/KITTI360_For_docker"
-train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/gs/KITTI360_For_Upload"
+train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-camera_model='OpenCV' # select from OpenCV and OpenGL
+camera_model='OpenGL' # select from OpenCV and OpenGL
 
 
 

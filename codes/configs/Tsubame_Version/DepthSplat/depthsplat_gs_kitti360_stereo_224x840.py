@@ -44,7 +44,7 @@ test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-unimatch_weights_path="/gs/bs/tga-lab_okmn/zliu/zliu/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
+unimatch_weights_path="/gs/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
 camera_model='OpenCV' # select from openCV and openGL
 
 depth_info_params = dict(

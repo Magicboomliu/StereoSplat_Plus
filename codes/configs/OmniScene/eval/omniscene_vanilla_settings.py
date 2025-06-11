@@ -46,7 +46,7 @@ test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainva
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-camera_model='OpenCV' # select from OpenCV and OpenGL
+camera_model='OpenGL' # select from OpenCV and OpenGL
 
 
 
