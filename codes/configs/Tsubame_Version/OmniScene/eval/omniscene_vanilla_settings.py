@@ -6,11 +6,11 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/data1/zliu/feedforward_outputs/Debug/OmniScene/First_As_Input/Baseline_Supp3_NMRFStereo"
+output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
 
 
 # learning rate setiing
-lr = 1e-4
+lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -39,15 +39,15 @@ resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/data/KITTI/KITTI360_For_docker"
+train_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
 camera_model='OpenCV' # select from OpenCV and OpenGL
+
 
 
 depth_info_params = dict(
@@ -223,7 +223,7 @@ model = dict(
         style='pytorch',
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='pretrained/dino_resnet50_pretrain.pth',
+            checkpoint='/home/Desktop/Project2025/FeedStereoGS/codes/pretrained/dino_resnet50_pretrain.pth',
             prefix=None)),
     
     neck=dict(
