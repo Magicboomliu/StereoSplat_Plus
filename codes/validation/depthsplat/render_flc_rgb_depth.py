@@ -66,6 +66,7 @@ class DecoderCFG(object):
 
 
 def main(args):
+    
 
     # load config
     cfg = Config.fromfile(args.py_config)
@@ -89,6 +90,11 @@ def main(args):
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
+
+    if args.output_vis:
+        cfg.validation_vis_progress = True
+    else:
+        cfg.validation_vis_progress = False
     
 
     #################### Dataset Configurration #############################
@@ -111,16 +117,11 @@ def main(args):
 
     # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
-    
-    
-    
-
-
     val_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
-        "val_filelist":dataset_config.val_filelist,
-        "test_filelist":dataset_config.val_filelist,
+        "val_filelist":args.val_filelist,
+        "test_filelist":args.val_filelist,
         "data_version":dataset_config.data_version,
         "resolution":dataset_config.resolution, 
         "split":"val",
@@ -133,9 +134,6 @@ def main(args):
         "camera_model": dataset_config.camera_model
     }
     
-    
-    
-
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
@@ -144,8 +142,6 @@ def main(args):
     
     
     # loaded the models
-
-
     encoder_cfg = cfg.model.encoder
     
     # depth unimatch model
@@ -221,7 +217,7 @@ def main(args):
         resume_step = -1
         print("No Pretrained Weighted Founded, Learning from Scratch")
     
-
+    # replace here
     cfg.output_dir = args.work_dir
     
     # do the visualization here
@@ -358,8 +354,9 @@ def main(args):
                 
             }
             
-            saved_into_json(data_dict=results_dict,
-                            path=os.path.join(overall_val_batch_save_dir,"metric.json"))
+            if not cfg.validation_vis_progress:
+                saved_into_json(data_dict=results_dict,
+                                path=os.path.join(overall_val_batch_save_dir,"metric.json"))
 
 
 
@@ -370,7 +367,15 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--py-config')
     parser.add_argument('--work-dir', type=str)
+    parser.add_argument('--val_filelist', type=str)
     parser.add_argument('--resume-from', type=str, default='')
+    parser.add_argument(
+        "--output_vis",
+        action="store_true",
+        help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
+    ) 
+
+
     args = parser.parse_args()
     
     ngpus = torch.cuda.device_count()
