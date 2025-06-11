@@ -633,21 +633,6 @@ class ModelWarpper(nn.Module):
         
         
         
-        
-        # saved into jsons
-        
-        # saved_metrics_folder = os.path.join(saved_dir,'temp_metrics')
-        # os.makedirs(saved_metrics_folder,exist_ok=True)
-        
-        # saved_meter_rendered_rgb_path = os.path.join(saved_metrics_folder,"rendered_rgb.json")
-        # saved_meter_rendered_depth_path = os.path.join(saved_metrics_folder,"rendered_depth.json")
-        # saved_meter_input_depth_path = os.path.join(saved_metrics_folder,"input_depth.json")
-        
-        # save_dict_to_json(data_dict=output_rgb_meter_dict,save_path=saved_meter_rendered_rgb_path)
-        # save_dict_to_json(data_dict=output_depth_meter_dict,save_path=saved_meter_rendered_depth_path)
-        # save_dict_to_json(data_dict=input_depth_meter_dict,save_path=saved_meter_input_depth_path)
-        
-        
         # saved into images.
         os.makedirs(saved_dir,exist_ok=True)
 
@@ -711,6 +696,7 @@ class ModelWarpper(nn.Module):
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
         
 
+        
             
         
 # if __name__=="__main__":
