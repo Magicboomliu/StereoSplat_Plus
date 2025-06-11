@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/gs/output_models/DepthSplat/baseline/outputs_vis/{}".format(exp_name)
+output_dir = "/gs/FeedForwardGS/DepthSplat/First_As_Input/Baseline_All_Supervised"
 validation_vis_progress=True
 
 
