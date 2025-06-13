@@ -192,8 +192,19 @@ model = dict(
                 
         ),
         gaussains_head_kwargs = dict(
-            
-            
+            # gaussains adapter is what?
+            gaussian_adapter=dict(
+                gaussian_scale_min=1e-10,
+                gaussian_scale_max=1.5,
+                sh_degree=2,
+            ),
+            gaussian_color_config = dict(
+                large_gaussian_head=False,
+                color_large_unet=False,
+                init_sh_input_img=True,
+                feature_upsampler_channels=64,
+                gaussian_regressor_channels=64,
+            )
         )
     ),
     

@@ -249,9 +249,9 @@ def main(args):
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 if args.gpus <= 1:
-                    out = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
                 else:
-                    out = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
 
                 quit()
 

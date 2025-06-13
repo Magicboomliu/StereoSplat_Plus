@@ -8,6 +8,8 @@ import sys
 from .unimatch.mv_unimatch import MultiViewUniMatch
 from safetensors.torch import load_file
 
+from .heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+
 
 class CostVolumeGS(nn.Module):
     def __init__(self,
@@ -39,68 +41,88 @@ class CostVolumeGS(nn.Module):
             }
             self.depth_estimator.load_state_dict(stripped_state_dict, strict=True)
             print("depth branch initailzation with {}".format(self.unimatch_weight))
-        
+            
 
-    def prepare_input_batch_data(self,batch):
+        # define the guassain_estimation head
+        self.guassain_estimation_head = Gaussains_Estimator_Head(monodepth_vit_type=depth_estimator_kwargs.monodepth_vit_type,
+                                                                 upsample_factor=depth_estimator_kwargs.upsample_factor,
+                                                                 num_scales=depth_estimator_kwargs.num_scales,
+                                                                 gaussian_head_settings_dict=gaussains_head_kwargs.gaussian_adapter,
+                                                                 gaussians_color_branch_dict=gaussains_head_kwargs.gaussian_color_config)
         
-        device_id = self.device
-        
-        input_batch_dict = dict()
-        output_batch_dict = dict()
-        
-        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
-        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
-                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
-                                        #'sparse_gt_depth'])
-        bin_token_name = batch['bin_token']
-        input_cam_batch_data = batch['inputs_pix']                                 
-        input_batch_data = batch['inputs']
-        
-        input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
-        input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
-        input_camera_extrinsics = input_cam_batch_data['c2w'] #(B,V,4,4)
-        
-        input_psuedo_depth = input_cam_batch_data['depth_m'] #(B,V,H,W)
-        input_sparse_depth = input_cam_batch_data['sparse_gt_depth'] #(B,V,H,W)
-        
-
-        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
-        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth.shape[0],1,1)
-        
-        
-        # input_dict
-        input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
-        input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
-        input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
-        input_batch_dict['nn_matrix'] =cameras_dist_index.to(device_id, dtype=self.dtype)
-        input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
-        input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
-        input_batch_dict['bin_token_name'] = bin_token_name
-        
-        
-        # output dict
-        # for render and loss and eval
-        output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
-        output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
-                            batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
-        output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
-        output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
         
 
     
-        return input_batch_dict,output_batch_dict
+    def forward(self,input_batch_dict=None,cfg=None):
 
-    
-    def forward(self,batch,cfg=None):
-        # get inpout_batch_dict
-        input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
+
+        depth_max_value = cfg.max_depth # 100
+        depth_min_value = cfg.min_depth # 0.3    
+        
+        # inputs information
+        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
+        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
+        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
+        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
+        bs = input_images.shape[0]
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+
+        mask = input_sparse_gt_depth > 0
+        mask = mask.float()
+        input_nn_matrix = input_nn_matrix.long()
+
+
+        num_of_cameras = input_images.shape[1]
+        min_depth=1.0 / depth_max_value  # inverse depth range
+        max_depth=1.0 / depth_min_value
+        
+        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        
+        height, width = input_images.shape[3:]
+        
+        # debug here
+        intrinsics = intrinsics.clone()
+        # Normalized the instrinsics -----> Maybe not neccssary
+        intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
+        intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height
+        
+        results_dict = self.depth_estimator(
+            images=input_images,
+            attn_splits_list=[2],
+            intrinsics=intrinsics,
+            min_depth=min_depth,  # inverse depth range
+            max_depth=max_depth,
+            num_depth_candidates=192, # here I set it to 192
+            extrinsics=input_extrinsics,
+            nn_matrix=input_nn_matrix
+        )
+        
+        predicted_input_depth = results_dict['depth_preds'][0]
+        
+        # FIXME: hard-cord: always return estimated depths        
+        return_depth = True
+        
+        estimated_raw_gaussains_dict = self.guassain_estimation_head(imgs=input_images,
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth)
+
+
+        # return values
+        if len(estimated_raw_gaussains_dict.keys())>1:
+            pred_depths = estimated_raw_gaussains_dict["depths"]
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+        else:
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+            pred_depths = None
+        
+        
+        print(pred_depths.shape)
+        print(gaussians.means.shape)
+        
         
         
         
