@@ -204,6 +204,7 @@ model = dict(
                 init_sh_input_img=True,
                 feature_upsampler_channels=64,
                 gaussian_regressor_channels=64,
+                num_surfaces=1,
             )
         )
     ),

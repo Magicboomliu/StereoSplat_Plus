@@ -114,7 +114,7 @@ class Gaussains_Estimator_Head(nn.Module):
                 extrinsics,
                 intrinsics,
                 results_dict,
-                return_depth=True):
+                return_types=["gs","depth","feature"]):
         
         depth_preds = results_dict['depth_preds']
         # [B, V, H, W]
@@ -148,14 +148,17 @@ class Gaussains_Estimator_Head(nn.Module):
         ), dim=1)
         
         out = self.gaussian_regressor(concat) #[2,64,H,W]
-        
 
         concat = [out,rearrange(imgs,"b v c h w -> (b v) c h w"),features,
                 match_prob]
         out = torch.cat(concat, dim=1) # torch.Size([2, 132, 224, 832])
 
-        gaussians = self.gaussian_head(out)  # [BV, C, H, W]
+
+        temp_gs_features = rearrange(out, "(b v) c h w -> b v c h w", b=b, v=v)
         
+        
+        # gaussain estimation features        
+        gaussians = self.gaussian_head(out)  # [BV, C, H, W]    
         gaussians = rearrange(gaussians, "(b v) c h w -> b v c h w", b=b, v=v)
 
         depths = rearrange(depth, "b v h w -> b v (h w) () ()")
@@ -171,8 +174,6 @@ class Gaussains_Estimator_Head(nn.Module):
 
         '''Opacity Estmation'''
         opacities = raw_gaussians[..., :1].sigmoid().unsqueeze(-1) # index=0 is the opacity
-        
-        
         raw_gaussians = raw_gaussians[..., 1:] #(B,V,HW,C)
 
         # have been normalized
@@ -189,7 +190,6 @@ class Gaussains_Estimator_Head(nn.Module):
         pixel_size = 1 / \
             torch.tensor((w, h), dtype=torch.float32, device=device)
         xy_ray = xy_ray + (offset_xy - 0.5) * pixel_size
-
         sh_input_images = imgs #[B,V,3,H,W]
         
 
@@ -242,23 +242,36 @@ class Gaussains_Estimator_Head(nn.Module):
         # print(gaussians.harmonics.shape) #torch.Size([1, 372736, 3, 9])
         # print(gaussians.opacities.shape) #torch.Size([1, 372736])
         # print("------------------------------------")
-
-        if return_depth:
+        
+        return_dict = {}
+        
+        if "depths" in return_types:
             # return depth prediction for supervision
             depths = rearrange(
                 depths, "b v (h w) srf s -> b v h w srf s", h=h, w=w
             ).squeeze(-1).squeeze(-1)
             # print(depths.shape)  # [B, V, H, W]
- 
-            return {
-                "gaussians": gaussians,
-                "depths": depths
-            }
             
-        else:
-            return {
+            return_dict.update({
+               "depths": depths
+            })
+        
+        if 'gs' in return_types:
+            return_dict.update({
                 "gaussians": gaussians
-            }
+            })
+        
+        if 'feature' in return_types:
+            
+            temp_gs_features = temp_gs_features.permute(0,1,3,4,2)
+            bs = temp_gs_features.shape[0]
+            channel_dims = temp_gs_features.shape[-1]
+            temp_gs_features = temp_gs_features.reshape(bs,-1,channel_dims)
+
+            return_dict.update({
+                "feature": temp_gs_features
+            })
+
             
 
         # print(gaussians.means.shape) #(1,2,H*W,1,1,3)

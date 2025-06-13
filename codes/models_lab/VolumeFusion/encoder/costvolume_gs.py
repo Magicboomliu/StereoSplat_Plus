@@ -102,26 +102,27 @@ class CostVolumeGS(nn.Module):
         predicted_input_depth = results_dict['depth_preds'][0]
         
         # FIXME: hard-cord: always return estimated depths        
-        return_depth = True
+        return_types = ["gs",'depth','feature']
         
         estimated_raw_gaussains_dict = self.guassain_estimation_head(imgs=input_images,
                                            extrinsics=input_extrinsics,
                                            intrinsics = intrinsics,
                                            results_dict=results_dict,
-                                           return_depth=return_depth)
+                                           return_types=return_types)
 
-
-        # return values
-        if len(estimated_raw_gaussains_dict.keys())>1:
-            pred_depths = estimated_raw_gaussains_dict["depths"]
+        if "gs" in return_types:
             gaussians = estimated_raw_gaussains_dict["gaussians"]
-        else:
-            gaussians = estimated_raw_gaussains_dict["gaussians"]
-            pred_depths = None
+        
+        if "depth" in return_types:
+            pred_depths = estimated_raw_gaussains_dict["gaussians"]
+        
+        if "feature" in return_types:
+            feature = estimated_raw_gaussains_dict['feature']
+    
         
         
-        print(pred_depths.shape)
-        print(gaussians.means.shape)
+        # print(pred_depths.shape) #(B,V,H,W)
+        # print(gaussians.means.shape) #(B,VHW)--> Gaussains
         
         
         
