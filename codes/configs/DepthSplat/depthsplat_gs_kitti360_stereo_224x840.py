@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs/DepthSplat/depthsplat_all_supervised/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs//depthsplat_all_supervised/outputs_vis/{}".format(exp_name)
 validation_vis_progress=True
 
 

@@ -59,8 +59,8 @@ class DecoderCFG(object):
     def __init__(self,background_color=[0.0, 0.0, 0.0]):
         self.background_color = background_color
 
-def main(args):
 
+def main(args):
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
@@ -81,7 +81,7 @@ def main(args):
 
     if accelerator.is_main_process:
         accelerator.init_trackers(
-            project_name='omni-gs', 
+            project_name='depth-gs', 
             # config=config,
             init_kwargs={
                 "wandb":{'name': cfg.exp_name},
