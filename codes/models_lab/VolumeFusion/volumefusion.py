@@ -52,7 +52,7 @@ class VolumeFusion(BaseModule):
         self.costvolume_gs = CostVolumeGS(**costvolume_gs)
                 
         self.tri_plane_volume_gs = TriPlaneVolumetircGS(encoder=volume_gs.encoder,
-                                                        gs_decoder=None,
+                                                        gs_decoder=volume_gs.decoder,
                                                         use_checkpoint = volume_gs.use_checkpoint
                                                         )
         
@@ -220,10 +220,15 @@ class VolumeFusion(BaseModule):
             gaussians_feat_mask.append(valid_gs_feature_cv)
             
         
-        # Perform the Volume GS
+
+
+        # volume gs: input the features and masked gaussains_volume and guassain fature mask
+        gaussians_volume = self.tri_plane_volume_gs(
+                [img_feats[0]],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
         
-        print("Anything is OK So Far....")
-        quit()
             
 
         

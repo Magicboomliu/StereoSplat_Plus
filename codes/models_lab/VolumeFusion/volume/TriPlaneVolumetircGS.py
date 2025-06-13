@@ -11,6 +11,8 @@ from mmengine.registry import MODELS
 import warnings
 from einops import rearrange
 from .tpvformer_encoder import TPVFormerEncoder
+from .TriPlaneGSDecoder import TriPlaneVolumeGaussianDecoder
+
 
 
 class TriPlaneVolumetircGS(nn.Module):
@@ -36,21 +38,39 @@ class TriPlaneVolumetircGS(nn.Module):
         self.pc_xrange = self.pc_range[3] - self.pc_range[0] #100
         self.pc_yrange = self.pc_range[4] - self.pc_range[1] #100
         self.pc_zrange = self.pc_range[5] - self.pc_range[2] #15
+        
+        # # FIXME Here
+        self.feature_project_in = nn.Linear(164,128,bias=False)
+        
+        self.gs_decoder = TriPlaneVolumeGaussianDecoder(**gs_decoder)
+        
+        
 
     @property
     def device(self):
         return next(self.parameters()).device
 
-    def forward(self, img_feats, candidate_gaussians, candidate_feats, img_metas=None, status="train"):
+    def forward(self, img_feats, 
+                candidate_gaussians, 
+                        candidate_feats_in, 
+                        img_metas=None, 
+                        status="train"):
         """Forward training function.
         # candaites gaussains: the shared location masked gaussians between the pixel gaussains and the volume gaussains.
         # candadiates feature mask : the shared locations masked gaussains features.
         """
         
+        candidate_feats = []
+        
+        for cf in candidate_feats_in:
+            candidate_feats.append(self.feature_project_in(cf))
+        
+        
         if candidate_gaussians is not None and candidate_feats is not None:
-            bs = len(candidate_feats) # batch size
+            bs = len(candidate_feats) # batch size    
             _, c = candidate_feats[0].shape    # just get the dimension:14
             
+    
             # project the feature into triplane
             # print(self.tpv_h)  # 192
             # print(self.tpv_w)  # 192
@@ -70,7 +90,8 @@ class TriPlaneVolumetircGS(nn.Module):
 
             # traversal across the batch size
             for i in range(bs):
-                candidate_xyzs_i = candidate_gaussians[i][..., :3] # get the pixel-wise 3DGS
+                candidate_xyzs_i = candidate_gaussians[i].means # get the pixel-wise 3DGS
+       
                 # get H-plane index of the pixel gaussains: torch.Size([N1])
                 candidate_hs_i = (self.tpv_h * (candidate_xyzs_i[..., 1] - self.pc_range[1]) / self.pc_yrange - 0.5).int()
                 # get W-plane index:   torch.Size([N1])
@@ -79,9 +100,8 @@ class TriPlaneVolumetircGS(nn.Module):
                 candidate_zs_i = (self.tpv_z * (candidate_xyzs_i[..., 2] - self.pc_range[2]) / self.pc_zrange - 0.5).int()
                 # n, c
                 #candidate_feats_i = candidate_feats[[i, valid_mask]]
-                candidate_feats_i = candidate_feats[i] #-----> [N1,128]
+                candidate_feats_i = candidate_feats[i] #-----> [N1,C]
                 
-     
                 # hw: n, 2
                 candidate_coords_hw_i = torch.stack([candidate_hs_i, candidate_ws_i], dim=-1) # (H x W) index from triplane
                 # linder index, assume the hw plane as a linear for quick search.
@@ -100,8 +120,8 @@ class TriPlaneVolumetircGS(nn.Module):
                 #每个位置除以累加次数，得到平均值
                 project_feats_hw_i = (project_feats_hw_i / count_hw_i).view(self.tpv_h, self.tpv_w, c)
                 project_feats_hw[i] = project_feats_hw_i  #(H,W,C)
-    
                 
+
                 
                 
 
@@ -137,6 +157,7 @@ class TriPlaneVolumetircGS(nn.Module):
             project_feats = [None, None, None]
 
         
+        
         # get shared features
         
         if self.use_checkpoint and status != "test":
@@ -146,6 +167,7 @@ class TriPlaneVolumetircGS(nn.Module):
                 self.encoder, *input_vars_enc, use_reentrant=False
             )
             gaussians = torch.utils.checkpoint.checkpoint(self.gs_decoder, outs, use_reentrant=False)
+            
         else:
             
             # gaussain encoding.
@@ -158,4 +180,9 @@ class TriPlaneVolumetircGS(nn.Module):
         bs = gaussians.shape[0]
         n_feature = gaussians.shape[-1] #(14 dimension)
         gaussians = gaussians.reshape(bs, -1, n_feature)
+        
+        # 192x192x16x3(Grid_X*Grid_Y*Grid_Z*Nums_of_Surface)
+        print(gaussians.shape)
+        quit()
+        
         return gaussians
