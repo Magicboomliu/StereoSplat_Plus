@@ -205,7 +205,7 @@ class VolumeFusion(BaseModule):
                 opacities= valid_gs_opacities
             )
             
-            valid_gs_feature_cv = gaussians_feat[mask_cv_i]
+            valid_gs_feature_cv = gaussians_feat[b][mask_cv_i]
             
             gaussians_cv_mask.append(valid_gs_cv)
             gaussians_feat_mask.append(valid_gs_feature_cv)
