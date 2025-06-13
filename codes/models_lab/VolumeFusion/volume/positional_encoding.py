@@ -5,7 +5,7 @@ from mmengine.model import BaseModule
 from mmengine.registry import MODELS
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class TPVFormerPositionalEncoding(BaseModule):
 
     def __init__(self,

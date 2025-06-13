@@ -1,3 +1,7 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 import os
 import numpy as np
 import torch
@@ -6,27 +10,23 @@ from mmengine.model import BaseModule
 from mmengine.registry import MODELS
 import warnings
 from einops import rearrange
+from .tpvformer_encoder import TPVFormerEncoder
 
 
-# @MODELS.register_module()
-class VolumeGaussian(BaseModule):
-
+class TriPlaneVolumetircGS(nn.Module):
     def __init__(self,
                  encoder=None,
                  gs_decoder=None,
                  use_checkpoint=False,
                  **kwargs,
                  ):
-
+        
         super().__init__()
 
         self.use_checkpoint = use_checkpoint
-
-        if encoder:
-            self.encoder = MODELS.build(encoder)
-        if gs_decoder:
-            self.gs_decoder = MODELS.build(gs_decoder)
-
+        
+        self.encoder = TPVFormerEncoder(**encoder)
+        
         self.tpv_h = self.encoder.tpv_h
         self.tpv_w = self.encoder.tpv_w
         self.tpv_z = self.encoder.tpv_z
@@ -46,9 +46,7 @@ class VolumeGaussian(BaseModule):
         # candaites gaussains: the shared location masked gaussians between the pixel gaussains and the volume gaussains.
         # candadiates feature mask : the shared locations masked gaussains features.
         """
-        # [4,6,C,H,W] where is 1/4 resolution.
-        # both candidate_gaussians is list, and 4, each guassains is different.
-        # both candidate_feats is list , and 4, each guassains is different.
+        
         if candidate_gaussians is not None and candidate_feats is not None:
             bs = len(candidate_feats) # batch size
             _, c = candidate_feats[0].shape    # just get the dimension:14

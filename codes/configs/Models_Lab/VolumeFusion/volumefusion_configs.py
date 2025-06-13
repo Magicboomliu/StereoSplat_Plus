@@ -133,6 +133,66 @@ hybrid_attn_points = 32
 hybrid_attn_init = 0
 
 
+# cross layer
+self_cross_layer = dict(
+    type='TPVFormerLayer',
+    attn_cfgs=[
+        dict(
+            type='TPVCrossViewHybridAttention',
+            tpv_h=tpv_h_,
+            tpv_w=tpv_w_,
+            tpv_z=tpv_z_,
+            num_anchors=hybrid_attn_anchors,
+            embed_dims=_dim_,
+            num_heads=num_heads,
+            num_points=hybrid_attn_points,
+            init_mode=hybrid_attn_init,
+            dropout=0.1),
+        dict(
+            type='TPVImageCrossAttention',
+            pc_range=point_cloud_range,
+            num_cams=2,
+            dropout=0.1,
+            deformable_attention=dict(
+                type='TPVMSDeformableAttention3D',
+                embed_dims=_dim_,
+                num_heads=num_heads,
+                num_points=num_points,
+                num_z_anchors=num_points_in_pillar,
+                num_levels=1,
+                floor_sampling_offset=False,
+                tpv_h=tpv_h_,
+                tpv_w=tpv_w_,
+                tpv_z=tpv_z_),
+            embed_dims=_dim_,
+            tpv_h=tpv_h_,
+            tpv_w=tpv_w_,
+            tpv_z=tpv_z_)
+    ],
+    feedforward_channels=_ffn_dim_,
+    ffn_dropout=0.1,
+    operation_order=('self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm'))
+
+self_layer = dict(
+    type='TPVFormerLayer',
+    attn_cfgs=[
+        dict(
+            type='TPVCrossViewHybridAttention',
+            tpv_h=tpv_h_,
+            tpv_w=tpv_w_,
+            tpv_z=tpv_z_,
+            num_anchors=hybrid_attn_anchors,
+            embed_dims=_dim_,
+            num_heads=num_heads,
+            num_points=hybrid_attn_points,
+            init_mode=hybrid_attn_init,
+            dropout=0.1)
+    ],
+    feedforward_channels=_ffn_dim_,
+    ffn_dropout=0.1,
+    operation_order=('self_attn', 'norm', 'ffn', 'norm'))
+
+
 
 return_types = ["gs",'depth','feature']
 # define the model 
@@ -166,7 +226,7 @@ model = dict(
         add_extra_convs='on_input',
         num_outs=4),
     
-    
+    # depthsplat-like: cost-volume-based
     costvolume_gs = dict(
         depth_estimator_kwargs = dict(
                 unimatch_weights_path=unimatch_weights_path,
@@ -210,6 +270,38 @@ model = dict(
             )
         )
     ),
+    
+    
+    # volume-gs: using the fixed spatial volume
+    volume_gs = dict(
+        use_checkpoint=use_checkpoint,
+        
+        encoder = dict(
+            tpv_h=tpv_h_,
+            tpv_w=tpv_w_,
+            tpv_z=tpv_z_,
+            num_feature_levels=1,
+            num_layers=3,
+            pc_range=point_cloud_range,
+            num_cams=num_cams,
+            num_points_in_pillar=num_points_in_pillar,
+            num_points_in_pillar_cross_view=[16, 16, 16],
+            return_intermediate=False,
+            transformerlayers=[
+                self_cross_layer, self_cross_layer, self_layer
+            ],
+            embed_dims=_dim_,
+            positional_encoding=dict(
+                num_feats=[48, 48, 32],
+                h=tpv_h_,
+                w=tpv_w_,
+                z=tpv_z_)
+        ),
+        
+        
+        
+    ),
+    
     
     camera_args=camera_args,
     dataset_params=dataset_params

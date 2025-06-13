@@ -11,7 +11,6 @@ from mmengine.model import BaseModule, constant_init, xavier_init
 from mmengine.registry import MODELS
 from itertools import chain
 
-@MODELS.register_module()
 class TPVImageCrossAttention(BaseModule):
     """An attention module used in TPVFormer.
 
@@ -184,7 +183,7 @@ class TPVImageCrossAttention(BaseModule):
         return self.dropout(slots) + inp_residual
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class TPVMSDeformableAttention3D(BaseModule):
     """An attention module used in tpvFormer based on Deformable-Detr.
     `Deformable DETR: Deformable Transformers for End-to-End Object Detection.

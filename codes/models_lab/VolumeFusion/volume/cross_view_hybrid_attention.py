@@ -9,10 +9,7 @@ from mmcv.ops.multi_scale_deform_attn import (
 from mmengine.model import BaseModule, constant_init, xavier_init
 from torch import Tensor
 
-from mmengine.registry import MODELS
 
-
-@MODELS.register_module()
 class TPVCrossViewHybridAttention(BaseModule):
     """TPVFormer Cross-view Hybrid Attention Module."""
 

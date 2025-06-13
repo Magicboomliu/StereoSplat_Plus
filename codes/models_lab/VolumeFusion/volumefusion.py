@@ -9,11 +9,14 @@ from mmengine.model import BaseModule
 from mmengine.registry import MODELS
 import warnings
 from einops import rearrange, einsum
-from .encoder.costvolume_gs import CostVolumeGS
+
 from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor
 
+
+from .encoder.costvolume_gs import CostVolumeGS
+from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
 
 @dataclass
 class Gaussians:
@@ -23,12 +26,12 @@ class Gaussians:
     opacities: Float[Tensor, "batch gaussian"]
     
 
-@MODELS.register_module()
 class VolumeFusion(BaseModule):
     def __init__(self,
                  backbone=None, # feature extraction
                  neck=None,      # feature aggregation
                  costvolume_gs=None,
+                 volume_gs = None,
                  camera_args=None, # camera/3D Range
                 #  loss_args=None,    # loss args setings
                  dataset_params=None, # dataset params
@@ -47,6 +50,12 @@ class VolumeFusion(BaseModule):
         
         # define the depthsplat gs estimation: expected output is the GS and the GS Feature
         self.costvolume_gs = CostVolumeGS(**costvolume_gs)
+                
+        self.tri_plane_volume_gs = TriPlaneVolumetircGS(encoder=volume_gs.encoder,
+                                                        gs_decoder=None,
+                                                        use_checkpoint = volume_gs.use_checkpoint
+                                                        )
+        
 
 
 
