@@ -312,7 +312,14 @@ model = dict(
             scale_z=scale_z,
             gpv=gpv,
             offset_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
-            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]  
+            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
+            
+            gaussian_head_settings_dict = dict(
+                gaussian_scale_min=1e-10,
+                gaussian_scale_max=1.5,
+                sh_degree=2,
+                
+            ),
               
         ),
         

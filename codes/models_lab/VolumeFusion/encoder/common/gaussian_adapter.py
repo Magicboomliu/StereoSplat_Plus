@@ -66,6 +66,17 @@ class GaussianAdapter(nn.Module):
         '''
         for degree in range(1, self.cfg.sh_degree + 1):
             self.sh_mask[degree**2 : (degree + 1) ** 2] = 0.1 * 0.25**degree
+    
+    def forward_for_world(self,
+                          locations,
+                          opacities,
+                          raw_gaussians,
+                          eps: float = 1e-8,
+                          ):
+        
+        pass
+    
+    
 
     def forward(
         self,

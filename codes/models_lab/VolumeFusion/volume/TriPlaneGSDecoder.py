@@ -21,7 +21,8 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         self, tpv_h, tpv_w, tpv_z, pc_range, gs_dim=14,
         in_dims=64, hidden_dims=128, out_dims=None,
         scale_h=2, scale_w=2, scale_z=2, gpv=4, offset_max=None, scale_max=None,
-        use_checkpoint=False
+        use_checkpoint=False,
+        gaussian_head_settings_dict=None
     ):
         super().__init__()
         self.tpv_h = tpv_h
@@ -43,7 +44,7 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         )
 
         # Finally Decoder to get the Gaussains
-        self.gs_decoder = nn.Linear(out_dims, gs_dim*gpv)
+
         self.use_checkpoint = use_checkpoint
 
         # set activations
@@ -63,9 +64,17 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         self.rot_act = lambda x: F.normalize(x, dim=-1)
         self.rgb_act = lambda x: torch.sigmoid(x)
 
+        # gaussians adapter
+        self.gaussian_adapter_vs = GaussianAdapter(**gaussian_head_settings_dict)
+        num_gaussian_parameters = self.gaussian_adapter_vs.d_in + 2 + 1 # 7+3x9+3
+        
+        gs_dim = num_gaussian_parameters
+        self.gs_decoder = nn.Linear(out_dims, gs_dim*gpv)
+
         # obtain anchor points for gaussians
         gs_anchors = self.get_reference_points(tpv_h * scale_h, tpv_w * scale_w, tpv_z * scale_z, pc_range) # 1, w, h, z, 3
         self.register_buffer('gs_anchors', gs_anchors)
+        
     
     @staticmethod
     def get_reference_points(H, W, Z, pc_range, dim='3d', bs=1, device='cuda', dtype=torch.float):
@@ -148,10 +157,17 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
         else:
             gaussians = self.decoder(gaussians)
-
-
             gaussians = self.gs_decoder(gaussians)
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
+        
+        # print(gaussians.shape) # torch.Size([1, 192, 192, 16, 3, 37]) ---> (tpv_h,tpv_w,tpv_z,3,37)
+        # quit()
+        
+        
+        
+        # Get the 3DGS Here
+        opacity = self.opacity_act(x[..., :1])
+        
         
         #print("after decode:{}".format(torch.cuda.memory_allocated(0)))
         gs_offsets_x = self.pos_act(gaussians[..., :1]) * self.offset_max[0] # bs, w, h, z, 3
@@ -159,6 +175,8 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         gs_offsets_z = self.pos_act(gaussians[..., 2:3]) * self.offset_max[2] # bs, w, h, z, 3
         #gs_offsets = gaussians[..., :3]
         gs_positions = torch.cat([gs_offsets_x, gs_offsets_y, gs_offsets_z], dim=-1) + self.gs_anchors[:, :, :, :, None, :]
+        
+        
         x = torch.cat([gs_positions, gaussians[..., 3:]], dim=-1)
         rgbs = self.rgb_act(x[..., 3:6])
         opacity = self.opacity_act(x[..., 6:7])
