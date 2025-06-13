@@ -10,7 +10,18 @@ from mmengine.registry import MODELS
 import warnings
 from einops import rearrange, einsum
 from .encoder.costvolume_gs import CostVolumeGS
+from dataclasses import dataclass
+from jaxtyping import Float
+from torch import Tensor
 
+
+@dataclass
+class Gaussians:
+    means: Float[Tensor, "batch gaussian dim"]
+    covariances: Float[Tensor, "batch gaussian dim dim"]
+    harmonics: Float[Tensor, "batch gaussian 3 d_sh"]
+    opacities: Float[Tensor, "batch gaussian"]
+    
 
 @MODELS.register_module()
 class VolumeFusion(BaseModule):
@@ -145,9 +156,71 @@ class VolumeFusion(BaseModule):
         '''
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
         
-        
         # perform the cost volume-based 
-        self.costvolume_gs(input_batch_dict,cfg=cfg)
+        estimated_raw_gaussains_dict = self.costvolume_gs(input_batch_dict,cfg=cfg)
+        
+        
+        if 'gs' in cfg.return_types:
+            gaussians_cost_volume = estimated_raw_gaussains_dict['gs']
+        else:
+            gaussians_cost_volume = None
+        
+        if 'depth' in cfg.return_types:
+            pred_depth = estimated_raw_gaussains_dict['depth']
+        else:
+            pred_depth = None
+        
+        if "feature" in cfg.return_types:
+            gaussians_feat = estimated_raw_gaussains_dict['feature']
+        else:
+            gaussians_feat = None
+
+        
+        # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
+        # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
+        # print(gaussians_cost_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
+        # print(gaussians_cost_volume.opacities.shape) # torch.Size([1, 487424])
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(gaussians_feat.shape[0]):
+            # here the shape is [VHW]
+            mask_cv_i = (gaussians_cost_volume.means[b, :, 0] >= x_start) & (gaussians_cost_volume.means[b, :, 0] <= x_end) & \
+                        (gaussians_cost_volume.means[b, :, 1] >= y_start) & (gaussians_cost_volume.means[b, :, 1] <= y_end) & \
+                        (gaussians_cost_volume.means[b, :, 2] >= z_start) & (gaussians_cost_volume.means[b, :, 2] <= z_end)
+            
+            # get the valid GS 
+            valid_gs_means = gaussians_cost_volume.means[b][mask_cv_i]
+            valid_gs_covariances = gaussians_cost_volume.covariances[b][mask_cv_i]
+            valid_gs_harmonics = gaussians_cost_volume.harmonics[b][mask_cv_i]
+            valid_gs_opacities = gaussians_cost_volume.opacities[b][mask_cv_i]
+            
+            valid_gs_cv = Gaussians(
+                means= valid_gs_means,
+                covariances= valid_gs_covariances,
+                harmonics= valid_gs_harmonics,
+                opacities= valid_gs_opacities
+            )
+            
+            valid_gs_feature_cv = gaussians_feat[mask_cv_i]
+            
+            gaussians_cv_mask.append(valid_gs_cv)
+            gaussians_feat_mask.append(valid_gs_feature_cv)
+            
+        
+        # Perform the Volume GS
+        
+        print("Anything is OK So Far....")
+        quit()
+            
+
+        
+        
+
+
 
 if __name__=="__main__":
     pass

@@ -237,12 +237,6 @@ class Gaussains_Estimator_Head(nn.Module):
         )
 
         
-        # print(gaussians.means.shape) #torch.Size([1, 372736, 3])
-        # print(gaussians.covariances.shape) #torch.Size([1, 372736, 3, 3])
-        # print(gaussians.harmonics.shape) #torch.Size([1, 372736, 3, 9])
-        # print(gaussians.opacities.shape) #torch.Size([1, 372736])
-        # print("------------------------------------")
-        
         return_dict = {}
         
         if "depths" in return_types:
@@ -262,7 +256,6 @@ class Gaussains_Estimator_Head(nn.Module):
             })
         
         if 'feature' in return_types:
-            
             temp_gs_features = temp_gs_features.permute(0,1,3,4,2)
             bs = temp_gs_features.shape[0]
             channel_dims = temp_gs_features.shape[-1]
@@ -272,7 +265,8 @@ class Gaussains_Estimator_Head(nn.Module):
                 "feature": temp_gs_features
             })
 
-            
+        
+        return return_dict
 
         # print(gaussians.means.shape) #(1,2,H*W,1,1,3)
         # print(gaussians.covariances.shape) #(B,V,H*W,1,1,3,3)
