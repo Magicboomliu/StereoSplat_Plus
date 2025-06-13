@@ -46,9 +46,6 @@ class VolumeGaussian(BaseModule):
         # candaites gaussains: the shared location masked gaussians between the pixel gaussains and the volume gaussains.
         # candadiates feature mask : the shared locations masked gaussains features.
         """
-        # img_feats: is the image features
-        # candidates gaussains: from the pixel-branch
-        
         # [4,6,C,H,W] where is 1/4 resolution.
         # both candidate_gaussians is list, and 4, each guassains is different.
         # both candidate_feats is list , and 4, each guassains is different.

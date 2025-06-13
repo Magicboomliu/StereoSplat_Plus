@@ -72,7 +72,6 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     return cleaned
 
 
-
 @MODELS.register_module()
 class OmniGaussian(BaseModule):
 
@@ -246,15 +245,20 @@ class OmniGaussian(BaseModule):
         # volume-gs prediction
         pc_range = self.dataset_params.pc_range
         x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
         gaussians_pixel_mask, gaussians_feat_mask = [], []
         for b in range(bs):
             mask_pixel_i = (gaussians_pixel[b, :, 0] >= x_start) & (gaussians_pixel[b, :, 0] <= x_end) & \
                         (gaussians_pixel[b, :, 1] >= y_start) & (gaussians_pixel[b, :, 1] <= y_end) & \
                         (gaussians_pixel[b, :, 2] >= z_start) & (gaussians_pixel[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
             gaussians_pixel_mask_i = gaussians_pixel[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
             gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
             gaussians_pixel_mask.append(gaussians_pixel_mask_i)
             gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+        # volume gs: input the features and gaussains pixel mask and guassain fature mask
         gaussians_volume = self.volume_gs(
                 [img_feats[0]],
                 gaussians_pixel_mask,
@@ -330,9 +334,7 @@ class OmniGaussian(BaseModule):
 
         # =================== Data preparation =================== #        
         rgb_gt = data_dict["output_imgs"]
-        
-
-        
+     
         data_dict["rgb_gt"] = rgb_gt
         depth_m_gt = data_dict["output_depths_m"] # Depth from Metric3D-V2
         conf_m_gt = data_dict["output_confs_m"]
@@ -654,8 +656,6 @@ class OmniGaussian(BaseModule):
 
         return preds, data_dict["bin_token"]
 
-    
-    
     def forward_demo_kitti360(self,batch,mode='s_center'):
         data_dict = self.get_data(batch)
         img = data_dict["imgs"] #(1,2,3,H,W)        
@@ -943,9 +943,6 @@ class OmniGaussian(BaseModule):
 
         
         return preds, data_dict["bin_token"]
-
-
-
 
     def save_val_results(self, batch_gt, render_pkg_fuse, render_pkg_pixel, render_pkg_volume,
                          gaussians_all, gaussians_pixel, gaussians_volume, save_dir):

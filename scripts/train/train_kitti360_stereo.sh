@@ -16,7 +16,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 
 }
 
-
+# Depth Estimation Only
 TRAIN_KITTI360_Unimatch_Only(){
 cd ../..
 cd codes
@@ -52,7 +52,25 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=1,2,3 accelerat
     --resume-from $resume_from
 }
 
+TRAIN_KITTI360_VolumeFusion(){
+cd ../..
+cd codes
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_configs.py"
+work_dir="/data1/zliu/feedforward_outputs/VolumeFusion/Debugs"
+resume_from="None"
+
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml train_kitti360_stereo_volumefusion.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
 
 # TRAIN_KITTI360_DepthSplat
-TRAIN_KITTI360_OmniScene
+# TRAIN_KITTI360_OmniScene
 # TRAIN_KITTI360_Unimatch_Only
+TRAIN_KITTI360_VolumeFusion
