@@ -298,7 +298,23 @@ model = dict(
                 z=tpv_z_)
         ),
         
-        
+        decoder = dict(
+            tpv_h=tpv_h_,
+            tpv_w=tpv_w_,
+            tpv_z=tpv_z_,
+            pc_range=point_cloud_range,
+            gs_dim=14,
+            in_dims=_dim_,
+            hidden_dims=2*_dim_,
+            out_dims=_dim_,
+            scale_h=scale_h,
+            scale_w=scale_w,
+            scale_z=scale_z,
+            gpv=gpv,
+            offset_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
+            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]  
+              
+        ),
         
     ),
     
