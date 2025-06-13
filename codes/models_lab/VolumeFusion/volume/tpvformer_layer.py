@@ -10,7 +10,7 @@ from mmengine.model import BaseModule, ModuleList
 from mmengine.registry import MODELS
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class TPVFormerLayer(BaseModule):
     """Base `TPVFormerLayer` for vision transformer.
 

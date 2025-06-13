@@ -156,6 +156,7 @@ def main(args):
     my_model = VolumeFusion(backbone=cfg.model.backbone,
                             neck=cfg.model.neck,
                             costvolume_gs=cfg.model.costvolume_gs,
+                            volume_gs=cfg.model.volume_gs,
                             camera_args=cfg.camera_args,
                             dataset_params=cfg.dataset_params,
                             use_checkpoint=cfg.use_checkpoint)

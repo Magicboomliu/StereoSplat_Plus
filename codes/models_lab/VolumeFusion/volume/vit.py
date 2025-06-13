@@ -13,7 +13,7 @@ from mmengine.runner.checkpoint import CheckpointLoader
 from mmengine.registry import MODELS
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class LN2d(nn.Module):
     """A LayerNorm variant, popularized by Transformers, that performs
     pointwise mean and variance normalization over the channel dimension for
@@ -341,7 +341,7 @@ class PatchEmbed(nn.Module):
         return x
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class ViT(BaseModule):
     """Vision Transformer with support for patch or hybrid CNN input stage."""
 

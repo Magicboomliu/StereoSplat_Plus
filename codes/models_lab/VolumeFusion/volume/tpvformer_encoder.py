@@ -8,9 +8,10 @@ from torch.nn.init import normal_
 from .cross_view_hybrid_attention import TPVCrossViewHybridAttention
 from .image_cross_attention import TPVMSDeformableAttention3D
 from einops import rearrange
+from .positional_encoding import TPVFormerPositionalEncoding
 
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class TPVFormerEncoder(TransformerLayerSequence):
 
     def __init__(self,
@@ -78,7 +79,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
         self.register_buffer('cross_view_ref_points', cross_view_ref_points)
 
         # positional encoding
-        self.positional_encoding = MODELS.build(positional_encoding)
+        self.positional_encoding =TPVFormerPositionalEncoding(**positional_encoding)
         self.return_intermediate = return_intermediate
         self.init_weights()
 

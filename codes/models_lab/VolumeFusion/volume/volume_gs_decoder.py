@@ -7,7 +7,7 @@ def sigmoid_scaling(scaling:torch.Tensor, lower_bound=0.005, upper_bound=0.02):
     sig = torch.sigmoid(scaling)
     return lower_bound * (1 - sig) + upper_bound * sig
 
-@MODELS.register_module()
+# @MODELS.register_module()
 class VolumeGaussianDecoder(BaseModule):
     # gpv
     # 每个体素（Voxel）内放置的高斯（Gaussian）数量。
