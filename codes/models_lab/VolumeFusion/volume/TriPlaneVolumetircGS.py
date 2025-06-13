@@ -51,7 +51,7 @@ class TriPlaneVolumetircGS(nn.Module):
         return next(self.parameters()).device
 
     def forward(self, img_feats, 
-                candidate_gaussians, 
+                        candidate_gaussians, 
                         candidate_feats_in, 
                         img_metas=None, 
                         status="train"):
