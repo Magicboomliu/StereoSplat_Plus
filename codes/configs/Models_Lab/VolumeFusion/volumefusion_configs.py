@@ -133,7 +133,9 @@ hybrid_attn_points = 32
 hybrid_attn_init = 0
 
 
-# define the model her
+
+return_types = ["gs",'depth','feature']
+# define the model 
  
 use_checkpoint = True
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
