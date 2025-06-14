@@ -17,6 +17,9 @@ from torch import Tensor
 
 from .encoder.costvolume_gs import CostVolumeGS
 from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
+from .gs_decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
+
+
 
 @dataclass
 class Gaussians:
@@ -32,6 +35,7 @@ class VolumeFusion(BaseModule):
                  neck=None,      # feature aggregation
                  costvolume_gs=None,
                  volume_gs = None,
+                 decoder_gs = None,
                  camera_args=None, # camera/3D Range
                 #  loss_args=None,    # loss args setings
                  dataset_params=None, # dataset params
@@ -55,6 +59,9 @@ class VolumeFusion(BaseModule):
                                                         gs_decoder=volume_gs.decoder,
                                                         use_checkpoint = volume_gs.use_checkpoint
                                                         )
+        
+        self.gs_decoder = DecoderSplattingCUDA(dataset_cfg=decoder_gs)
+        
         
 
 
@@ -156,6 +163,7 @@ class VolumeFusion(BaseModule):
         input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
 
         img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        height,width = img.shape[-2:]
         bs = img.shape[0]
         '''
         - torch.Size([2, 6, 128, 56, 100]) ---> 1/4
@@ -225,7 +233,33 @@ class VolumeFusion(BaseModule):
                 gaussians_cv_mask,
                 gaussians_feat_mask,
                 input_batch_dict["img_metas"])
+        
+        
+        # Fuse the Volume GS and the CV GS
+        fusion_gaussians = Gaussians(
+            means=torch.cat([gaussians_cost_volume.means,gaussians_volume.means],dim=1),
+            covariances=torch.cat([gaussians_cost_volume.covariances,gaussians_volume.covariances],dim=1),
+            harmonics=torch.cat([gaussians_cost_volume.harmonics,gaussians_volume.harmonics],dim=1),
+            opacities=torch.cat([gaussians_cost_volume.opacities,gaussians_volume.opacities],dim=1)
+        )
+        
+        
+        
+        # doing rendering here
 
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()
+        # Normalized the instrinsics -----> Maybe not neccssary
+        intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
+        intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height        
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+        z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+        
+        
+        
+        
 
         # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
         # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
