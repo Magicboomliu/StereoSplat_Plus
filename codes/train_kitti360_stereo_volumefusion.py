@@ -249,15 +249,231 @@ def main(args):
         for i_iter, batch in enumerate(train_dataloader):
             data_time_e = time.time()
             
+            
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
-                if args.gpus <= 1:
-                    my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
-                else:
-                    my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
+                
+                try:
+                    if args.gpus <= 1:
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
+                    else:
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
 
-                quit()
+                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
+                        continue  # 跳过当前 batch
 
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
+
+                    if accelerator.sync_gradients:
+                        grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+
+                    optimizer.step()
+                    scheduler.step()
+            
+                except RuntimeError as e:
+                    if "CUDA out of memory" in str(e):
+                        print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise e  # 其他错误照常抛出
+                
+
+            # Checks if the accelerator has performed an optimization step behind the scenes
+            accelerator.wait_for_everyone()
+            if accelerator.sync_gradients and accelerator.is_main_process:
+                if global_iter % cfg.save_freq == 0:
+                    if accelerator.is_main_process:
+                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
+                        accelerator.save_state(save_file_name)
+                        dst_file = osp.join(args.work_dir, 'latest')
+                        mmengine.utils.symlink(save_file_name, dst_file)
+                        if logger is not None:
+                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+                
+                
+                if global_iter % 100 == 0:
+                    torch.cuda.empty_cache()
+
+
+
+            # perform the validation scripts
+                if global_iter % cfg.val_freq == 0:
+                    my_model.eval()
+                    if accelerator.is_main_process:
+                        
+                        
+                        output_rgb_meter_center = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_first = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_last ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_depth_meter_center = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_first = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_last = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        input_depth_meter = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        
+                        for i_iter_val, batch_val in enumerate(val_dataloader):
+                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                            overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                                                                  "step-{}".format(global_iter))
+                            os.makedirs(overall_val_batch_save_dir,exist_ok=True)
+                            val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
+                            os.makedirs(val_batch_save_dir,exist_ok=True)
+                
+                            
+                            if args.gpus<=1:
+                                # forward here 
+                                # get the psnr, ssim, mae and mse as well as the saved the visualization results
+                                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                            else:
+                                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
+                        
+                            # saved the intermeidate results here for the RGB Here
+                            output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
+                            output_rgb_meter_center_view_left_ssim = output_rgb_meter_dict['center_view']['left']['ssim']
+                            output_rgb_meter_center_view_right_psnr = output_rgb_meter_dict['center_view']['right']['psnr']
+                            output_rgb_meter_center_view_right_ssim = output_rgb_meter_dict['center_view']['right']['ssim']   
+                            output_rgb_meter_center['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
+                            output_rgb_meter_center['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
+                            
+                            output_rgb_meter_first_view_left_psnr = output_rgb_meter_dict['first_view']['left']['psnr']
+                            output_rgb_meter_first_view_left_ssim = output_rgb_meter_dict['first_view']['left']['ssim']   
+                            output_rgb_meter_first_view_right_psnr = output_rgb_meter_dict['first_view']['right']['psnr']
+                            output_rgb_meter_first_view_right_ssim = output_rgb_meter_dict['first_view']['right']['ssim']
+                            output_rgb_meter_first['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
+                            output_rgb_meter_first['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
+                            
+                            output_rgb_meter_last_view_left_psnr = output_rgb_meter_dict['last_view']['left']['psnr']
+                            output_rgb_meter_last_view_left_ssim = output_rgb_meter_dict['last_view']['left']['ssim']   
+                            output_rgb_meter_last_view_right_psnr = output_rgb_meter_dict['last_view']['right']['psnr']
+                            output_rgb_meter_last_view_right_ssim = output_rgb_meter_dict['last_view']['right']['ssim']
+                            output_rgb_meter_last["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
+                            output_rgb_meter_last["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
+                            
+                            
+                            # saved the intermeidate results here for the Depth here
+                            output_depth_meter_center_view_left_mae = output_depth_meter_dict['center_view']['left']['mae']
+                            output_depth_meter_center_view_left_mse = output_depth_meter_dict['center_view']['left']['mse']
+                            output_depth_meter_center_view_right_mae = output_depth_meter_dict['center_view']['right']['mae']
+                            output_depth_meter_center_view_right_mse = output_depth_meter_dict['center_view']['right']['mse']
+                            output_depth_meter_center["left"].update(mae=output_depth_meter_center_view_left_mae,
+                                                                    mse=output_depth_meter_center_view_left_mse)
+                            output_depth_meter_center["right"].update(mae=output_depth_meter_center_view_right_mae,
+                                                                    mse=output_depth_meter_center_view_right_mse)
+
+                            output_depth_meter_first_view_left_mae = output_depth_meter_dict['first_view']['left']['mae']
+                            output_depth_meter_first_view_left_mse = output_depth_meter_dict['first_view']['left']['mse']
+                            output_depth_meter_first_view_right_mae = output_depth_meter_dict['first_view']['right']['mae']
+                            output_depth_meter_first_view_right_mse = output_depth_meter_dict['first_view']['right']['mse']
+                            output_depth_meter_first["left"].update(mae=output_depth_meter_first_view_left_mae,
+                                                                    mse=output_depth_meter_first_view_left_mse)
+                            output_depth_meter_first["right"].update(mae=output_depth_meter_first_view_right_mae,
+                                                                    mse=output_depth_meter_first_view_right_mse)
+                            
+
+                            output_depth_meter_last_view_left_mae = output_depth_meter_dict['last_view']['left']['mae']
+                            output_depth_meter_last_view_left_mse = output_depth_meter_dict['last_view']['left']['mse']
+                            output_depth_meter_last_view_right_mae = output_depth_meter_dict['last_view']['right']['mae']
+                            output_depth_meter_last_view_right_mse = output_depth_meter_dict['last_view']['right']['mse']
+                            output_depth_meter_last["left"].update(mae=output_depth_meter_last_view_left_mae,
+                                                                    mse=output_depth_meter_last_view_left_mse)
+                            output_depth_meter_last["right"].update(mae=output_depth_meter_last_view_right_mae,
+                                                                    mse=output_depth_meter_last_view_right_mse)
+                            
+                            # saved the input results
+                            
+                            input_depth_meter_left_mae = input_depth_meter_dict['input_depth']['left']['mae']
+                            input_depth_meter_left_mse = input_depth_meter_dict['input_depth']['left']['mse']
+                            input_depth_meter_right_mae = input_depth_meter_dict['input_depth']['right']['mae']
+                            input_depth_meter_right_mse = input_depth_meter_dict['input_depth']['right']['mse']       
+
+                            input_depth_meter['left'].update(mae=input_depth_meter_left_mae,
+                                                             mse=input_depth_meter_left_mse)
+                            input_depth_meter['right'].update(mae=input_depth_meter_right_mae,
+                                                              mse=input_depth_meter_right_mse)
+                            
+                        
+                        # for this
+                        output_rgb_meter_center['left'] = output_rgb_meter_center['left'].get_stats()
+                        output_rgb_meter_center['right'] = output_rgb_meter_center['right'].get_stats()
+                        
+                        output_rgb_meter_first['left'] = output_rgb_meter_first['left'].get_stats()
+                        output_rgb_meter_first['right'] = output_rgb_meter_first['right'].get_stats()
+                        
+                        output_rgb_meter_last['left'] = output_rgb_meter_last['left'].get_stats()
+                        output_rgb_meter_last['right'] = output_rgb_meter_last['right'].get_stats()
+                        
+                        output_depth_meter_center['left'] = output_depth_meter_center['left'].get_stats()
+                        output_depth_meter_center['right'] = output_depth_meter_center['right'].get_stats()
+
+                        output_depth_meter_first['left'] = output_depth_meter_first['left'].get_stats()
+                        output_depth_meter_first['right'] = output_depth_meter_first['right'].get_stats()
+                        
+                        output_depth_meter_last['left'] = output_depth_meter_last['left'].get_stats()
+                        output_depth_meter_last['right'] = output_depth_meter_last['right'].get_stats()
+                        
+                        
+                        input_depth_meter['left'] = input_depth_meter['left'].get_stats()
+                        input_depth_meter['right'] = input_depth_meter['right'].get_stats()
+                        
+                        
+                        results_dict = {
+                        "rgb_center": output_rgb_meter_center,
+                        "rgb_first": output_rgb_meter_first,
+                        "rgb_last": output_rgb_meter_last,
+                        "depth_center":output_depth_meter_center,
+                        "depth_first":output_depth_meter_first,
+                        "depth_last":output_depth_meter_last,
+                        "input_depth":input_depth_meter
+                            
+                        }
+                        
+                        saved_into_json(data_dict=results_dict,
+                                        path=os.path.join(overall_val_batch_save_dir,"metric.json"))
+                        
+                    my_model.train()
+
+
+            time_e = time.time()
+
+            # print loss log regularly
+            if global_iter % print_freq == 0 and accelerator.is_main_process:
+                lr = optimizer.param_groups[0]['lr']
+                losses_str = ""
+                for loss_k, loss_v in logs.items():
+                    losses_str += ("%s: %.3f, " % (loss_k, loss_v))
+                if logger is not None:
+                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
+                        epoch, i_iter, len(train_dataloader), 
+                        loss.item(), losses_str, grad_norm, lr,
+                        time_e - time_s, data_time_e - data_time_s
+                    ))
+
+            global_iter += 1
+
+            # dump loss log to tensorboard
+            accelerator.log(logs, step=global_iter)
+
+            data_time_s = time.time()
+            time_s = time.time()
+
+        epoch += 1
+
+    # Create the pipeline using the trained modules and save it.
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
+    
+            
+            
 
 if __name__ == '__main__':
     # Training settings
