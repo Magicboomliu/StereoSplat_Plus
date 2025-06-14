@@ -62,6 +62,26 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 }
 
 
-TRAIN_KITTI360_DepthSplat
+
+TRAIN_KITTI360_VolumeFusion(){
+cd ../..
+cd codes
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version//Models_Lab/VolumeFusion/VolumeFusion/volumefusion_configs.py"
+work_dir="/gs/FeedForwardGS/VolumeFusion/First_As_Input/All_Supervised/saved_models"
+resume_from="None"
+
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml train_kitti360_stereo_volumefusion.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
+
+TRAIN_KITTI360_VolumeFusion
+# TRAIN_KITTI360_DepthSplat
 #TRAIN_KITTI360_OmniScene
 # TRAIN_KITTI360_Unimatch_Only
