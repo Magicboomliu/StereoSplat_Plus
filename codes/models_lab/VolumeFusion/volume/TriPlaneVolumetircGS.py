@@ -87,6 +87,9 @@ class TriPlaneVolumetircGS(nn.Module):
             # print(project_feats_hw.max())
             # print(project_feats_hw.mean())
             # quit()
+            
+ 
+            
 
             # traversal across the batch size
             for i in range(bs):
@@ -166,23 +169,18 @@ class TriPlaneVolumetircGS(nn.Module):
             outs = torch.utils.checkpoint.checkpoint(
                 self.encoder, *input_vars_enc, use_reentrant=False
             )
-            gaussians = torch.utils.checkpoint.checkpoint(self.gs_decoder, outs, use_reentrant=False)
+            # outs = list(outs)
+            # outs = outs.append(img_metas)
+            gaussians = torch.utils.checkpoint.checkpoint(self.gs_decoder, outs,img_metas,use_reentrant=False)
             
         else:
             
             # gaussain encoding.
             outs = self.encoder(img_feats, project_feats, img_metas) #
-            
+            # outs = list(outs)
+            # outs = outs.append(img_metas)
             # gaussain decoding.
-            gaussians = self.gs_decoder(outs) #(B,tpv_h, tpv_w, tpv_z,3,14), here 3 is the gpv
+            gaussians = self.gs_decoder(outs,img_metas) #(B,tpv_h, tpv_w, tpv_z,3,14), here 3 is the gpv
 
-        
-        bs = gaussians.shape[0]
-        n_feature = gaussians.shape[-1] #(14 dimension)
-        gaussians = gaussians.reshape(bs, -1, n_feature)
-        
-        # 192x192x16x3(Grid_X*Grid_Y*Grid_Z*Nums_of_Surface)
-        print(gaussians.shape)
-        quit()
         
         return gaussians
