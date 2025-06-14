@@ -208,7 +208,7 @@ loss_configs_dict = dict(
     cost_volume_branch_sup=True,
     trip_plane_branch_sup =True,
     fusion_volume_branch_sup=True,
-    branch_wise_weight = [1.0,1.0,1.0],
+    branch_wise_weight = [1.0,1.0,2.0],
     cost_volume_branch_dict = dict(
         
         depth_estimator_supervision=True,
