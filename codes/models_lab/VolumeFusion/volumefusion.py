@@ -246,7 +246,6 @@ class VolumeFusion(BaseModule):
         
         
         # doing rendering here
-
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
         intrinsics = input_batch_dict['intrinsics']
         intrinsics = intrinsics.clone()
@@ -257,10 +256,72 @@ class VolumeFusion(BaseModule):
         z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
         z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
         
-        
-        
-        
 
+        # cost_volume branch rendering
+        rendered_results_cv = self.gs_decoder(gaussians=gaussians_cost_volume,
+                                               extrinsics= render_c2w,
+                                               intrinsics = output_intrinsics,
+                                               near = z_near_batch,
+                                               far = z_far_batch,
+                                               image_shape=(height,width),
+                                               depth_mode = 'depth'
+                                               )
+
+        rendered_color_cv = rendered_results_cv['color'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_cv = rendered_results_cv['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_cv = rendered_results_cv['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_cv = rendered_depth_cv.squeeze(2)
+        rendered_alpha_cv = rendered_alpha_cv.squeeze(2)
+        
+        rendered_color_cv = torch.clamp(rendered_color_cv,min=0,max=1.0)
+        rendered_depth_cv = torch.clamp(rendered_depth_cv,min=0,max=150)
+        
+        
+        # Volume Branch
+        rendered_results_trip = self.gs_decoder(gaussians=gaussians_volume,
+                                               extrinsics= render_c2w,
+                                               intrinsics = output_intrinsics,
+                                               near = z_near_batch,
+                                               far = z_far_batch,
+                                               image_shape=(height,width),
+                                               depth_mode = 'depth'
+                                               )
+
+        rendered_color_trip = rendered_results_trip['color'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_trip = rendered_results_trip['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_trip = rendered_results_trip['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_trip = rendered_depth_trip.squeeze(2)
+        rendered_alpha_trip = rendered_alpha_trip.squeeze(2)
+        
+        rendered_color_trip = torch.clamp(rendered_color_trip,min=0,max=1.0)
+        rendered_depth_trip = torch.clamp(rendered_depth_trip,min=0,max=150)
+        
+        # Fusion Branch
+        rendered_results_fuse = self.gs_decoder(gaussians=fusion_gaussians,
+                                               extrinsics= render_c2w,
+                                               intrinsics = output_intrinsics,
+                                               near = z_near_batch,
+                                               far = z_far_batch,
+                                               image_shape=(height,width),
+                                               depth_mode = 'depth'
+                                               )
+        rendered_color_fuse = rendered_results_fuse['color'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        
+        # Loss Design Here
+        
+        print(rendered_depth_fuse.shape)
+        print(rendered_color_fuse.shape)
+        quit()
+        
+        
         # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
         # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
         # print(gaussians_cost_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
