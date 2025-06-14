@@ -200,6 +200,56 @@ return_types = ["gs",'depth','feature']
 use_checkpoint = True
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 # model definition
+
+
+
+# Loss Function Definition Here
+loss_configs_dict = dict(
+    cost_volume_branch_sup=True,
+    trip_plane_branch_sup =True,
+    fusion_volume_branch_sup=True,
+    branch_wise_weight = [1.0,1.0,1.0],
+    cost_volume_branch_dict = dict(
+        
+        depth_estimator_supervision=True,
+        depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+        rendered_depth_supervision=True,
+        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+        rendered_rgb_supervision=True,
+        rendered_rgb_supervison_type="MSE_LPIPS",
+        lpips_alpha=0.05,
+        rendered_depth_weight=0.01,
+        depth_estimation_weight=0.05,
+    ),
+
+   trip_volume_branch_dict = dict(
+        rendered_depth_supervision=True,
+        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+        rendered_rgb_supervision=True,
+        rendered_rgb_supervison_type="MSE_LPIPS",
+        lpips_alpha=0.05,
+        rendered_depth_weight=0.01,
+        depth_estimation_weight=0.05,
+    ),
+
+   fuse_volume_branch_dict = dict(
+        rendered_depth_supervision=True,
+        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+        rendered_rgb_supervision=True,
+        rendered_rgb_supervison_type="MSE_LPIPS",
+        lpips_alpha=0.05,
+        rendered_depth_weight=0.01,
+        depth_estimation_weight=0.05,
+    ),
+    
+)
+
+
+
 model = dict(
     type='VolumeFusion',
     use_checkpoint=use_checkpoint,
@@ -330,7 +380,7 @@ model = dict(
         background_color=[0.0, 0.0, 0.0]
     ),
     
-
+    losses_params=loss_configs_dict,
     camera_args=camera_args,
     dataset_params=dataset_params
     
