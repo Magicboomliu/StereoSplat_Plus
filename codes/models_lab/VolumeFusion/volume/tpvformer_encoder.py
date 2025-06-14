@@ -189,7 +189,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
                              num_points_in_pillar=4,
                              dim='3d',
                              bs=1,
-                             device='cuda',
+                             device='cuda:0',
                              dtype=torch.float):
         """Get the reference points used in SCA and TSA.
 
