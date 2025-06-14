@@ -185,10 +185,7 @@ class VolumeFusion(BaseModule):
             gaussians_feat = None
 
         
-        # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
-        # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
-        # print(gaussians_cost_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
-        # print(gaussians_cost_volume.opacities.shape) # torch.Size([1, 487424])
+
 
         # volume-gs prediction
         pc_range = self.dataset_params.pc_range
@@ -228,7 +225,20 @@ class VolumeFusion(BaseModule):
                 gaussians_cv_mask,
                 gaussians_feat_mask,
                 input_batch_dict["img_metas"])
+
+
+        # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
+        # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
+        # print(gaussians_cost_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
+        # print(gaussians_cost_volume.opacities.shape) # torch.Size([1, 487424])
+
+
+        # print(gaussians_volume.means.shape) # torch.Size([1, 487424, 3])
+        # print(gaussians_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
+        # print(gaussians_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
+        # print(gaussians_volume.opacities.shape) # torch.Size([1, 487424])
         
+        # quit()
             
 
         

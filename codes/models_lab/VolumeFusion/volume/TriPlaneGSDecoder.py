@@ -1,8 +1,14 @@
 
-import torch, torch.nn as nn, torch.nn.functional as F
+import torch
+from torch import Tensor, nn
+import torch.nn.functional as F
 from mmengine.model import BaseModule
 from mmengine.registry import MODELS
+from dataclasses import dataclass
 
+
+from einops import einsum, rearrange
+from jaxtyping import Float
 from ..encoder.common.gaussian_adapter import GaussianAdapter
 from ..encoder.common.gaussian_adapter import GaussianAdapterCfg
 
@@ -11,6 +17,15 @@ def sigmoid_scaling(scaling:torch.Tensor, lower_bound=0.005, upper_bound=0.02):
     sig = torch.sigmoid(scaling)
     return lower_bound * (1 - sig) + upper_bound * sig
 
+
+
+@dataclass
+class Gaussians:
+    means: Float[Tensor, "batch gaussian dim"]
+    covariances: Float[Tensor, "batch gaussian dim dim"]
+    harmonics: Float[Tensor, "batch gaussian 3 d_sh"]
+    opacities: Float[Tensor, "batch gaussian"]
+    
 
 
 # @MODELS.register_module()
@@ -59,14 +74,16 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
             self.scale_max = [1.0] * 3 # meters
         else:
             self.scale_max = scale_max
-        self.scale_act = lambda x: torch.sigmoid(x)
+        
         self.opacity_act = lambda x: torch.sigmoid(x)
-        self.rot_act = lambda x: F.normalize(x, dim=-1)
-        self.rgb_act = lambda x: torch.sigmoid(x)
+        
+        # self.rot_act = lambda x: F.normalize(x, dim=-1)
+        # self.rgb_act = lambda x: torch.sigmoid(x)
+        # self.scale_act = lambda x: torch.sigmoid(x)
 
         # gaussians adapter
         self.gaussian_adapter_vs = GaussianAdapter(**gaussian_head_settings_dict)
-        num_gaussian_parameters = self.gaussian_adapter_vs.d_in + 2 + 1 # 7+3x9+3
+        num_gaussian_parameters = self.gaussian_adapter_vs.d_in_for_volume
         
         gs_dim = num_gaussian_parameters
         self.gs_decoder = nn.Linear(out_dims, gs_dim*gpv)
@@ -105,18 +122,24 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         ref_3d = ref_3d[None].repeat(bs, 1, 1, 1, 1) # b, w, h, z, 3
         return ref_3d
     
-    def forward(self, tpv_list, debug=False):
+    def forward(self, tpv_list,img_meta=None ,debug=False):
         """
         tpv_list[0]: bs, h*w, c
         tpv_list[1]: bs, z*h, c
         tpv_list[2]: bs, w*z, c
         """
+        
         # get the tri-plane features 
-        tpv_hw, tpv_zh, tpv_wz = tpv_list[0], tpv_list[1], tpv_list[2]        
+        tpv_hw, tpv_zh, tpv_wz = tpv_list[0], tpv_list[1], tpv_list[2]   
+        
+        
         bs, _, c = tpv_hw.shape
         tpv_hw = tpv_hw.permute(0, 2, 1).reshape(bs, c, self.tpv_h, self.tpv_w)
         tpv_zh = tpv_zh.permute(0, 2, 1).reshape(bs, c, self.tpv_z, self.tpv_h)
         tpv_wz = tpv_wz.permute(0, 2, 1).reshape(bs, c, self.tpv_w, self.tpv_z)
+        
+        
+        
 
         if self.scale_h != 1 or self.scale_w != 1:
             tpv_hw = F.interpolate(
@@ -160,40 +183,64 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
             gaussians = self.gs_decoder(gaussians)
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
         
-        # print(gaussians.shape) # torch.Size([1, 192, 192, 16, 3, 37]) ---> (tpv_h,tpv_w,tpv_z,3,37)
-        # quit()
         
-        
-        
-        # Get the 3DGS Here
-        opacity = self.opacity_act(x[..., :1])
-        
-        
-        #print("after decode:{}".format(torch.cuda.memory_allocated(0)))
-        gs_offsets_x = self.pos_act(gaussians[..., :1]) * self.offset_max[0] # bs, w, h, z, 3
-        gs_offsets_y = self.pos_act(gaussians[..., 1:2]) * self.offset_max[1] # bs, w, h, z, 3
-        gs_offsets_z = self.pos_act(gaussians[..., 2:3]) * self.offset_max[2] # bs, w, h, z, 3
+
+        opacity = self.opacity_act(gaussians[..., :1])
+        gs_offsets_x = self.pos_act(gaussians[..., 1:2]) * self.offset_max[0] # bs, w, h, z, 3
+        gs_offsets_y = self.pos_act(gaussians[..., 2:3]) * self.offset_max[1] # bs, w, h, z, 3
+        gs_offsets_z = self.pos_act(gaussians[..., 3:4]) * self.offset_max[2] # bs, w, h, z, 3
         #gs_offsets = gaussians[..., :3]
         gs_positions = torch.cat([gs_offsets_x, gs_offsets_y, gs_offsets_z], dim=-1) + self.gs_anchors[:, :, :, :, None, :]
         
+
+        gaussians = self.gaussian_adapter_vs.forward_for_world(
+                          opacities=opacity,
+                          mean3D=gs_positions,
+                          raw_gaussians=gaussians[...,4:],
+                          scale_max=self.scale_max,
+        )
+
+        gaussians_output = Gaussians(
+            rearrange(
+                gaussians.means,
+                "b tpv_x tpv_y tpv_z gpv xyz -> b (tpv_x tpv_y tpv_z gpv) xyz",
+            ),
+            rearrange(
+                gaussians.covariances,
+                "b tpv_x tpv_y tpv_z gpv i j -> b (tpv_x tpv_y tpv_z gpv) i j",
+            ),
+            rearrange(
+                gaussians.harmonics,
+                "b tpv_x tpv_y tpv_z gpv c d_sh -> b (tpv_x tpv_y tpv_z gpv) c d_sh",
+            ),
+            rearrange(
+                gaussians.opacities,
+                "b tpv_x tpv_y tpv_z gpv -> b (tpv_x tpv_y tpv_z gpv)",
+            ),
+        )
+
+        return gaussians_output    
+
+        #print("after decode:{}".format(torch.cuda.memory_allocated(0)))
+
         
-        x = torch.cat([gs_positions, gaussians[..., 3:]], dim=-1)
-        rgbs = self.rgb_act(x[..., 3:6])
-        opacity = self.opacity_act(x[..., 6:7])
-        rotation = self.rot_act(x[..., 7:11])
-        scale_x = self.scale_act(x[..., 11:12]) * self.scale_max[0]
-        scale_y = self.scale_act(x[..., 12:13]) * self.scale_max[1]
-        scale_z = self.scale_act(x[..., 13:14]) * self.scale_max[2]
+        # x = torch.cat([gs_positions, gaussians[..., 3:]], dim=-1)
+        # rgbs = self.rgb_act(x[..., 3:6])
+        
+        # rotation = self.rot_act(x[..., 7:11])
+        # scale_x = self.scale_act(x[..., 11:12]) * self.scale_max[0]
+        # scale_y = self.scale_act(x[..., 12:13]) * self.scale_max[1]
+        # scale_z = self.scale_act(x[..., 13:14]) * self.scale_max[2]
 
-        if debug:
-            opacity[:] = 1.0
-            scale_x[:] = 0.5
-            scale_y[:] = 0.5
-            scale_z[:] = 0.5
-            rgbs[..., 0] = 1.0
-            rgbs[..., 1] = 0.0
-            rgbs[..., 2] = 0.0
+        # if debug:
+        #     opacity[:] = 1.0
+        #     scale_x[:] = 0.5
+        #     scale_y[:] = 0.5
+        #     scale_z[:] = 0.5
+        #     rgbs[..., 0] = 1.0
+        #     rgbs[..., 1] = 0.0
+        #     rgbs[..., 2] = 0.0
 
-        gaussians = torch.cat([gs_positions, rgbs, opacity, rotation, scale_x, scale_y, scale_z], dim=-1) # bs, w, h, z, gpv, 14
+        # gaussians = torch.cat([gs_positions, rgbs, opacity, rotation, scale_x, scale_y, scale_z], dim=-1) # bs, w, h, z, gpv, 14
     
-        return gaussians
+        # return gaussians

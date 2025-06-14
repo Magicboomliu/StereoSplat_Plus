@@ -68,14 +68,52 @@ class GaussianAdapter(nn.Module):
             self.sh_mask[degree**2 : (degree + 1) ** 2] = 0.1 * 0.25**degree
     
     def forward_for_world(self,
-                          locations,
                           opacities,
+                          mean3D,
                           raw_gaussians,
+                          scale_max,
                           eps: float = 1e-8,
                           ):
         
-        pass
+        opacities =opacities.unsqueeze(-1) #torch.Size([1, 192, 192, 16, 3, 1, 1])
+        scales, rotations, sh = raw_gaussians.split((3, 4, 3 * self.d_sh), dim=-1)
+
+        opacities = opacities.clamp(min=0.001, max=0.999)  # 避免0或1导致渲染异常
+        # Normalize the quaternion features to yield a valid quaternion.
+        rotations = rotations / (rotations.norm(dim=-1, keepdim=True) + eps)
+
+        scale_x = F.sigmoid(scales[..., :1]) * scale_max[0]
+        scale_y = F.sigmoid(scales[..., 1:2]) * scale_max[1]
+        scale_z = F.sigmoid(scales[..., 2:3]) *scale_max[2]
+
+        scales = torch.cat([scale_x,scale_y,scale_z],dim=-1)
+        
+        sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
+        sh = sh * self.sh_mask # torch.Size([1, 192, 192, 16, 3, 3, 9])
     
+        covariances = build_covariance(scales, rotations)
+        
+        opacities = opacities.squeeze(-1).squeeze(-1)
+
+        # print(mean3D.shape)
+        # print(covariances.shape)
+        # print(opacities.shape)
+        # # print(sh.shape)
+        # quit()
+        # quit()
+        
+
+        return Gaussians(
+            means=mean3D,
+            covariances=covariances,
+            harmonics=sh, # 将球谐系数从相机坐标系旋转到世界坐标系。
+            opacities=opacities,
+            # NOTE: These aren't yet rotated into world space, but they're only used for
+            # exporting Gaussians to ply files. This needs to be fixed...
+            scales=scales,
+            rotations=rotations.broadcast_to((*scales.shape[:-1], 4)),
+        )
+
     
 
     def forward(
@@ -151,6 +189,11 @@ class GaussianAdapter(nn.Module):
         # get the means
         means = origins + directions * depths[..., None]
         
+        
+
+        
+        
+        
         return Gaussians(
             means=means,
             covariances=covariances,
@@ -184,6 +227,10 @@ class GaussianAdapter(nn.Module):
     @property
     def d_in(self) -> int:
         return 7 + 3 * self.d_sh
+    
+    @property
+    def d_in_for_volume(self) ->int:
+        return 3*self.d_sh + 3 + 3+ 4+ 1
 
 
 def RGB2SH(rgb):
