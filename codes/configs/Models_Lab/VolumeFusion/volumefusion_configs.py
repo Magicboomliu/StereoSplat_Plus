@@ -32,7 +32,8 @@ seed=42
 # only using the center for training
 use_center, use_first, use_last = False, True, False
 # resolution = [224, 832]
-resolution = [224, 1088]
+# resolution = [224, 1088]
+resolution = [224, 544] #FIXME Here
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
@@ -205,15 +206,21 @@ unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimati
 
 # Loss Function Definition Here
 loss_configs_dict = dict(
+    
+    depth_estimator_supervision=True,
+    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    depth_estimation_weight=0.05,
+    
     cost_volume_branch_sup=True,
+    cv_branch_weight = 1.0,
     trip_plane_branch_sup =True,
+    trip_branch_weight=1.0,
     fusion_volume_branch_sup=True,
-    branch_wise_weight = [1.0,1.0,2.0],
-    cost_volume_branch_dict = dict(
-        
-        depth_estimator_supervision=True,
-        depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
+    fusion_branch_weight=2.0,
+    
+    # branch_wise_weight = [1.0,1.0,2.0],
+    
+    cost_volume_branch_dict = dict(     
         rendered_depth_supervision=True,
         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
         
@@ -221,7 +228,7 @@ loss_configs_dict = dict(
         rendered_rgb_supervison_type="MSE_LPIPS",
         lpips_alpha=0.05,
         rendered_depth_weight=0.01,
-        depth_estimation_weight=0.05,
+        
     ),
 
    trip_volume_branch_dict = dict(
@@ -231,8 +238,7 @@ loss_configs_dict = dict(
         rendered_rgb_supervision=True,
         rendered_rgb_supervison_type="MSE_LPIPS",
         lpips_alpha=0.05,
-        rendered_depth_weight=0.01,
-        depth_estimation_weight=0.05,
+        rendered_depth_weight=0.01
     ),
 
    fuse_volume_branch_dict = dict(
@@ -242,8 +248,7 @@ loss_configs_dict = dict(
         rendered_rgb_supervision=True,
         rendered_rgb_supervison_type="MSE_LPIPS",
         lpips_alpha=0.05,
-        rendered_depth_weight=0.01,
-        depth_estimation_weight=0.05,
+        rendered_depth_weight=0.01
     ),
     
 )
