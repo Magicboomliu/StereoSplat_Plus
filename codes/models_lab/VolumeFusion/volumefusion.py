@@ -20,6 +20,48 @@ from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
 from .gs_decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
 
 
+from .losses import LPIPS
+
+# debug here
+import matplotlib.pyplot as plt
+
+def get_pointmap_from_depth(depth, intrinsics, c2w):
+    """
+    depth:      [B, V, H, W]
+    intrinsics: [B, V, 3, 3]
+    c2w:        [B, V, 4, 4]
+    return:     pointmap [B, V, H, W, 3]
+    """
+    B, V, H, W = depth.shape
+
+    # 创建归一化像素网格 [H, W, 3]
+    y, x = torch.meshgrid(
+        torch.arange(H, dtype=torch.float32, device=depth.device),
+        torch.arange(W, dtype=torch.float32, device=depth.device),
+        indexing='ij'
+    )
+    xy1 = torch.stack([x, y, torch.ones_like(x)], dim=-1)  # [H, W, 3]
+    xy1 = xy1[None, None, ...].expand(B, V, H, W, 3)        # [B, V, H, W, 3]
+
+    # 反投影：pixel → camera coordinates
+    K_inv = torch.inverse(intrinsics)                      # [B, V, 3, 3]
+    K_inv = K_inv[:, :, None, None, :, :]                  # [B, V, 1, 1, 3, 3]
+    cam_dirs = torch.matmul(K_inv, xy1.unsqueeze(-1))      # [B, V, H, W, 3, 1]
+    cam_dirs = cam_dirs.squeeze(-1)                        # [B, V, H, W, 3]
+
+    # 深度 * 单位方向 = 相机坐标点
+    cam_points = cam_dirs * depth.unsqueeze(-1)            # [B, V, H, W, 3]
+
+    # 相机 → 世界坐标
+    R = c2w[:, :, :3, :3]                                  # [B, V, 3, 3]
+    T = c2w[:, :, :3, 3]                                   # [B, V, 3]
+    R = R[:, :, None, None, :, :]                          # [B, V, 1, 1, 3, 3]
+    T = T[:, :, None, None, :]                             # [B, V, 1, 1, 3]
+
+    world_points = torch.matmul(R, cam_points.unsqueeze(-1)).squeeze(-1) + T  # [B, V, H, W, 3]
+
+    return world_points
+
 
 @dataclass
 class Gaussians:
@@ -39,6 +81,7 @@ class VolumeFusion(BaseModule):
                  camera_args=None, # camera/3D Range
                 #  loss_args=None,    # loss args setings
                  dataset_params=None, # dataset params
+                 losses_params=None,
                  use_checkpoint=False, # using checkpoints or not
                  **kwargs,
                  ):
@@ -63,8 +106,16 @@ class VolumeFusion(BaseModule):
         self.gs_decoder = DecoderSplattingCUDA(dataset_cfg=decoder_gs)
         
         
-
-
+        # Loss Functions Configuration Here
+        self.losses_params = losses_params
+        
+        if self.losses_params is not None:
+            # preception loss here
+            self.perceptual_loss = LPIPS().eval()
+            for param in self.perceptual_loss.parameters():
+                param.requires_grad = False
+        
+        
 
     def extract_img_feat(self, img, status="train"):
         """Extract features of images."""
@@ -315,28 +366,54 @@ class VolumeFusion(BaseModule):
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
         
         
-        # Loss Design Here
-        
-        print(rendered_depth_fuse.shape)
-        print(rendered_color_fuse.shape)
-        quit()
-        
-        
-        # print(gaussians_cost_volume.means.shape) # torch.Size([1, 487424, 3])
-        # print(gaussians_cost_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
-        # print(gaussians_cost_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
-        # print(gaussians_cost_volume.opacities.shape) # torch.Size([1, 487424])
+        # Loss
+        if mode=='train' or mode=='val':
+            # loss here
+            # dict_keys(['output_imgs', 'output_depths', 'output_depths_m', 'output_confs_m', 
+                        # 'output_positions', 'output_rays_o', 
+                        # 'output_rays_d', 'output_c2ws', 
+                        # 'output_fovxs', 'output_fovys'])
 
+            # Get the Loss Here
+            # ======================== losses ======================== #
+            loss = 0.0
+            loss_terms = {}
+            def set_loss(key, split, loss_value, loss_weight=1.0):
+                loss_terms[f"{split}/loss_{key}"] = loss_value.item()
+                loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight
 
-        # print(gaussians_volume.means.shape) # torch.Size([1, 487424, 3])
-        # print(gaussians_volume.covariances.shape) # torch.Size([1, 487424, 3, 3])
-        # print(gaussians_volume.harmonics.shape) # torch.Size([1, 487424, 3, 9])
-        # print(gaussians_volume.opacities.shape) # torch.Size([1, 487424])
-        
-        # quit()
+            # GT Information For Supervision
+            output_rgb = output_batch_dict['output_imgs']
+            pseudo_depth_gt = output_batch_dict['output_depths_m']
+            sparse_depth_gt = output_batch_dict['output_sparse_depth']
+            valid_mask_01 = sparse_depth_gt>0
+            valid_mask_01_float = valid_mask_01.float()
+            
+            # use this
+            fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+            
+            output_intrinsics_recovered = output_intrinsics.clone()
+            output_intrinsics_recovered[:, :, 0] = output_intrinsics_recovered[:, :, 0]*1.0 * width
+            output_intrinsics_recovered[:, :, 1] = output_intrinsics_recovered[:, :, 1]*1.0 * height  
+
+            fusion_gt_pointmap = get_pointmap_from_depth(depth=fusion_pseudo_with_sparse_gt,
+                                                         intrinsics=output_intrinsics_recovered,
+                                                         c2w=render_c2w
+                                                         )
+            
+            mask_dptm = (fusion_gt_pointmap[..., 0] >= x_start) & (fusion_gt_pointmap[..., 0] <= x_end) & \
+                        (fusion_gt_pointmap[..., 1] >= y_start) & (fusion_gt_pointmap[..., 1] <= y_end) & \
+                        (fusion_gt_pointmap[..., 2] >= z_start) & (fusion_gt_pointmap[..., 2] <= z_end)
+            output_dptm_mask_valid = mask_dptm.float()
+            
+            
+            ## RGB Loss Here
+            
+            
             
 
-        
+            
+
         
 
 
