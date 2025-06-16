@@ -94,7 +94,7 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
         
     
     @staticmethod
-    def get_reference_points(H, W, Z, pc_range, dim='3d', bs=1, device='cuda', dtype=torch.float):
+    def get_reference_points(H, W, Z, pc_range, dim='3d', bs=1, device=None, dtype=torch.float):
         """Get the reference points used in spatial cross-attn and self-attn.
         Args:
             H, W: spatial shape of tpv plane.
@@ -107,6 +107,9 @@ class TriPlaneVolumeGaussianDecoder(BaseModule):
                 shape (bs, num_keys, num_levels, 2).
         """
 
+        if device is None:
+            device = torch.device("cpu")  # 安全默认值
+            
         # reference points in 3D space
         zs = torch.linspace(0.5, Z - 0.5, Z, dtype=dtype,
                             device=device).view(-1, 1, 1).expand(Z, H, W) / Z
