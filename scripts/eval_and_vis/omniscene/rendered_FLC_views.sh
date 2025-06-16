@@ -1,10 +1,11 @@
 Render_KITTI360_OmniScene_LFC_Views(){
 cd ../../..
 cd codes/validation
-configs_path="/home/Desktop/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omniscene_vanilla_settings.py"
-output_dir="/data/feedforward_outputs/visualization_outputs/omniscene_vanilla_settings"
-load_from="/data/feedforward_outputs/output_models/OmniScene/"
-validation_list="/home/Desktop/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omniscene_vanilla_settings.py"
+output_dir="/data1/zliu/temp_for_0617/Vis_And_Evals/Omniscene/Metric3DV2/"
+load_from="/data1/zliu/temp_for_0617/OmniScene/Metric3Dv2/checkpoint-45000/"
+validation_list="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
+#validation_list="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 
 # demo.txt
 # val_2013_05_28_drive_0000_sync_complete.txt
