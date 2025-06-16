@@ -36,8 +36,55 @@ from depthsplat.src.models.model_warpper_splat import ModelWarpper
 
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 
+import matplotlib.pyplot as plt
+
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
+def convert_depth_to_disp(factor=328.318735,depth=None):
+    
+    mask = depth>0
+    mask = mask.astype(np.float32)
+
+    disparity = factor / (depth +1e-3)
+    disparity = disparity * mask
+    disparity = np.clip(disparity,a_max=220,a_min=0)
+    
+    disparity = kitti_colormap(disparity)
+    return disparity
+
+
+def kitti_colormap(disparity, maxval=-1):
+	"""
+	A utility function to reproduce KITTI fake colormap
+	Arguments:
+	  - disparity: numpy float32 array of dimension HxW
+	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
+	
+	Returns a numpy uint8 array of shape HxWx3.
+	"""
+	if maxval < 0:
+		maxval = np.max(disparity)
+
+	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
+	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
+	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
+
+	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
+	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
+	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
+	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
+	index = np.argmax(diffs, axis=-1)-1
+
+	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
+
+
+	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
+	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
+	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
+
+	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
+
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -99,20 +146,20 @@ def main(args):
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
-    max_num_epochs = cfg.max_epochs # default is 30
+    # max_num_epochs = cfg.max_epochs # default is 30
 
-    # configure logger
-    if accelerator.is_main_process:
-        os.makedirs(args.work_dir, exist_ok=True)
-        cfg.dump(osp.join(args.work_dir, osp.basename(args.py_config)))
+    # # configure logger
+    # if accelerator.is_main_process:
+    #     os.makedirs(args.work_dir, exist_ok=True)
+    #     cfg.dump(osp.join(args.work_dir, osp.basename(args.py_config)))
 
-    timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-    log_file = osp.join(args.work_dir, f'{timestamp}.log')
-    if not osp.exists(osp.dirname(log_file)):
-        os.makedirs(osp.dirname(log_file),exist_ok=True)
-    logger = create_logger(log_file=log_file, is_main_process=accelerator.is_main_process)
-    if logger is not None:
-        logger.info(f'Config:\n{cfg.pretty_text}')
+    # timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
+    # log_file = osp.join(args.work_dir, f'{timestamp}.log')
+    # if not osp.exists(osp.dirname(log_file)):
+    #     os.makedirs(osp.dirname(log_file),exist_ok=True)
+    # logger = create_logger(log_file=log_file, is_main_process=accelerator.is_main_process)
+    # if logger is not None:
+    #     logger.info(f'Config:\n{cfg.pretty_text}')
 
 
     # generate datasets
@@ -239,20 +286,153 @@ def main(args):
             input_depth_meter = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
                                         "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
             
+            GT_vis_output_folder = os.path.join(cfg.work_dir,"GT")
+            depthsplat_rendered_output_folder = os.path.join(cfg.work_dir,"depthsplat")
+            
+            if cfg.validation_vis_progress:
+                os.makedirs(GT_vis_output_folder,exist_ok=True)
+                os.makedirs(depthsplat_rendered_output_folder,exist_ok=True)
+            
+            
             for i_iter_val, batch_val in enumerate(val_dataloader):
                 print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation")
-                os.makedirs(overall_val_batch_save_dir,exist_ok=True)
-                val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
-                os.makedirs(val_batch_save_dir,exist_ok=True)
-    
+                # overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation")
+                # os.makedirs(overall_val_batch_save_dir,exist_ok=True)
+                # val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
+
+                bin_token = batch_val['bin_token'][0]
+                
+                
+
                 
                 if args.gpus<=1:
                     # forward here 
                     # get the psnr, ssim, mae and mse as well as the saved the visualization results
-                    output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                    output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths = my_model.validation_step_with_token_names(batch_val, None,cfg)
                 else:
-                    output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
+                    output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths = my_model.module.validation_step_with_token_names(batch_val, None,cfg)
+            
+                if cfg.validation_vis_progress:
+                                    # Omni-Scene
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(rendered_images[0].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(rendered_images[1].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(rendered_images[2].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(rendered_images[3].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(rendered_images[4].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(rendered_images[5].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(depthsplat_rendered_output_folder,
+                                bin_token+"_rendered_RGB.png"),bbox_inches='tight')
+                    
+                    # Omni-Scene Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[0].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[1].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[2].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[3].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[4].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=rendered_depth[5].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(depthsplat_rendered_output_folder,
+                                bin_token+"_rendered_Depth.png"),bbox_inches='tight')
+
+
+                
+                    # RGB
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):INPUT")
+                    plt.imshow(gt_images[0].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):INPUT")
+                    plt.imshow(gt_images[1].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(gt_images[2].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(gt_images[3].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(gt_images[4].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(gt_images[5].squeeze(0).permute(1,2,0).cpu().numpy())
+                    plt.savefig(os.path.join(GT_vis_output_folder,
+                                bin_token+"GT_RGB.png"),bbox_inches='tight')
+                    
+                    # Voxel Disparity
+                    plt.figure(figsize=(20,10))
+                    plt.subplot(3,2,1)
+                    plt.axis('off')
+                    plt.title("F-(l):Input")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[0].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,2)
+                    plt.axis('off')
+                    plt.title("F-(r):Input")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[1].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,3)
+                    plt.axis('off')
+                    plt.title("C-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[2].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,4)
+                    plt.axis('off')
+                    plt.title("C-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[3].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,5)
+                    plt.axis('off')
+                    plt.title("L-(l)")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[4].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.subplot(3,2,6)
+                    plt.axis('off')
+                    plt.title("L-(r)")
+                    plt.imshow(convert_depth_to_disp(depth=gt_depths[5].squeeze(0).squeeze(0).cpu().numpy()))
+                    plt.savefig(os.path.join(GT_vis_output_folder,
+                                bin_token+"GT_Depth.png"),bbox_inches='tight')
+
+            
+            
             
                 # saved the intermeidate results here for the RGB Here
                 output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
@@ -356,7 +536,9 @@ def main(args):
             
             if not cfg.validation_vis_progress:
                 saved_into_json(data_dict=results_dict,
-                                path=os.path.join(overall_val_batch_save_dir,"metric.json"))
+                                path=os.path.join(cfg.work_dir,"metric.json"))
+
+
 
 
 
