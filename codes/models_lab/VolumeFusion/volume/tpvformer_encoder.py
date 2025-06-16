@@ -189,7 +189,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
                              num_points_in_pillar=4,
                              dim='3d',
                              bs=1,
-                             device='cuda:0',
+                             device=None,
                              dtype=torch.float):
         """Get the reference points used in SCA and TSA.
 
@@ -202,6 +202,9 @@ class TPVFormerEncoder(TransformerLayerSequence):
             Tensor: reference points used in decoder, has \
                 shape (bs, num_keys, num_levels, 2).
         """
+
+        if device is None:
+            device = torch.device("cpu")  # 安全默认值
 
         # reference points in 3D space, used in spatial cross-attention (SCA)
         zs = torch.linspace(
