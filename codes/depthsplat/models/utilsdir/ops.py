@@ -365,7 +365,7 @@ def get_cam_info_gaussian(c2w, fovx, fovy, znear, zfar):
     - camera_center: 相机在世界坐标的位置 (x,y,z)
     '''
     
-    c2w = convert_pose(c2w) # first convert OpenGL to openCV coordinate
+    # c2w = convert_pose(c2w) # first convert OpenGL to openCV coordinate
     # get its inverse matrix: from c2w to w2c
     world_view_transform = torch.inverse(c2w.float())
     '''
