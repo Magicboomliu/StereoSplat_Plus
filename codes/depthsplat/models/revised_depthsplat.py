@@ -781,9 +781,6 @@ class ModelWarpper(nn.Module):
         
         height, width = input_images.shape[3:]
         
-        # debug here
-        # intrinsics[:,:,0,2] = intrinsics[:,:,0,2] + 13
-        # intrinsics[:,:,1,2] = intrinsics[:,:,1,2] - 30
         intrinsics = intrinsics.clone()
         
         results_dict = self.depth_estimator(
@@ -798,7 +795,6 @@ class ModelWarpper(nn.Module):
         )
         
         predicted_input_depth = results_dict['depth_preds'][0]
-        
 
         if cfg.train_depth_only:
             pass
@@ -815,8 +811,6 @@ class ModelWarpper(nn.Module):
         
         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
         bs = gaussians_cv.shape[0] # batch size is 2
-        
-        
         
         
         # rendered for new views
@@ -933,13 +927,8 @@ class ModelWarpper(nn.Module):
             
             current_c2w_interp = c2w_interp[:,idx*interval:(idx+1)*interval,:]
             
-            # output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,current_c2w_interp.shape[1],1,1)
-
             current_fovxs_interp = output_batch_dict["output_fovxs"][:, -6:-5].repeat(1, current_c2w_interp.shape[1])   # [4,960] --> Center
             current_fovys_interp =output_batch_dict["output_fovys"][:, -6:-5].repeat(1, current_c2w_interp.shape[1]) 
-
-            # z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(current_c2w_interp.shape[0],current_c2w_interp.shape[1]).type_as(current_c2w_interp)
-            # z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(current_c2w_interp.shape[0],current_c2w_interp.shape[1]).type_as(current_c2w_interp)
 
             render_pkg_cv = self.renderer.render(
                 gaussians=gaussians_cv,
@@ -1267,124 +1256,3 @@ class ModelWarpper(nn.Module):
 
 
         
-# if __name__=="__main__":
-    
-#     class CFG(object):
-#         def __init__(self,max_train_steps,max_depth,min_depth,train_depth_only,return_depth):
-#             self.max_train_steps= max_train_steps
-#             self.max_depth = max_depth
-#             self.min_depth = min_depth
-#             self.train_depth_only = train_depth_only
-#             self.return_depth = return_depth
-    
-#     class DatasetCFG(object):
-#         def __init__(self,background_color=[0.0, 0.0, 0.0]):
-#             self.background_color = background_color
-
-            
-#     #----------------------------------------------------------------------------------------------#
-#     #---------------------------------Input Images and Inputs--------------------------------------#
-#     #----------------------------------     And Inputs       --------------------------------------#
-#     #----------------------------------------------------------------------------------------------#
-    
-#     input_images = torch.randn(1,2,3,224,832).cuda() # batch is 2, 0 is left and the 1 is the right
-#     b, v, _, h, w = input_images.shape
-    
-#     cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=input_images.device)  # [2, 2]
-#     cameras_dist_index = cameras_dist_index.unsqueeze(0).expand(1, -1, -1)  # [B, 2, 2]
-#     intrinsics =   torch.Tensor([[552.554261,   0,       682.049453],
-#                         [  0, 552.554261, 238.769549],
-#                         [  0, 0,    1]]).unsqueeze(0).unsqueeze(0).repeat(1,2,1,1).type_as(input_images)
-    
-
-#     T_left = torch.eye(4).type_as(input_images).unsqueeze(0).unsqueeze(0)
-#     T_right = torch.eye(4)
-#     T_right[0, 3] = 0.59  # 沿 x 轴右移 0.59 米
-#     T_right = T_right.type_as(input_images).unsqueeze(0).unsqueeze(0)
-    
-#     extrinsics = torch.cat((T_left,T_right),dim=1)
-#     extrinsics = extrinsics.repeat(1,1,1,1)
-#     min_depth=1.0 / 100,  # inverse depth range
-#     max_depth=1.0 / 0.3,
-    
-#     min_depth = torch.Tensor(min_depth).unsqueeze(0).repeat(1,2)
-#     max_depth = torch.Tensor(max_depth).unsqueeze(0).repeat(1,2)
-#     intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/832
-#     intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/224
-
-    
-#     z_near = 0.1
-#     z_far = 1000.0
-    
-    
-#     z_near_batch = torch.from_numpy(np.array([z_near])).unsqueeze(0).repeat(1,2)
-#     z_far_batch = torch.from_numpy(np.array([z_far])).unsqueeze(0).repeat(1,2)
-    
-
-    
-
-#     '''   Encoder Part of This Model  '''
-#     # Define the Unimatch Branch
-#     depth_estimator_unimatch = MultiViewUniMatch(
-#             num_scales=1, # default is 1
-#             upsample_factor=4, # upsample factor is 4
-#             lowest_feature_resolution=4, # 4
-#             vit_type="vits", # 'vits'
-#             unet_channels=192, # 128
-#             grid_sample_disable_cudnn=False, # False, Grid Sampling 
-#         )
-#     depth_estimator_unimatch = depth_estimator_unimatch
-    
-    
-#     # Define the the gaussain head
-#     gaussian_adapter_config = {"gaussian_scale_min": 1e-10,
-#                                 "gaussian_scale_max": 3,
-#                                 "sh_degree": 2 }
-    
-#     gaussain_color_branch_config = {
-#             "large_gaussian_head": False,
-#             "color_large_unet": False,
-#             "init_sh_input_img": True,
-#             "feature_upsampler_channels": 64,
-#             "gaussian_regressor_channels": 64,
-#             "num_surfaces":1}
-    
-#     gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type='vits',
-#                                              upsample_factor=4,
-#                                              num_scales=1,
-#                                              gaussian_head_settings_dict=gaussian_adapter_config,
-#                                              gaussians_color_branch_dict=gaussain_color_branch_config)
-    
-    
-#     dataset_cfg = DatasetCFG(background_color=[0.0,0.0,0.0])
-
-#     depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_cfg)
-    
-    
-#     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
-#                             gaussain_head=gaussain_head,
-#                             decoder_branch=depthsplattercuda_decoder
-#                             )
-    
-#     my_model = my_model.cuda()
-    
-
-#     batch = dict()
-#     batch['imgs'] = input_images.cuda()
-#     batch['intrinsics']= intrinsics.cuda()
-#     batch['extrinsics']= extrinsics.cuda()
-#     batch['nn_matrix'] = cameras_dist_index.cuda()
-#     batch['pseudo_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
-#     batch['sparse_depths'] = torch.abs(torch.randn(1,2,224,832)*10-10).cuda()
-    
-#     batch['near'] = z_near_batch.cuda()
-#     batch['far'] = z_far_batch.cuda()
-    
-    
-#     cfg = CFG(max_train_steps=1000,max_depth=150,min_depth=0.3,
-#               train_depth_only=False,return_depth=True)
-    
-#     with torch.no_grad():
-#         my_model(batch, mode="train", iter=0, cfg=cfg)
-    
-#     quit()
