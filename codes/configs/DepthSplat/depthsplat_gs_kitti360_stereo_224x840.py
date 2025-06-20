@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs//depthsplat_all_supervised/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs//depthsplatAllSupervisedFromScatch/outputs_vis/{}".format(exp_name)
 validation_vis_progress=True
 
 
@@ -45,8 +45,8 @@ test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/v
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-#unimatch_weights_path=None
+#unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
 
 depth_info_params = dict(
@@ -175,6 +175,6 @@ loss_settings_dict = dict(
     rendered_rgb_supervision=True,
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,
-    rendered_depth_weight=0.01,
-    depth_estimation_weight=0.05,
+    rendered_depth_weight=0.05,
+    depth_estimation_weight=0.1,
 )

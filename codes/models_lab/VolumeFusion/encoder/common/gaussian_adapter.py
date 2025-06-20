@@ -87,6 +87,13 @@ class GaussianAdapter(nn.Module):
         scale_z = F.sigmoid(scales[..., 2:3]) *scale_max[2]
 
         scales = torch.cat([scale_x,scale_y,scale_z],dim=-1)
+
+        # scales = torch.clamp(F.softplus(scales - 4.),
+        #     min=self.cfg.gaussian_scale_min,
+        #     max=self.cfg.gaussian_scale_max,
+        #     )
+
+
         
         sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
         sh = sh * self.sh_mask # torch.Size([1, 192, 192, 16, 3, 3, 9])
@@ -95,13 +102,7 @@ class GaussianAdapter(nn.Module):
         
         opacities = opacities.squeeze(-1).squeeze(-1)
 
-        # print(mean3D.shape)
-        # print(covariances.shape)
-        # print(opacities.shape)
-        # # print(sh.shape)
-        # quit()
-        # quit()
-        
+
 
         return Gaussians(
             means=mean3D,
