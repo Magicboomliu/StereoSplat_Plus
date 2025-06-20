@@ -259,6 +259,8 @@ def main(args):
                     else:
                         loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
 
+                    quit()
+                    
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
                         print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")

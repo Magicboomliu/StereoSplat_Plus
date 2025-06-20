@@ -86,7 +86,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 accelerate launch --config-file acce
     --resume-from $resume_from
 }
 
-TRAIN_KITTI360_DepthSplat_Revised
+TRAIN_KITTI360_VolumeFusion
 
 # TRAIN_KITTI360_DepthSplat
 # TRAIN_KITTI360_OmniScene

@@ -228,6 +228,7 @@ class MultiViewUniMatch(nn.Module):
     def forward(
         self,
         images,
+        images_feat=None,
         attn_splits_list=None,
         intrinsics=None,
         min_depth=1.0 / 0.5,  # inverse depth range
@@ -275,9 +276,7 @@ class MultiViewUniMatch(nn.Module):
         
         # recover the true instrinsics
         intrinsics = intrinsics.clone()
-        intrinsics[:, :, 0] *= ori_w
-        intrinsics[:, :, 1] *= ori_h
-        
+    
         # here is the inverse.
         # max_depth, min_depth: [B, V] -> [BV]
         max_depth = max_depth.view(-1)
@@ -286,14 +285,14 @@ class MultiViewUniMatch(nn.Module):
         # list of features, resolution low to high
         # list of [BV, C, H, W]
         features_list_cnn = self.extract_feature(images) # 3 levels
+        
         # from 1/4, 1/2, 1/2 Resolution
+        bs,views,cha,height,width = images_feat.shape
+        images_feat = images_feat.reshape(-1,cha,height,width)
         
-        features_list_cnn_all_scales = features_list_cnn
+        features_list_cnn[0] = features_list_cnn[0] + images_feat
         
-        for feat in features_list_cnn_all_scales:
-            print(feat.shape)
-        quit()
-        
+        features_list_cnn_all_scales = features_list_cnn        
         features_list_cnn = features_list_cnn[: self.num_scales] # get the 1/4 feature,. the lowest scale
         
         # recorde all the features and the lowest scale features        
