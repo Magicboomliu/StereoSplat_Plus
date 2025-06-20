@@ -6,19 +6,19 @@ from jaxtyping import Float
 from torch import Tensor, nn
 import torch.nn.functional as F
 
-from ....geometry.projection import get_world_rays
-from ....misc.sh_rotation import rotate_sh
+from ..geometry.projection import get_world_rays
+from ..misc.sh_rotation import rotate_sh
 from .gaussians import build_covariance
 
 
 @dataclass
 class Gaussians:
-    means: Float[Tensor, "*batch 3"]
-    covariances: Float[Tensor, "*batch 3 3"]
-    scales: Float[Tensor, "*batch 3"]
-    rotations: Float[Tensor, "*batch 4"]
-    harmonics: Float[Tensor, "*batch 3 _"]
-    opacities: Float[Tensor, " *batch"]
+    means: Float[Tensor, "*batch 3"] # 3D Means
+    covariances: Float[Tensor, "*batch 3 3"] # Covariances
+    scales: Float[Tensor, "*batch 3"]   # Scales
+    rotations: Float[Tensor, "*batch 4"] # Rotations in World
+    harmonics: Float[Tensor, "*batch 3 _"] # SH Coffients
+    opacities: Float[Tensor, " *batch"]    # Opcaities
 
 
 @dataclass
@@ -29,20 +29,41 @@ class GaussianAdapterCfg:
 
 
 class GaussianAdapter(nn.Module):
-    cfg: GaussianAdapterCfg
+    cfg: GaussianAdapterCfg 
 
-    def __init__(self, cfg: GaussianAdapterCfg):
+    def __init__(self,
+                 gaussian_scale_min,
+                 gaussian_scale_max,
+                 sh_degree,
+                 **kwargs
+                        ):
         super().__init__()
-        self.cfg = cfg
+        self.cfg = GaussianAdapterCfg(gaussian_scale_max=gaussian_scale_max,
+                                      gaussian_scale_min=gaussian_scale_min,
+                                      sh_degree=sh_degree
+                                      )
 
         # Create a mask for the spherical harmonics coefficients. This ensures that at
         # initialization, the coefficients are biased towards having a large DC
         # component and small view-dependent components.
+        # here the sh mask is a learnable
+        '''
+        sh_mask 是一个 buffer（不会被更新，但会保存在模型状态中），作用是初始化时
+        保留低阶 SH（Spherical Harmonics）系数，衰减高阶项，
+        避免一开始就产生复杂的 view-dependent 颜色影响。
+        
+        '''
         self.register_buffer(
             "sh_mask",
             torch.ones((self.d_sh,), dtype=torch.float32),
             persistent=False,
         )
+        '''
+        
+        SH 系数总共为(sh+1)^w ，这里将非 DC 分量设为较小值。 比如当 sh_degree = 2，则总共是 9 维，
+        degree=1 对应索引 1~3, degree=2 对应 4~8，这些都乘以较小因子。
+        # initalization SH Masks
+        '''
         for degree in range(1, self.cfg.sh_degree + 1):
             self.sh_mask[degree**2 : (degree + 1) ** 2] = 0.1 * 0.25**degree
 
@@ -61,28 +82,38 @@ class GaussianAdapter(nn.Module):
     ) -> Gaussians:
         
         '''
-        scales: 3维，对应高斯在 x/y/z 的尺寸（但未经过 softplus）
-        rotations: 四元数（四维）表示方向
-        sh: 球谐系数（用于颜色、光照建模）
+        Scale:3维,
+        rotation 四元数 4维,
+        sh(球谐,3色通道 x sh维数)
         
         '''
-        
-
+        # print(extrinsics.shape) #(B,V,1,1,1,4,4)
+        # print(intrinsics.shape) #(B,V,1,1,1,3,3)
         
         scales, rotations, sh = raw_gaussians.split((3, 4, 3 * self.d_sh), dim=-1)
+        
+        # print(scales.shape) # torch.Size([1, 2, 186368, 1, 1, 3])
+        # print(rotations.shape) # torch.Size([1, 2, 186368, 1, 1, 4])
+        # print(sh.shape) # torch.Size([1, 2, 186368, 1, 1, 27])
+        # quit()
 
         #  softplus 激活 + 截断（保证 scale 有效、非负）
+        # softplus(x - 4) 让初始 scale 更小更平滑。
+        # https://blog.csdn.net/hy592070616/article/details/120623303
         scales = torch.clamp(F.softplus(scales - 4.),
             min=self.cfg.gaussian_scale_min,
             max=self.cfg.gaussian_scale_max,
             )
 
         assert input_images is not None
+        
+        
+        opacities = opacities.clamp(min=0.001, max=0.999)  # 避免0或1导致渲染异常
 
         # Normalize the quaternion features to yield a valid quaternion.
         rotations = rotations / (rotations.norm(dim=-1, keepdim=True) + eps)
 
-        # [2, 2, 65536, 1, 1, 3, 25]
+        # [B, V, N, 1, 1, 3, 25]
         # reshape SH，乘以 mask（低阶系数保留，高阶压缩）
         sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
         sh = sh.broadcast_to((*opacities.shape, 3, self.d_sh)) * self.sh_mask
@@ -96,23 +127,23 @@ class GaussianAdapter(nn.Module):
 
         # Create world-space covariance matrices.
         # 生成高斯协方差矩阵（以 scale 和 rotation 为输入）
+        # Local covariances
         covariances = build_covariance(scales, rotations)
         c2w_rotations = extrinsics[..., :3, :3]
+        # to world covariances
         covariances = c2w_rotations @ covariances @ c2w_rotations.transpose(-1, -2)
 
         # Compute Gaussian means.
         # 生成每个像素或射线的 3D 起点和方向
         origins, directions = get_world_rays(coordinates, extrinsics, intrinsics)
         
-
+        # get the means
         means = origins + directions * depths[..., None]
         
-
-
         return Gaussians(
             means=means,
             covariances=covariances,
-            harmonics=rotate_sh(sh, c2w_rotations[..., None, :, :]),
+            harmonics=rotate_sh(sh, c2w_rotations[..., None, :, :]), # 将球谐系数从相机坐标系旋转到世界坐标系。
             opacities=opacities,
             # NOTE: These aren't yet rotated into world space, but they're only used for
             # exporting Gaussians to ply files. This needs to be fixed...

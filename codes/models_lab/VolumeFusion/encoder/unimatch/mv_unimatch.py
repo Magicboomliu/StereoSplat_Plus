@@ -289,6 +289,11 @@ class MultiViewUniMatch(nn.Module):
         # from 1/4, 1/2, 1/2 Resolution
         
         features_list_cnn_all_scales = features_list_cnn
+        
+        for feat in features_list_cnn_all_scales:
+            print(feat.shape)
+        quit()
+        
         features_list_cnn = features_list_cnn[: self.num_scales] # get the 1/4 feature,. the lowest scale
         
         # recorde all the features and the lowest scale features        
@@ -558,9 +563,6 @@ class MultiViewUniMatch(nn.Module):
                     .view(-1, num_depth_candidates, h, w)
                 )
                 
-            # print(depth_candidates_curr.shape) #[BV * (V-1), D, H, W]]
-
-
             intrinsics_input = torch.stack(intrinsics_curr, dim=1).view(
                 -1, 3, 3
             )  # [BV, 3, 3]

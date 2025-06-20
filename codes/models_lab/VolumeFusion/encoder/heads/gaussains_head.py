@@ -125,7 +125,8 @@ class Gaussains_Estimator_Head(nn.Module):
         h,w = depth.shape[-2:]
         
 
-
+        # print(results_dict["features_cnn_all_scales"][::-1].shape)
+ 
         # features [BV, C, H, W]
         features = self.feature_upsampler(results_dict["features_mono_intermediate"],
                                           cnn_features=results_dict["features_cnn_all_scales"][::-1],

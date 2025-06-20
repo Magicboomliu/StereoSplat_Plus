@@ -13,8 +13,6 @@ from einops import rearrange, einsum
 from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor
-
-
 from .encoder.costvolume_gs import CostVolumeGS
 from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
 from .gs_decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
@@ -24,6 +22,9 @@ from .losses import LPIPS
 # import matplotlib.pyplot as plt
 import skimage.io
 from .metrics import convert_depth_to_disp,compute_psnr_ssim
+
+import matplotlib.pyplot as plt
+
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -264,6 +265,14 @@ class VolumeFusion(BaseModule):
         '''
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
         
+        
+        print("img_feats:",img_feats[0].shape)
+
+        
+        
+        # Fixing Bugs Here to make it learnable
+        
+        
         # perform the cost volume-based 
         estimated_raw_gaussains_dict = self.costvolume_gs(input_batch_dict,cfg=cfg)
         
@@ -282,8 +291,9 @@ class VolumeFusion(BaseModule):
             gaussians_feat = estimated_raw_gaussains_dict['feature']
         else:
             gaussians_feat = None
+            
+    
 
-        
 
 
         # volume-gs prediction
@@ -994,9 +1004,76 @@ class VolumeFusion(BaseModule):
         
 
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
-            
+     
+     
+     
+
+    def validation_step_token(self, batch, val_result_savedir,cfg=None):
+        
+
+        # loss and loss terms
+        with torch.no_grad():
+            loss, loss_terms,rendered_fusion_list,\
+                rendered_volume_list,rendered_cv_results_list, \
+                    predicted_input_depth,input_sparse_gt_depth,\
+                        output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
+                                                            cfg=cfg)
+
 
         
+        # print(torch.abs(rendered_fusion_list[0]-rendered_volume_list[0]).mean())
+        # quit()
+        # print(rendered_fusion_list[0]-rendered_volume_list[0])
+        
+        # plt.figure(figsize=(20,10))
+        # plt.subplot(3,2,1)
+        # plt.imshow(rendered_cv_results_list[0][:,0,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,2)
+        # plt.imshow(rendered_cv_results_list[0][:,2,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,3)
+        # plt.imshow(rendered_cv_results_list[0][:,1,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.subplot(3,2,4)
+        # plt.imshow(rendered_cv_results_list[0][:,3,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,5)
+        # plt.imshow(rendered_cv_results_list[0][:,4,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,6)
+        # plt.imshow(rendered_cv_results_list[0][:,5,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.savefig("cv.png")
+
+        # plt.figure(figsize=(20,10))
+        # plt.subplot(3,2,1)
+        # plt.imshow(rendered_volume_list[0][:,0,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,2)
+        # plt.imshow(rendered_volume_list[0][:,2,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,3)
+        # plt.imshow(rendered_volume_list[0][:,1,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.subplot(3,2,4)
+        # plt.imshow(rendered_volume_list[0][:,3,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,5)
+        # plt.imshow(rendered_volume_list[0][:,4,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,6)
+        # plt.imshow(rendered_volume_list[0][:,5,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.savefig("volume.png")
+
+
+        # plt.figure(figsize=(20,10))
+        # plt.subplot(3,2,1)
+        # plt.imshow(rendered_fusion_list[0][:,0,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,2)
+        # plt.imshow(rendered_fusion_list[0][:,2,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,3)
+        # plt.imshow(rendered_fusion_list[0][:,1,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.subplot(3,2,4)
+        # plt.imshow(rendered_fusion_list[0][:,3,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,5)
+        # plt.imshow(rendered_fusion_list[0][:,4,:,:].squeeze(0).permute(1,2,0).cpu().numpy())
+        # plt.subplot(3,2,6)
+        # plt.imshow(rendered_fusion_list[0][:,5,:,:].squeeze(0).permute(1,2,0).cpu().numpy())        
+        # plt.savefig("fusion.png")
+
+
+        # print(rendered_cv_results_list[0].shape)
+        # quit()
 
 
 

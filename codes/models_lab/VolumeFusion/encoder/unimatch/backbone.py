@@ -168,3 +168,75 @@ class CNNEncoder(nn.Module):
         out = [x]
 
         return out
+
+
+
+
+class FeatureCNN(nn.Module):
+    def __init__(self, in_channels=3,output_channels_list=[64,96,128]):
+        super().__init__()
+        
+        self.norm_layer=nn.InstanceNorm2d
+        
+        self.in_channels = in_channels
+        self.out_channels_list = output_channels_list
+
+
+        self.conv1 = nn.Conv2d(
+            3, 64, kernel_size=7, stride=2, padding=3, bias=False
+        )  # 1/2
+        self.norm1 = self.norm_layer(128)
+        self.relu1 = nn.ReLU(inplace=True)
+
+        
+        self.layer1 = ResidualBlock(in_planes=in_channels,
+                                    planes=output_channels_list[0],
+                                    norm_layer=self.norm_layer,
+                                    stride=2,dilation=1
+                                    )
+        
+        self.layer2 = ResidualBlock(in_planes=output_channels_list[1],
+                                    planes=output_channels_list[2],
+                                    norm_layer=self.norm_layer,
+                                    stride=2,dilation=1
+                                    )
+
+        self.layer3 = ResidualBlock(in_planes=output_channels_list[2],
+                                    planes=output_channels_list[3],
+                                    norm_layer=self.norm_layer,
+                                    stride=1,dilation=1
+                                    )
+        
+        
+        
+    
+    def forward(self,x,feat):
+        
+        '''
+        feature is 1/4 resolution
+        '''
+        output = []
+
+        x = self.conv1(x)
+        x = self.norm1(x)
+        x = self.relu1(x)
+        
+        
+        x = self.layer1(x)
+        
+        output.appened(x)
+        
+        x = self.layer2(x)
+        output.append(x)
+        
+        x = self.layer3(x)
+        output.append(x)
+        
+        
+        
+        
+        
+        
+        
+        return 
+

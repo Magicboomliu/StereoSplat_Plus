@@ -275,8 +275,8 @@ class MultiViewUniMatch(nn.Module):
         
         # recover the true instrinsics
         intrinsics = intrinsics.clone()
-        intrinsics[:, :, 0] *= ori_w
-        intrinsics[:, :, 1] *= ori_h
+        # intrinsics[:, :, 0] *= ori_w
+        # intrinsics[:, :, 1] *= ori_h
         
         # here is the inverse.
         # max_depth, min_depth: [B, V] -> [BV]
