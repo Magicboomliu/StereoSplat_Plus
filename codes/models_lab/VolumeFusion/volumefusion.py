@@ -243,7 +243,6 @@ class VolumeFusion(BaseModule):
     
         return input_batch_dict,output_batch_dict
         
-    
     def forward(self,batch,mode='train',iter=0,cfg=None):
         # get inpout_batch_dict
         input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
@@ -732,8 +731,6 @@ class VolumeFusion(BaseModule):
         else:
             raise NotImplementedError
 
-
-
     def validation_step(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
@@ -1004,10 +1001,7 @@ class VolumeFusion(BaseModule):
         
 
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
-     
-     
-     
-
+         
     def validation_step_token(self, batch, val_result_savedir,cfg=None):
         
 
