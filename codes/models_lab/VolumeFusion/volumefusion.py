@@ -17,14 +17,11 @@ from .encoder.costvolume_gs import CostVolumeGS
 from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
 from .gs_decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
 from .losses import LPIPS
-
 # debug here
 # import matplotlib.pyplot as plt
 import skimage.io
 from .metrics import convert_depth_to_disp,compute_psnr_ssim
-
 import matplotlib.pyplot as plt
-
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -263,17 +260,10 @@ class VolumeFusion(BaseModule):
         - torch.Size([2, 6, 128, 7, 13])   ---> 1/32
         '''
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
-        
-        
-        print("img_feats:",img_feats[0].shape)
-
-        
-        
-        # Fixing Bugs Here to make it learnable
-        
-        
+                
         # perform the cost volume-based 
-        estimated_raw_gaussains_dict = self.costvolume_gs(input_batch_dict,cfg=cfg)
+        estimated_raw_gaussains_dict = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
         
         
         if 'gs' in cfg.return_types:

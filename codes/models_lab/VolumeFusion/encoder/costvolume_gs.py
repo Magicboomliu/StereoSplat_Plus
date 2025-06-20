@@ -53,7 +53,9 @@ class CostVolumeGS(nn.Module):
         
 
     
-    def forward(self,input_batch_dict=None,cfg=None):
+    def forward(self,input_batch_dict=None,
+                images_feat=None,
+                cfg=None):
 
 
         depth_max_value = cfg.max_depth # 100
@@ -84,12 +86,13 @@ class CostVolumeGS(nn.Module):
         
         # debug here
         intrinsics = intrinsics.clone()
-        # Normalized the instrinsics -----> Maybe not neccssary
-        intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
-        intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height
+        
+        
+        
         
         results_dict = self.depth_estimator(
             images=input_images,
+            images_feat=images_feat,
             attn_splits_list=[2],
             intrinsics=intrinsics,
             min_depth=min_depth,  # inverse depth range
@@ -101,35 +104,11 @@ class CostVolumeGS(nn.Module):
         
         predicted_input_depth = results_dict['depth_preds'][0]
         
-        # FIXME: hard-cord: always return estimated depths        
-        return_types = cfg.return_types
+        print(predicted_input_depth.shape)
         
-        estimated_raw_gaussains_dict = self.guassain_estimation_head(imgs=input_images,
-                                           extrinsics=input_extrinsics,
-                                           intrinsics = intrinsics,
-                                           results_dict=results_dict,
-                                           return_types=return_types)
-
-        output_dict = {}
-        if "gs" in return_types:
-            gaussians = estimated_raw_gaussains_dict["gaussians"]
-            output_dict.update({"gs":gaussians})
-            
-        if "depth" in return_types:
-            pred_depths = predicted_input_depth
-            output_dict.update({"depth":pred_depths})
-        
-        if "feature" in return_types:
-            feature = estimated_raw_gaussains_dict['feature']
-            output_dict.update({"feature":feature})
-        
-        return output_dict
+        quit()
         
         
-        
-        
-
-
 
     @property
     def device(self):
