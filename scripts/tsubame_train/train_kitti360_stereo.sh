@@ -62,6 +62,30 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 }
 
 
+TRAIN_KITTI360_DepthSplatRevised(){
+cd ../..
+cd codes
+
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/DepthSplat/depthsplat_gs_revised.py"
+work_dir="/gs/FeedForwardGS/DepthSplat/Revised/First_As_Input/Baseline_DepthEst_RGB_Loss/saved_models"
+resume_from="none"
+
+#configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/DepthSplat/depthsplat_First_As_Input_Supp3_RGB_Loss_Only.py"
+#work_dir="/gs/FeedForwardGS/DepthSplat/First_As_Input/Baseline_RGB_Loss_Only/saved_models"
+#resume_from="/gs/FeedForwardGS/DepthSplat/First_As_Input/Baseline_DepthEst_RGB_Loss/saved_models/checkpoint-18000/"
+
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml train_kitti360_stereo_depthsplat_revised.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
+
+
 
 TRAIN_KITTI360_VolumeFusion(){
 cd ../..
@@ -80,8 +104,8 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --resume-from $resume_from
 }
 
-
-TRAIN_KITTI360_VolumeFusion
+TRAIN_KITTI360_DepthSplatRevised
+# TRAIN_KITTI360_VolumeFusion
 # TRAIN_KITTI360_DepthSplat
 #TRAIN_KITTI360_OmniScene
 # TRAIN_KITTI360_Unimatch_Only
