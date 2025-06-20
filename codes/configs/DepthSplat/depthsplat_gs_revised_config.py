@@ -11,7 +11,7 @@ validation_vis_progress=True
 
 
 # learning rate setiing
-lr = 1e-4
+lr = 6e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -177,5 +177,5 @@ loss_settings_dict = dict(
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,
     rendered_depth_weight=0.05,
-    depth_estimation_weight=0.1,
+    depth_estimation_weight=0.05,
 )
