@@ -4,18 +4,57 @@ import torch.nn.functional as F
 import numpy as np
 import os
 import sys
+import math
 
 from .unimatch.mv_unimatch import MultiViewUniMatch
+from .heads.custom_gs_head import Custom_Gaussain_Head
 from safetensors.torch import load_file
 
 
+def sanitize_gaussians_tensor(gaussians: torch.Tensor):
+    if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
+        print("[Sanitize] Invalid values found → fixing...")
 
+    gaussians = gaussians.clone()  # 避免 in-place 修改原图计算图
+    # 0:3 mean3D
+    mean3D = torch.nan_to_num(gaussians[..., 0:3], nan=0.0, posinf=0.0, neginf=0.0)
+    # 3:6 RGB
+    rgb = torch.nan_to_num(gaussians[..., 3:6], nan=0.0, posinf=0.0, neginf=0.0)
+    # rgb = torch.clamp(rgb, 0.0, 1.0)
+    # 6:7 opacity
+    opacity = torch.nan_to_num(gaussians[..., 6:7], nan=0.0, posinf=10.0, neginf=-10.0)
+    opacity = torch.clamp(opacity, -10.0, 10.0)
+    # 7:11 rotation
+    rotation = gaussians[..., 7:11]
+    norm = torch.norm(rotation, dim=-1, keepdim=True)
+    bad_mask = (
+        (norm < 1e-6)
+        | torch.isnan(rotation).any(dim=-1, keepdim=True)
+        | torch.isinf(rotation).any(dim=-1, keepdim=True)
+    )
+    # 清理数值 + 归一化
+    norm = torch.clamp(norm, min=1e-6)
+    rotation = torch.nan_to_num(rotation, nan=0.0, posinf=0.0, neginf=0.0)
+    rotation = rotation / norm
+    # fallback 仅对异常数据赋值
+    if bad_mask.any():
+        fallback_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=rotation.device)
+        fallback_expand = fallback_quat.expand(bad_mask.sum(), 4)
+        rotation[bad_mask.expand_as(rotation)] = fallback_expand
 
+    # 11:14 scale
+    scale = torch.nan_to_num(gaussians[..., 11:14], nan=1.0, posinf=1.0, neginf=1.0)
+    scale = torch.clamp(scale, min=1e-6)
+
+    # Concatenate all cleaned parts
+    cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
+    return cleaned
 
 
 class CostVolumeGS(nn.Module):
     def __init__(self,
                  depth_estimator_kwargs:dict,
+                 gaussain_head_kwargs:dict,
                  **kwargs
                  ):
         super().__init__()
@@ -34,6 +73,8 @@ class CostVolumeGS(nn.Module):
             self.unimatch_weight = None
         else:
             self.unimatch_weight = depth_estimator_kwargs.unimatch_weights_path
+            
+            
         if self.unimatch_weight is not None:
             state_dict = load_file(self.unimatch_weight)  # 返回的是一个 PyTorch state_dict 格式的字典
         
@@ -42,7 +83,12 @@ class CostVolumeGS(nn.Module):
             }
             self.depth_estimator.load_state_dict(stripped_state_dict, strict=True)
             print("depth branch initailzation with {}".format(self.unimatch_weight))
-            
+        
+        # define the 3DGS Head
+        
+        self.gaussains_estimation_head = Custom_Gaussain_Head(**gaussain_head_kwargs)
+        
+
 
     
     def forward(self,input_batch_dict=None,
@@ -74,13 +120,10 @@ class CostVolumeGS(nn.Module):
         min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
         
-        height, width = input_images.shape[3:]
         
         # debug here
         intrinsics = intrinsics.clone()
-        
-        
-        
+
         
         results_dict = self.depth_estimator(
             images=input_images,
@@ -96,11 +139,22 @@ class CostVolumeGS(nn.Module):
         
         predicted_input_depth = results_dict['depth_preds'][0]
         
-        print(predicted_input_depth.shape)
+        if cfg.train_depth_only:
+            pass
         
-        quit()
+        
+        else:
+            # estimated the gs 
+            # change the head here
+            gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=False)
+            
         
         
+        return gaussians_cv,features,pred_depths
 
     @property
     def device(self):
