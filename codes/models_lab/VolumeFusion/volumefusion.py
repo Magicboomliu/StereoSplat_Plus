@@ -259,24 +259,12 @@ class VolumeFusion(BaseModule):
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
                 
         # perform the cost volume-based 
-        estimated_raw_gaussains_dict = self.costvolume_gs(input_batch_dict,cfg=cfg,
+        gaussians_cv,features,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
                                                           images_feat=img_feats[0])
         
-        
-        if 'gs' in cfg.return_types:
-            gaussians_cost_volume = estimated_raw_gaussains_dict['gs']
-        else:
-            gaussians_cost_volume = None
-        
-        if 'depth' in cfg.return_types:
-            pred_depth = estimated_raw_gaussains_dict['depth']
-        else:
-            pred_depth = None
-        
-        if "feature" in cfg.return_types:
-            gaussians_feat = estimated_raw_gaussains_dict['feature']
-        else:
-            gaussians_feat = None
+
+
+        quit()
             
     
 
