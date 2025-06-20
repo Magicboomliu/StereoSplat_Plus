@@ -317,12 +317,10 @@ model = dict(
         ),
     ),
     
-    
-    # volume-gs: using the fixed spatial volume
-    volume_gs = dict(
+    volume_gs=dict(
         use_checkpoint=use_checkpoint,
         
-        encoder = dict(
+        encoder=dict(
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -338,13 +336,13 @@ model = dict(
             ],
             embed_dims=_dim_,
             positional_encoding=dict(
+                type='TPVFormerPositionalEncoding',
                 num_feats=[48, 48, 32],
                 h=tpv_h_,
                 w=tpv_w_,
-                z=tpv_z_)
-        ),
+                z=tpv_z_)),
         
-        decoder = dict(
+        gs_decoder = dict(
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -358,17 +356,8 @@ model = dict(
             scale_z=scale_z,
             gpv=gpv,
             offset_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
-            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
-            
-            gaussian_head_settings_dict = dict(
-                gaussian_scale_min=1e-10,
-                gaussian_scale_max=1.5,
-                sh_degree=2,
-                
-            ),
-              
-        ),
-        
+            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]
+        )
     ),
     
     

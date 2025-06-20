@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor
 from .encoder.costvolume_gs import CostVolumeGS
-
+from .volume.TPVGaussainEster import VolumeGaussian
 
 
 from .losses import LPIPS
@@ -111,7 +111,6 @@ class VolumeFusion(BaseModule):
                  costvolume_gs=None,
                  volume_gs = None,
                  camera_args=None, # camera/3D Range
-                #  loss_args=None,    # loss args setings
                  dataset_params=None, # dataset params
                  losses_params=None,
                  use_checkpoint=False, # using checkpoints or not
@@ -129,6 +128,8 @@ class VolumeFusion(BaseModule):
         
         # define the depthsplat gs estimation: expected output is the GS and the GS Feature
         self.costvolume_gs = CostVolumeGS(**costvolume_gs)
+        self.volume_gs = VolumeGaussian(**volume_gs)
+
                 
         
         # Loss Functions Configuration Here
@@ -246,15 +247,32 @@ class VolumeFusion(BaseModule):
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
                 
         # perform the cost volume-based 
-        gaussians_cv,features,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
                                                           images_feat=img_feats[0])
         
 
 
-        print(gaussians_cv.shape)
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+        
+        print("OK So FAR")
+        
+        
         quit()
-        
-        
         
         # doing rendering here
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)

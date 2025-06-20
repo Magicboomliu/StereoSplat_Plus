@@ -157,7 +157,6 @@ def main(args):
                             neck=cfg.model.neck,
                             costvolume_gs=cfg.model.costvolume_gs,
                             volume_gs=cfg.model.volume_gs,
-                            decoder_gs=cfg.model.gs_decoder_config, 
                             losses_params=cfg.model.losses_params,
                             camera_args=cfg.camera_args,
                             dataset_params=cfg.dataset_params,
