@@ -8,13 +8,14 @@ import sys
 from .unimatch.mv_unimatch import MultiViewUniMatch
 from safetensors.torch import load_file
 
-from .heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+
+
+
 
 
 class CostVolumeGS(nn.Module):
     def __init__(self,
                  depth_estimator_kwargs:dict,
-                 gaussains_head_kwargs:dict,
                  **kwargs
                  ):
         super().__init__()
@@ -42,15 +43,6 @@ class CostVolumeGS(nn.Module):
             self.depth_estimator.load_state_dict(stripped_state_dict, strict=True)
             print("depth branch initailzation with {}".format(self.unimatch_weight))
             
-
-        # define the guassain_estimation head
-        self.guassain_estimation_head = Gaussains_Estimator_Head(monodepth_vit_type=depth_estimator_kwargs.monodepth_vit_type,
-                                                                 upsample_factor=depth_estimator_kwargs.upsample_factor,
-                                                                 num_scales=depth_estimator_kwargs.num_scales,
-                                                                 gaussian_head_settings_dict=gaussains_head_kwargs.gaussian_adapter,
-                                                                 gaussians_color_branch_dict=gaussains_head_kwargs.gaussian_color_config)
-        
-        
 
     
     def forward(self,input_batch_dict=None,

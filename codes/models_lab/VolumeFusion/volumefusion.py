@@ -15,7 +15,6 @@ from jaxtyping import Float
 from torch import Tensor
 from .encoder.costvolume_gs import CostVolumeGS
 from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
-from .gs_decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
 from .losses import LPIPS
 # debug here
 # import matplotlib.pyplot as plt
@@ -134,9 +133,7 @@ class VolumeFusion(BaseModule):
                                                         gs_decoder=volume_gs.decoder,
                                                         use_checkpoint = volume_gs.use_checkpoint
                                                         )
-        
-        self.gs_decoder = DecoderSplattingCUDA(dataset_cfg=decoder_gs)
-        
+
         
         # Loss Functions Configuration Here
         self.losses_params = losses_params
