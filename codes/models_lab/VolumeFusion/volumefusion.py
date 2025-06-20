@@ -14,7 +14,9 @@ from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor
 from .encoder.costvolume_gs import CostVolumeGS
-from .volume.TriPlaneVolumetircGS import TriPlaneVolumetircGS
+
+
+
 from .losses import LPIPS
 # debug here
 # import matplotlib.pyplot as plt
@@ -108,7 +110,6 @@ class VolumeFusion(BaseModule):
                  neck=None,      # feature aggregation
                  costvolume_gs=None,
                  volume_gs = None,
-                 decoder_gs = None,
                  camera_args=None, # camera/3D Range
                 #  loss_args=None,    # loss args setings
                  dataset_params=None, # dataset params
@@ -129,11 +130,6 @@ class VolumeFusion(BaseModule):
         # define the depthsplat gs estimation: expected output is the GS and the GS Feature
         self.costvolume_gs = CostVolumeGS(**costvolume_gs)
                 
-        self.tri_plane_volume_gs = TriPlaneVolumetircGS(encoder=volume_gs.encoder,
-                                                        gs_decoder=volume_gs.decoder,
-                                                        use_checkpoint = volume_gs.use_checkpoint
-                                                        )
-
         
         # Loss Functions Configuration Here
         self.losses_params = losses_params
@@ -245,17 +241,8 @@ class VolumeFusion(BaseModule):
         height,width = img.shape[-2:]
         bs = img.shape[0]
         
-
         input_pseudo_depth = input_batch_dict['pseudo_depths']
         input_sparse_gt_depth = input_batch_dict['sparse_depths']
-        
-        
-        '''
-        - torch.Size([2, 6, 128, 56, 100]) ---> 1/4
-        - torch.Size([2, 6, 128, 28, 50])  ---> 1/8
-        - torch.Size([2, 6, 128, 14, 25])  ---> 1/16
-        - torch.Size([2, 6, 128, 7, 13])   ---> 1/32
-        '''
         img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
                 
         # perform the cost volume-based 
@@ -264,59 +251,8 @@ class VolumeFusion(BaseModule):
         
 
 
+        print(gaussians_cv.shape)
         quit()
-            
-    
-
-
-
-        # volume-gs prediction
-        pc_range = self.dataset_params.pc_range
-        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
-        
-        gaussians_cv_mask, gaussians_feat_mask = [], []
-        for b in range(gaussians_feat.shape[0]):
-            # here the shape is [VHW]
-            mask_cv_i = (gaussians_cost_volume.means[b, :, 0] >= x_start) & (gaussians_cost_volume.means[b, :, 0] <= x_end) & \
-                        (gaussians_cost_volume.means[b, :, 1] >= y_start) & (gaussians_cost_volume.means[b, :, 1] <= y_end) & \
-                        (gaussians_cost_volume.means[b, :, 2] >= z_start) & (gaussians_cost_volume.means[b, :, 2] <= z_end)
-            
-            # get the valid GS 
-            valid_gs_means = gaussians_cost_volume.means[b][mask_cv_i]
-            valid_gs_covariances = gaussians_cost_volume.covariances[b][mask_cv_i]
-            valid_gs_harmonics = gaussians_cost_volume.harmonics[b][mask_cv_i]
-            valid_gs_opacities = gaussians_cost_volume.opacities[b][mask_cv_i]
-            
-            valid_gs_cv = Gaussians(
-                means= valid_gs_means,
-                covariances= valid_gs_covariances,
-                harmonics= valid_gs_harmonics,
-                opacities= valid_gs_opacities
-            )
-            
-            valid_gs_feature_cv = gaussians_feat[b][mask_cv_i]
-            
-            gaussians_cv_mask.append(valid_gs_cv)
-            gaussians_feat_mask.append(valid_gs_feature_cv)
-            
-        
-
-
-        # volume gs: input the features and masked gaussains_volume and guassain fature mask
-        gaussians_volume = self.tri_plane_volume_gs(
-                [img_feats[0]],
-                gaussians_cv_mask,
-                gaussians_feat_mask,
-                input_batch_dict["img_metas"])
-        
-        
-        # Fuse the Volume GS and the CV GS
-        fusion_gaussians = Gaussians(
-            means=torch.cat([gaussians_cost_volume.means,gaussians_volume.means],dim=1),
-            covariances=torch.cat([gaussians_cost_volume.covariances,gaussians_volume.covariances],dim=1),
-            harmonics=torch.cat([gaussians_cost_volume.harmonics,gaussians_volume.harmonics],dim=1),
-            opacities=torch.cat([gaussians_cost_volume.opacities,gaussians_volume.opacities],dim=1)
-        )
         
         
         

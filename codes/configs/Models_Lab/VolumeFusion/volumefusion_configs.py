@@ -372,10 +372,6 @@ model = dict(
     ),
     
     
-    gs_decoder_config = dict(
-        background_color=[0.0, 0.0, 0.0]
-    ),
-    
     losses_params=loss_configs_dict,
     camera_args=camera_args,
     dataset_params=dataset_params
