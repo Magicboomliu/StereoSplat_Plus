@@ -23,6 +23,9 @@ from .losses import LPIPS
 import skimage.io
 from .metrics import convert_depth_to_disp,compute_psnr_ssim
 import matplotlib.pyplot as plt
+import math
+from .gaussian import GaussianRenderer
+
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -56,7 +59,6 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     mse = sq_error.mean()
 
     return mae, mse
-
 
 def get_pointmap_from_depth(depth, intrinsics, c2w):
     """
@@ -95,14 +97,48 @@ def get_pointmap_from_depth(depth, intrinsics, c2w):
 
     return world_points
 
+def sanitize_gaussians_tensor(gaussians: torch.Tensor):
+    if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
+        print("[Sanitize] Invalid values found → fixing...")
 
-@dataclass
-class Gaussians:
-    means: Float[Tensor, "batch gaussian dim"]
-    covariances: Float[Tensor, "batch gaussian dim dim"]
-    harmonics: Float[Tensor, "batch gaussian 3 d_sh"]
-    opacities: Float[Tensor, "batch gaussian"]
-    
+    gaussians = gaussians.clone()  # 避免 in-place 修改原图计算图
+    # 0:3 mean3D
+    mean3D = torch.nan_to_num(gaussians[..., 0:3], nan=0.0, posinf=0.0, neginf=0.0)
+    # 3:6 RGB
+    rgb = torch.nan_to_num(gaussians[..., 3:6], nan=0.0, posinf=0.0, neginf=0.0)
+    # rgb = torch.clamp(rgb, 0.0, 1.0)
+
+    # 6:7 opacity
+    opacity = torch.nan_to_num(gaussians[..., 6:7], nan=0.0, posinf=10.0, neginf=-10.0)
+    opacity = torch.clamp(opacity, -10.0, 10.0)
+
+    # 7:11 rotation
+    rotation = gaussians[..., 7:11]
+    norm = torch.norm(rotation, dim=-1, keepdim=True)
+    bad_mask = (
+        (norm < 1e-6)
+        | torch.isnan(rotation).any(dim=-1, keepdim=True)
+        | torch.isinf(rotation).any(dim=-1, keepdim=True)
+    )
+    # 清理数值 + 归一化
+    norm = torch.clamp(norm, min=1e-6)
+    rotation = torch.nan_to_num(rotation, nan=0.0, posinf=0.0, neginf=0.0)
+    rotation = rotation / norm
+    # fallback 仅对异常数据赋值
+    if bad_mask.any():
+        fallback_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=rotation.device)
+        fallback_expand = fallback_quat.expand(bad_mask.sum(), 4)
+        rotation[bad_mask.expand_as(rotation)] = fallback_expand
+
+
+    # 11:14 scale
+    scale = torch.nan_to_num(gaussians[..., 11:14], nan=1.0, posinf=1.0, neginf=1.0)
+    scale = torch.clamp(scale, min=1e-6)
+
+    # Concatenate all cleaned parts
+    cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
+    return cleaned
+
 
 class VolumeFusion(BaseModule):
     def __init__(self,
@@ -130,8 +166,10 @@ class VolumeFusion(BaseModule):
         self.costvolume_gs = CostVolumeGS(**costvolume_gs)
         self.volume_gs = VolumeGaussian(**volume_gs)
 
+        # gaussain renderers
+        self.renderer = GaussianRenderer(self.device, **camera_args)
+
                 
-        
         # Loss Functions Configuration Here
         self.losses_params = losses_params
         
@@ -252,6 +290,7 @@ class VolumeFusion(BaseModule):
         
 
 
+
         # volume-gs prediction
         pc_range = self.dataset_params.pc_range
         x_start, y_start, z_start, x_end, y_end, z_end = pc_range
@@ -269,74 +308,47 @@ class VolumeFusion(BaseModule):
             gaussians_feat_mask.append(gaussians_feat_mask_i)
         
         
-        print("OK So FAR")
+
+        
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
         
         
-        quit()
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+
         
         # doing rendering here
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
         intrinsics = input_batch_dict['intrinsics']
-        intrinsics = intrinsics.clone()
-        # Normalized the instrinsics -----> Maybe not neccssary
-        intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
-        intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height        
+        intrinsics = intrinsics.clone()     
         output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
-        z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
-        z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
         
 
-        if mode=='train' or mode=='val':
-            # cost_volume branch rendering
-            rendered_results_cv = self.gs_decoder(gaussians=gaussians_cost_volume,
-                                                extrinsics= render_c2w,
-                                                intrinsics = output_intrinsics,
-                                                near = z_near_batch,
-                                                far = z_far_batch,
-                                                image_shape=(height,width),
-                                                depth_mode = 'depth'
-                                                )
+        # return a dicts: rendered images and rendered alphs and rendered depth
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )  
 
-            rendered_color_cv = rendered_results_cv['color'] # torch.Size([1, V, 3, 224, 832])
-            rendered_depth_cv = rendered_results_cv['depth'] # torch.Size([1, V, 1, 224, 832])
-            rendered_alpha_cv = rendered_results_cv['alpha'] # torch.Size([1, V, 1, 224, 832])
-            rendered_depth_cv = rendered_depth_cv.squeeze(2)
-            rendered_alpha_cv = rendered_alpha_cv.squeeze(2)
-            
-            rendered_color_cv = torch.clamp(rendered_color_cv,min=0,max=1.0)
-            rendered_depth_cv = torch.clamp(rendered_depth_cv,min=0,max=150)
-        
-        
-        if mode=='train' or mode=='val':
-            # Volume Branch
-            rendered_results_trip = self.gs_decoder(gaussians=gaussians_volume,
-                                                extrinsics= render_c2w,
-                                                intrinsics = output_intrinsics,
-                                                near = z_near_batch,
-                                                far = z_far_batch,
-                                                image_shape=(height,width),
-                                                depth_mode = 'depth'
-                                                )
+        rendered_results_fuse = render_pkg_fuse
 
-            rendered_color_trip = rendered_results_trip['color'] # torch.Size([1, V, 3, 224, 832])
-            rendered_depth_trip = rendered_results_trip['depth'] # torch.Size([1, V, 1, 224, 832])
-            rendered_alpha_trip = rendered_results_trip['alpha'] # torch.Size([1, V, 1, 224, 832])
-            rendered_depth_trip = rendered_depth_trip.squeeze(2)
-            rendered_alpha_trip = rendered_alpha_trip.squeeze(2)
-            
-            rendered_color_trip = torch.clamp(rendered_color_trip,min=0,max=1.0)
-            rendered_depth_trip = torch.clamp(rendered_depth_trip,min=0,max=150)
-        
-        # Fusion Branch
-        rendered_results_fuse = self.gs_decoder(gaussians=fusion_gaussians,
-                                               extrinsics= render_c2w,
-                                               intrinsics = output_intrinsics,
-                                               near = z_near_batch,
-                                               far = z_far_batch,
-                                               image_shape=(height,width),
-                                               depth_mode = 'depth'
-                                               )
-        rendered_color_fuse = rendered_results_fuse['color'] # torch.Size([1, V, 3, 224, 832])
+        rendered_color_fuse = rendered_results_fuse['img'] # torch.Size([1, V, 3, 224, 832])
         rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
@@ -345,6 +357,31 @@ class VolumeFusion(BaseModule):
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
         
+        
+        if mode =='train' or mode=='val':
+            render_pkg_pixel = self.renderer.render(
+                gaussians=gaussians_cv,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+            render_pkg_volume = self.renderer.render(
+                gaussians=gaussians_volume,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+        else:
+            render_pkg_pixel, render_pkg_volume = None, None
+        
+        
+        
+        print("OK SO FAR")
+        quit()
         
         # Loss
         if mode=='train' or mode=='val':
