@@ -123,8 +123,16 @@ class Custom_Gaussain_Head(nn.Module):
         ''' Feature 2: What is this used for? '''
         # concat(img, features, regressor_out, match_prob)
         in_channels = 3 + feature_upsampler_channels + channels + 1
+        
+        self.gaussain_aggregator = nn.Sequential(
+            nn.Conv2d(in_channels, 128, 3, 1, 1),
+                    nn.GELU(),
+                    nn.Conv2d(128, 128, 3, 1, 1),
+            
+        )
+        
         self.gaussian_head = nn.Sequential(
-                nn.Conv2d(in_channels, self.num_gaussian_parameters,
+                nn.Conv2d(128, self.num_gaussian_parameters,
                           3, 1, 1, padding_mode='replicate'),
                 nn.GELU(),
                 nn.Conv2d(self.num_gaussian_parameters,
@@ -189,6 +197,7 @@ class Custom_Gaussain_Head(nn.Module):
                 match_prob]
         features = torch.cat(concat, dim=1) # torch.Size([2, 132, 224, 832])
         
+        features = self.gaussain_aggregator(features)
         
         gaussians = self.gaussian_head(features)  # [BV, C, H, W]
         
