@@ -197,54 +197,53 @@ return_types = ["gs",'depth','feature']
  
 use_checkpoint = True
 
-# Loss Function Definition Here
-loss_configs_dict = dict(
+loss_args = dict(
+    use_volume=True,
+    depth_estimation=True,
+    use_fusion=True,
+    use_cv=False,
+    perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
     
-    depth_estimator_supervision=True,
-    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-    depth_estimation_weight=0.05,
+    gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
     
-    cost_volume_branch_sup=True,
-    cv_branch_weight = 1.0,
-    trip_plane_branch_sup =True,
-    trip_branch_weight=1.0,
-    fusion_volume_branch_sup=True,
-    fusion_branch_weight=2.0,
-    
-    # branch_wise_weight = [1.0,1.0,2.0],
-    
-    cost_volume_branch_dict = dict(     
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01,
-        
-    ),
-
-   trip_volume_branch_dict = dict(
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01
-    ),
-
-   fuse_volume_branch_dict = dict(
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01
+    depth_est_sup_dict= dict(
+        branch_weight = 0.05,
+        loss_type ='L2' # select from L2, L1 and DPM Loss
     ),
     
+    
+    volume_sup_dict = dict(
+        recon_loss_vol_type="l2_mask", # masked reconstruction loss for volume gaussains,
+        perceptual_loss_vol_type="mask", # prcepstion loss? SSIM Loss using masked
+        depth_abs_loss_vol_type="mask", # depth abstract loss
+        weight_recon_vol=1.0,
+        weight_perceptual_vol=0.05,
+        weight_depth_abs_vol=0.01,
+        branch_weight = 1.0
+        
+    ),
+    
+    fusion_sup_dict = dict(
+        recon_loss_type="l2", # reconstrunction loss
+        weight_recon=1.0,
+        weight_perceptual=0.05,
+        weight_depth_abs=0.01,
+        branch_weight =1.0,
+    ),
+    
+    cv_sup_dict = dict(
+        recon_loss_cv_type="l2", # reconstrunction loss
+        weight_recon_cv=1.0,
+        weight_perceptual_cv=0.05,
+        weight_depth_abs_cv=0.01,
+        branch_weight =1.0,
+        
+    ),
 )
+
+
+
+
 
 
 
@@ -301,30 +300,19 @@ model = dict(
                 grid_sample_disable_cudnn=False,
                 
         ),
-        gaussains_head_kwargs = dict(
-            # gaussains adapter is what?
-            gaussian_adapter=dict(
-                gaussian_scale_min=1e-10,
-                gaussian_scale_max=1.5,
-                sh_degree=2,
-            ),
-            gaussian_color_config = dict(
-                large_gaussian_head=False,
-                color_large_unet=False,
-                init_sh_input_img=True,
-                feature_upsampler_channels=64,
-                gaussian_regressor_channels=64,
-                num_surfaces=1,
-            )
-        )
+
+        gaussain_head_kwargs = dict(
+            monodepth_vit_type='vitb',
+            upsample_factor=4,
+            num_scales=1,
+            gaussian_regressor_channels=64
+        ),
     ),
     
-    
-    # volume-gs: using the fixed spatial volume
-    volume_gs = dict(
+    volume_gs=dict(
         use_checkpoint=use_checkpoint,
         
-        encoder = dict(
+        encoder=dict(
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -340,13 +328,13 @@ model = dict(
             ],
             embed_dims=_dim_,
             positional_encoding=dict(
+                type='TPVFormerPositionalEncoding',
                 num_feats=[48, 48, 32],
                 h=tpv_h_,
                 w=tpv_w_,
-                z=tpv_z_)
-        ),
+                z=tpv_z_)),
         
-        decoder = dict(
+        gs_decoder = dict(
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -360,25 +348,12 @@ model = dict(
             scale_z=scale_z,
             gpv=gpv,
             offset_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
-            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)],
-            
-            gaussian_head_settings_dict = dict(
-                gaussian_scale_min=1e-10,
-                gaussian_scale_max=1.5,
-                sh_degree=2,
-                
-            ),
-              
-        ),
-        
+            scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]
+        )
     ),
     
     
-    gs_decoder_config = dict(
-        background_color=[0.0, 0.0, 0.0]
-    ),
-    
-    losses_params=loss_configs_dict,
+    losses_params=loss_args,
     camera_args=camera_args,
     dataset_params=dataset_params
     
