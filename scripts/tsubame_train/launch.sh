@@ -3,7 +3,7 @@
 #$ -l gpu_1=1
 #$ -l h_rt=23:59:00
 #$ -p -5
-#$ -N VSRD_TEST
+#$ -N DS_Revised
 #$ -m ae
 #$ -M liuzihua1004@gmail.com
 
