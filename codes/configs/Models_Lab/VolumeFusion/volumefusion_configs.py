@@ -203,55 +203,101 @@ unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimati
 # model definition
 
 
-
-# Loss Function Definition Here
-loss_configs_dict = dict(
+loss_args = dict(
+    use_volume=True,
+    depth_estimation=True,
+    use_fusion=True,
+    use_cv=False,
+    perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
     
-    depth_estimator_supervision=True,
-    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-    depth_estimation_weight=0.05,
+    gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
     
-    cost_volume_branch_sup=True,
-    cv_branch_weight = 1.0,
-    trip_plane_branch_sup =True,
-    trip_branch_weight=1.0,
-    fusion_volume_branch_sup=True,
-    fusion_branch_weight=2.0,
-    
-    # branch_wise_weight = [1.0,1.0,2.0],
-    
-    cost_volume_branch_dict = dict(     
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01,
-        
-    ),
-
-   trip_volume_branch_dict = dict(
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01
-    ),
-
-   fuse_volume_branch_dict = dict(
-        rendered_depth_supervision=True,
-        rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-        rendered_rgb_supervision=True,
-        rendered_rgb_supervison_type="MSE_LPIPS",
-        lpips_alpha=0.05,
-        rendered_depth_weight=0.01
+    depth_est_sup_dict= dict(
+        branch_weight = 0.05,
+        loss_type ='L2' # select from L2, L1 and DPM Loss
     ),
     
+    
+    volume_sup_dict = dict(
+        recon_loss_vol_type="l2_mask", # masked reconstruction loss for volume gaussains,
+        perceptual_loss_vol_type="mask", # prcepstion loss? SSIM Loss using masked
+        depth_abs_loss_vol_type="mask", # depth abstract loss
+        weight_recon_vol=1.0,
+        weight_perceptual_vol=0.05,
+        weight_depth_abs_vol=0.01,
+        branch_weight = 1.0
+        
+    ),
+    
+    fusion_sup_dict = dict(
+        recon_loss_type="l2", # reconstrunction loss
+        weight_recon=1.0,
+        weight_perceptual=0.05,
+        weight_depth_abs=0.01,
+        branch_weight =1.0,
+    ),
+    
+    cv_sup_dict = dict(
+        recon_loss_cv_type="l2", # reconstrunction loss
+        weight_recon_cv=1.0,
+        weight_perceptual_cv=0.05,
+        weight_depth_abs_cv=0.01,
+        branch_weight =1.0,
+        
+    ),
 )
+
+
+
+
+# # Loss Function Definition Here
+# loss_configs_dict = dict(
+    
+#     depth_estimator_supervision=True,
+#     depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+#     depth_estimation_weight=0.05,
+    
+#     cost_volume_branch_sup=True,
+#     cv_branch_weight = 1.0,
+#     trip_plane_branch_sup =True,
+#     trip_branch_weight=1.0,
+#     fusion_volume_branch_sup=True,
+#     fusion_branch_weight=2.0,
+    
+#     # branch_wise_weight = [1.0,1.0,2.0],
+    
+#     cost_volume_branch_dict = dict(     
+#         rendered_depth_supervision=True,
+#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+#         rendered_rgb_supervision=True,
+#         rendered_rgb_supervison_type="MSE_LPIPS",
+#         lpips_alpha=0.05,
+#         rendered_depth_weight=0.01,
+        
+#     ),
+
+#    trip_volume_branch_dict = dict(
+#         rendered_depth_supervision=True,
+#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+#         rendered_rgb_supervision=True,
+#         rendered_rgb_supervison_type="MSE_LPIPS",
+#         lpips_alpha=0.05,
+#         rendered_depth_weight=0.01
+#     ),
+
+#    fuse_volume_branch_dict = dict(
+#         rendered_depth_supervision=True,
+#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+        
+#         rendered_rgb_supervision=True,
+#         rendered_rgb_supervison_type="MSE_LPIPS",
+#         lpips_alpha=0.05,
+#         rendered_depth_weight=0.01
+#     ),
+    
+# )
 
 
 
@@ -361,7 +407,7 @@ model = dict(
     ),
     
     
-    losses_params=loss_configs_dict,
+    losses_params=loss_args,
     camera_args=camera_args,
     dataset_params=dataset_params
     

@@ -25,6 +25,7 @@ from .metrics import convert_depth_to_disp,compute_psnr_ssim
 import matplotlib.pyplot as plt
 import math
 from .gaussian import GaussianRenderer
+from .losses import Custom_Depth_Loss
 
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
@@ -347,8 +348,10 @@ class VolumeFusion(BaseModule):
         )  
 
         rendered_results_fuse = render_pkg_fuse
+        
 
-        rendered_color_fuse = rendered_results_fuse['img'] # torch.Size([1, V, 3, 224, 832])
+
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
         rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
@@ -359,7 +362,7 @@ class VolumeFusion(BaseModule):
         
         
         if mode =='train' or mode=='val':
-            render_pkg_pixel = self.renderer.render(
+            render_pkg_cv = self.renderer.render(
                 gaussians=gaussians_cv,
                 c2w=render_c2w,
                 fovx=render_fovxs,
@@ -367,6 +370,14 @@ class VolumeFusion(BaseModule):
                 rays_o=None,
                 rays_d=None
             )
+
+            rendered_color_cv = render_pkg_cv['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth_cv = render_pkg_cv['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth_cv = rendered_depth_cv.squeeze(2)
+            rendered_color_cv = torch.clamp(rendered_color_cv,min=0,max=1.0)
+            rendered_depth_cv = torch.clamp(rendered_depth_cv,min=0,max=150)
+
+
             render_pkg_volume = self.renderer.render(
                 gaussians=gaussians_volume,
                 c2w=render_c2w,
@@ -375,44 +386,50 @@ class VolumeFusion(BaseModule):
                 rays_o=None,
                 rays_d=None
             )
+
+            rendered_color_volume = render_pkg_volume['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth_volume = render_pkg_volume['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth_volume = rendered_depth_volume.squeeze(2)
+            rendered_color_volume = torch.clamp(rendered_color_volume,min=0,max=1.0)
+            rendered_depth_volume = torch.clamp(rendered_depth_volume,min=0,max=150)
+            
+            
         else:
-            render_pkg_pixel, render_pkg_volume = None, None
+            render_pkg_cv, render_pkg_volume = None, None
+            rendered_color_volume = None
+            rendered_color_cv = None
+            
+            rendered_depth_cv = None
+            rendered_depth_volume = None
         
         
+        # Loss Function Here
+
+        loss = 0.0
+        loss_terms = {}
+        def set_loss(key, split, loss_value, loss_weight=1.0):
+            loss_terms[f"{split}/loss_{key}"] = loss_value.item()
+            loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight
+
+        # GT Information For Supervision
+        output_rgb = output_batch_dict['output_imgs']
+        rgb_gt = output_rgb
+        pseudo_depth_gt = output_batch_dict['output_depths_m']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']
+        valid_mask_01 = sparse_depth_gt>0
+        valid_mask_01_float = valid_mask_01.float()
         
-        print("OK SO FAR")
-        quit()
+        # use this
+        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        
         
         # Loss
         if mode=='train' or mode=='val':
-            # loss here
-            # dict_keys(['output_imgs', 'output_depths', 'output_depths_m', 'output_confs_m', 
-                        # 'output_positions', 'output_rays_o', 
-                        # 'output_rays_d', 'output_c2ws', 
-                        # 'output_fovxs', 'output_fovys'])
-
-            # Get the Loss Here
-            # ======================== losses ======================== #
-            loss = 0.0
-            loss_terms = {}
-            def set_loss(key, split, loss_value, loss_weight=1.0):
-                loss_terms[f"{split}/loss_{key}"] = loss_value.item()
-                loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight
-
-            # GT Information For Supervision
-            output_rgb = output_batch_dict['output_imgs']
-            pseudo_depth_gt = output_batch_dict['output_depths_m']
-            sparse_depth_gt = output_batch_dict['output_sparse_depth']
-            valid_mask_01 = sparse_depth_gt>0
-            valid_mask_01_float = valid_mask_01.float()
-            
-            # use this
-            fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
-            
+        
             output_intrinsics_recovered = output_intrinsics.clone()
-            output_intrinsics_recovered[:, :, 0] = output_intrinsics_recovered[:, :, 0]*1.0 * width
-            output_intrinsics_recovered[:, :, 1] = output_intrinsics_recovered[:, :, 1]*1.0 * height  
-
             fusion_gt_pointmap = get_pointmap_from_depth(depth=fusion_pseudo_with_sparse_gt,
                                                          intrinsics=output_intrinsics_recovered,
                                                          c2w=render_c2w
@@ -421,8 +438,9 @@ class VolumeFusion(BaseModule):
             mask_dptm = (fusion_gt_pointmap[..., 0] >= x_start) & (fusion_gt_pointmap[..., 0] <= x_end) & \
                         (fusion_gt_pointmap[..., 1] >= y_start) & (fusion_gt_pointmap[..., 1] <= y_end) & \
                         (fusion_gt_pointmap[..., 2] >= z_start) & (fusion_gt_pointmap[..., 2] <= z_end)
-            output_dptm_mask_valid = mask_dptm.float()
+            mask_dptm = mask_dptm.float()
             
+            pred_depth = pred_depths
             
             ## RGB Loss Here
             cost_volume_branch_loss = 0.0
@@ -430,266 +448,198 @@ class VolumeFusion(BaseModule):
             fusion_branch_loss = 0.0
             depth_estimation_branch_loss = 0.0
             
-
-            # depth supervision here
-            if self.losses_params.depth_estimator_supervision:
-                if self.losses_params.depth_estimator_suppervision_type=='sparse_gt':
+            total_loss = 0
+            
+            
+            # ==================== Depth Estimation Loss =====================
+            if self.losses_params.depth_estimation:
+                if self.losses_params.gt_depth_type=='sparse':
                     
-                    valid_mask_01 = sparse_depth_gt>0
                     valid_mask_01 = input_sparse_gt_depth>0
                     valid_mask_02 = input_sparse_gt_depth<120
                     valid_mask = valid_mask_01 * valid_mask_02
                     valid_mask = valid_mask.bool()
                     sparse_depth_estimation_loss = F.l1_loss(input_sparse_gt_depth[valid_mask],pred_depth[valid_mask])            
                     depth_estimation_loss = sparse_depth_estimation_loss
-            
-                elif self.losses_params.depth_estimator_suppervision_type=='psuedo':
+                    
+                elif self.losses_params.gt_depth_type=='pseudo':
                     
                     valid_mask_01 = input_pseudo_depth>0
                     valid_mask_02 = input_pseudo_depth<120
                     valid_mask = valid_mask_01 * valid_mask_02
-                    valid_mask = valid_mask.bool()
-                    pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_depth[valid_mask],pred_depth[valid_mask])            
+                    valid_mask = valid_mask.float()
+                    pseudo_depth_estimation_loss =Custom_Depth_Loss(depth_pred=pred_depth*valid_mask, 
+                                                              depth_gt=input_pseudo_depth*valid_mask)
+                    # pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_depth[valid_mask],pred_depth[valid_mask])            
                     depth_estimation_loss = pseudo_depth_estimation_loss
                     
-                elif self.losses_params.depth_estimator_suppervision_type=='sparse_gt_pseudo':
-                    valid_mask_01 = input_pseudo_depth>0
+                elif self.losses_params.gt_depth_type =='sparse_pseudo':
                     
+                    valid_mask_01 = input_sparse_gt_depth>0
                     valid_mask_01_float = valid_mask_01.float()
-                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float + (1-valid_mask_01_float)*input_pseudo_depth
+                    
+                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float \
+                                + (1-valid_mask_01_float)*input_pseudo_depth
                     valid_mask_02 = input_pseudo_gt_fusion_depth>0
                     valid_mask_03 = input_pseudo_gt_fusion_depth<150
                     valid_mask = valid_mask_02 * valid_mask_03
-                    valid_mask = valid_mask.bool()
-                    pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_gt_fusion_depth[valid_mask],pred_depth[valid_mask])            
+                    valid_mask = valid_mask.float()
                     
+
+
+                    pseudo_depth_estimation_loss =Custom_Depth_Loss(depth_pred=pred_depth*valid_mask, 
+                                                              depth_gt=input_pseudo_gt_fusion_depth*valid_mask)
+                    
+                    # pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_gt_fusion_depth[valid_mask],pred_depth[valid_mask])            
                     depth_estimation_loss = pseudo_depth_estimation_loss
                 
-                else:
-                    raise  NotImplementedError
-        
-                depth_estimation_branch_loss+=depth_estimation_loss
-                set_loss(key='depth_estimation_loss',split=mode,loss_value=depth_estimation_loss,
-                                                loss_weight=self.losses_params.depth_estimation_weight)
-
-            if self.losses_params.cost_volume_branch_sup:
-                # rendered RGB Loss
-                if self.losses_params.cost_volume_branch_dict.rendered_rgb_supervision:
-                    rec_loss = F.mse_loss(output_rgb,rendered_color_cv)
-                    # preception loss
-                    current_height, current_width = output_rgb.shape[-2:]
-                    
-                    preception_loss = self.perceptual_loss(output_rgb.reshape(-1,3,current_height,current_width),
-                                                        rendered_color_cv.reshape(-1,3,current_height,current_width)
-                                                        )
-                    preception_loss = preception_loss.mean()
-                    lpips_loss_alpha = self.losses_params.cost_volume_branch_dict.lpips_alpha
-                    rgb_loss_total = rec_loss + lpips_loss_alpha * preception_loss
-                    
-                    cost_volume_branch_loss+=rgb_loss_total
-                    set_loss(key='CV_Branch_RGB_loss',split=mode,loss_value=rgb_loss_total,
-                                                    loss_weight=1.0)
-                    
+                depth_estimation_branch_loss +=depth_estimation_loss
                 
-                # rendered depth loss
-                if self.losses_params.cost_volume_branch_dict.rendered_depth_supervision:
-                    
-                    if self.losses_params.cost_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_02 = sparse_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(sparse_depth_gt[valid_mask],rendered_depth_cv[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        depth_loss = sparse_depth_loss
-                        
-                    elif self.losses_params.cost_volume_branch_dict.rendered_depth_supervision_type=='pseudo':
-                        valid_mask_01 = pseudo_depth_gt>0
-                        valid_mask_02 = pseudo_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask.bool()
-                        
-                        pseudo_depth_loss = F.l1_loss(pseudo_depth_gt[valid_mask],rendered_depth_cv[valid_mask])
-                        pseudo_depth_loss = pseudo_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        
-                        depth_loss = pseudo_depth_loss
-                    elif self.losses_params.cost_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt_pseudo':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_01_float = valid_mask_01.float()
-                        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
-                        
-                        valid_mask_02 = fusion_pseudo_with_sparse_gt >0
-                        valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
-                        valid_mask = valid_mask_02 * valid_mask_03
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(fusion_pseudo_with_sparse_gt[valid_mask],rendered_depth_cv[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * self.losses_params.cost_volume_branch_dict.rendered_depth_weight
-
-                        depth_loss = sparse_depth_loss
-                        
-                    else:
-                        raise NotImplementedError
-                    
-                    cost_volume_branch_loss+=depth_loss
-                    set_loss(key='CV_Branch_rendered_depth_loss',split=mode,loss_value=depth_loss,
-                                                    loss_weight=self.losses_params.cost_volume_branch_dict.rendered_depth_weight)
-                
-            if self.losses_params.trip_plane_branch_sup:
-                
-                # rendered RGB Loss
-                if self.losses_params.trip_volume_branch_dict.rendered_rgb_supervision:
-                    
-                    masked_rendered_color_trip = rendered_color_trip * mask_dptm.unsqueeze(2).float()
-                    masked_output_rgb = output_rgb * mask_dptm.unsqueeze(2).float()
-                    
-                    rec_loss = F.mse_loss(masked_output_rgb,masked_rendered_color_trip)
-                    
-                    # preception loss
-                    current_height, current_width = masked_output_rgb.shape[-2:]
-                    
-                    preception_loss = self.perceptual_loss(masked_output_rgb.reshape(-1,3,current_height,current_width),
-                                                        masked_rendered_color_trip.reshape(-1,3,current_height,current_width)
-                                                        )
-                    
-                    preception_loss = preception_loss.mean()
-                    lpips_loss_alpha = self.losses_params.trip_volume_branch_dict.lpips_alpha
-                    rgb_loss_total = rec_loss + lpips_loss_alpha * preception_loss
-                    
-                    trip_plane_branch_loss+=rgb_loss_total
-                    set_loss(key='TripLine_Branch_RGB_loss',split=mode,loss_value=rgb_loss_total,
-                                                    loss_weight=1.0)
-                    
-                
-                # rendered depth loss
-                if self.losses_params.trip_volume_branch_dict.rendered_depth_supervision:
-          
-                    if self.losses_params.trip_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_02 = sparse_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask * mask_dptm.float()
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(sparse_depth_gt[valid_mask],rendered_depth_trip[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        depth_loss = sparse_depth_loss
-                        
-                    elif self.losses_params.trip_volume_branch_dict.rendered_depth_supervision_type=='pseudo':
-                        valid_mask_01 = pseudo_depth_gt>0
-                        valid_mask_02 = pseudo_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask * mask_dptm.float()
-                        valid_mask = valid_mask.bool()
-                        
-                        pseudo_depth_loss = F.l1_loss(pseudo_depth_gt[valid_mask],rendered_depth_trip[valid_mask])
-                        pseudo_depth_loss = pseudo_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        
-                        depth_loss = pseudo_depth_loss
-                    elif self.losses_params.trip_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt_pseudo':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_01_float = valid_mask_01.float()
-                        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
-                        
-                        valid_mask_02 = fusion_pseudo_with_sparse_gt >0
-                        valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
-                        valid_mask = valid_mask_02 * valid_mask_03
-                        
-                        valid_mask = valid_mask * mask_dptm.float()
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(fusion_pseudo_with_sparse_gt[valid_mask],rendered_depth_trip[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * self.losses_params.trip_volume_branch_dict.rendered_depth_weight
-
-                        depth_loss = sparse_depth_loss
-                        
-                    else:
-                        raise NotImplementedError
-                    
-                    trip_plane_branch_loss+=depth_loss
-                    set_loss(key='TripLane_Branch_rendered_depth_loss',split=mode,loss_value=depth_loss,
-                                                    loss_weight=self.losses_params.trip_volume_branch_dict.rendered_depth_weight)
-                
-            if self.losses_params.fusion_volume_branch_sup:
-                # rendered RGB Loss
-                if self.losses_params.fuse_volume_branch_dict.rendered_rgb_supervision:
-                    rec_loss = F.mse_loss(output_rgb,rendered_color_fuse)
-                    # preception loss
-                    current_height, current_width = output_rgb.shape[-2:]
-                    
-                    preception_loss = self.perceptual_loss(output_rgb.reshape(-1,3,current_height,current_width),
-                                                        rendered_color_fuse.reshape(-1,3,current_height,current_width)
-                                                        )
-                    preception_loss = preception_loss.mean()
-                    lpips_loss_alpha = self.losses_params.fuse_volume_branch_dict.lpips_alpha
-                    rgb_loss_total = rec_loss + lpips_loss_alpha * preception_loss
-                    
-                    fusion_branch_loss+=rgb_loss_total
-                    set_loss(key='Fuse_Branch_RGB_loss',split=mode,loss_value=rgb_loss_total,
-                                                    loss_weight=1.0)
-                    
-                
-                # rendered depth loss
-                if self.losses_params.fuse_volume_branch_dict.rendered_depth_supervision:
-                    if self.losses_params.fuse_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_02 = sparse_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(sparse_depth_gt[valid_mask],rendered_depth_fuse[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        depth_loss = sparse_depth_loss
-                        
-                    elif self.losses_params.fuse_volume_branch_dict.rendered_depth_supervision_type=='pseudo':
-                        valid_mask_01 = pseudo_depth_gt>0
-                        valid_mask_02 = pseudo_depth_gt<120
-                        valid_mask = valid_mask_01 * valid_mask_02
-                        valid_mask = valid_mask.bool()
-                        
-                        pseudo_depth_loss = F.l1_loss(pseudo_depth_gt[valid_mask],rendered_depth_fuse[valid_mask])
-                        pseudo_depth_loss = pseudo_depth_loss * cfg.loss_settings_dict.rendered_depth_weight
-                        
-                        depth_loss = pseudo_depth_loss
-                    elif self.losses_params.fuse_volume_branch_dict.rendered_depth_supervision_type=='sparse_gt_pseudo':
-                        valid_mask_01 = sparse_depth_gt>0
-                        valid_mask_01_float = valid_mask_01.float()
-                        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
-                        
-                        valid_mask_02 = fusion_pseudo_with_sparse_gt >0
-                        valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
-                        valid_mask = valid_mask_02 * valid_mask_03
-                        valid_mask = valid_mask.bool()
-                        
-                        sparse_depth_loss = F.l1_loss(fusion_pseudo_with_sparse_gt[valid_mask],rendered_depth_fuse[valid_mask])
-                        sparse_depth_loss = sparse_depth_loss * self.losses_params.fuse_volume_branch_dict.rendered_depth_weight
-
-                        depth_loss = sparse_depth_loss
-                        
-                    else:
-                        raise NotImplementedError
-                    
-                    fusion_branch_loss+=depth_loss
-                    set_loss(key='Fuse_Branch_rendered_depth_loss',split=mode,loss_value=depth_loss,
-                                                    loss_weight=self.losses_params.fuse_volume_branch_dict.rendered_depth_weight)
-                
-            loss = cost_volume_branch_loss * self.losses_params.cv_branch_weight + \
-                trip_plane_branch_loss * self.losses_params.trip_branch_weight + \
-                    fusion_branch_loss *self.losses_params.fusion_branch_weight + \
-                        depth_estimation_branch_loss * self.losses_params.depth_estimation_weight
+            else:
+                depth_estimation_branch_loss = depth_estimation_branch_loss * 0.0
             
+            set_loss("depth_est_loss", mode, depth_estimation_branch_loss, 
+                     self.losses_params.depth_est_sup_dict.branch_weight)
+            
+            # ==================== RGB Loss Here =====================
+            if self.losses_params.use_fusion: # Must
+                
+                if self.losses_params.use_volume:
+                    rec_loss_vol = (rgb_gt * mask_dptm.unsqueeze(2) - render_pkg_volume["image"] * mask_dptm.unsqueeze(2)) ** 2
+                    trip_plane_branch_loss = trip_plane_branch_loss+ (rec_loss_vol.mean() * self.losses_params.volume_sup_dict.weight_recon_vol)
+                    set_loss("recon_vol", mode, rec_loss_vol.mean(), self.losses_params.volume_sup_dict.weight_recon_vol)
+                
+                if self.losses_params.use_cv:
+                    rec_loss_cv = (rgb_gt-render_pkg_cv['image'])**2
+                    cost_volume_branch_loss = cost_volume_branch_loss + (rec_loss_cv.mean() * self.losses_params.cv_sup_dict.weight_recon_cv)
+                    set_loss("recon_cv",mode,cost_volume_branch_loss.mean(),
+                             self.losses_params.cv_sup_dict.weight_recon_cv) 
+                
 
-            rendered_cv_results_list = [rendered_color_cv,rendered_depth_cv,rendered_alpha_cv]
-            rendered_volume_list = [rendered_color_trip,rendered_depth_trip,rendered_alpha_trip]
-            rendered_fusion_list = [rendered_color_fuse,rendered_depth_fuse,rendered_alpha_fuse]
+                rec_loss = (rgb_gt - render_pkg_fuse["image"]) ** 2
+                fusion_branch_loss = loss + (rec_loss.mean() * self.losses_params.fusion_sup_dict.weight_recon)
+                set_loss("recon_fusion", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
+                
+            else:
+                raise NotImplementedError
+
+            # ==================== Preception Loss Here ================
+            if self.losses_params.use_fusion: # Must
+                if self.losses_params.use_volume:
+                    current_height, current_width = rgb_gt.shape[-2:]
+                    preception_loss_volume = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width),
+                                                        render_pkg_volume["image"].reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width)
+                                                        )
+                    trip_plane_branch_loss = trip_plane_branch_loss+ (preception_loss_volume.mean() \
+                                        * self.losses_params.volume_sup_dict.weight_perceptual_vol)
+                    set_loss("perceptual_vol", mode, preception_loss_volume.mean(), 
+                                self.losses_params.volume_sup_dict.weight_perceptual_vol)
+                    
+
+                if self.losses_params.use_cv:
+                    current_height, current_width = rgb_gt.shape[-2:]
+                    preception_loss_cv = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width),
+                                                        render_pkg_cv["image"].reshape(-1,3,current_height,current_width)
+                                                        )
+                    cost_volume_branch_loss = cost_volume_branch_loss + (preception_loss_cv.mean() \
+                                        * self.losses_params.cv_sup_dict.weight_perceptual_cv)
+                    set_loss("perceptual_cv", mode, preception_loss_cv.mean(), 
+                                self.losses_params.cv_sup_dict.weight_perceptual_cv)
+                
+
+                current_height, current_width = rgb_gt.shape[-2:]
+                preception_loss_fuse = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width),
+                                                    render_pkg_fuse["image"].reshape(-1,3,current_height,current_width)
+                                                    )
+                fusion_branch_loss = fusion_branch_loss + (preception_loss_fuse.mean() \
+                                    * self.losses_params.fusion_sup_dict.weight_perceptual)
+                
+                set_loss("perceptual_fusion", mode, preception_loss_fuse.mean(), 
+                            self.losses_params.fusion_sup_dict.weight_perceptual)
+                
+            else:
+                raise NotImplementedError
+        
+             # ==================== Rendered Depth Loss ================
+            
+            if self.losses_params.use_fusion: # Must
+                
+                if self.losses_params.gt_depth_type=='sparse':
+                    valid_mask_01 = sparse_depth_gt>0
+                    valid_mask_02 = sparse_depth_gt<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.bool()
+                    rendered_gt_depth = sparse_depth_gt * valid_mask.float()
+                    
+                elif self.losses_params.gt_depth_type=='pseudo':
+                    valid_mask_01 = pseudo_depth_gt>0
+                    valid_mask_02 = pseudo_depth_gt<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.bool()
+                    rendered_gt_depth = pseudo_depth_gt * valid_mask.float()
+                    
+                    
+                elif self.losses_params.gt_depth_type =='sparse_pseudo':
+                    valid_mask_01 = sparse_depth_gt>0
+                    valid_mask_01_float = valid_mask_01.float()
+                    fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+                    
+                    valid_mask_02 = fusion_pseudo_with_sparse_gt >0
+                    valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
+                    valid_mask = valid_mask_02 * valid_mask_03
+                    valid_mask = valid_mask.bool()
+                    
+                    rendered_gt_depth = fusion_pseudo_with_sparse_gt  * valid_mask.float()
+                    
+                else:
+                    raise NotImplementedError
+                
+                
+                
+                if self.losses_params.use_volume:
+                    
+                    depth_abs_loss_vol = torch.abs(render_pkg_volume["depth"].squeeze(2)*mask_dptm - rendered_gt_depth*mask_dptm)
+                    depth_abs_loss_vol = depth_abs_loss_vol.mean()
+                    trip_plane_branch_loss = trip_plane_branch_loss +\
+                                self.losses_params.volume_sup_dict.weight_depth_abs_vol * depth_abs_loss_vol
+                    set_loss("depth_abs_volume", mode, depth_abs_loss_vol, 
+                                        self.losses_params.volume_sup_dict.weight_depth_abs_vol)
+                    
+                    
+                if self.losses_params.use_cv:
+                    depth_abs_loss_cv = torch.abs(render_pkg_cv["depth"].squeeze(2) - rendered_gt_depth)
+                    depth_abs_loss_cv = depth_abs_loss_cv.mean()
+                    cost_volume_branch_loss = cost_volume_branch_loss +\
+                                self.losses_params.cv_sup_dict.weight_depth_abs_cv * depth_abs_loss_cv
+                    set_loss("depth_abs_cv", mode, depth_abs_loss_cv, self.losses_params.cv_sup_dict.weight_depth_abs_cv)
+            
+       
+                depth_abs_loss = torch.abs(render_pkg_fuse["depth"].squeeze(2) - rendered_gt_depth)
+                depth_abs_loss = depth_abs_loss.mean()
+                fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
+                set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+            
+            
+            else:
+                raise NotImplementedError
+                
+            
+            total_loss =total_loss + cost_volume_branch_loss * self.losses_params.cv_sup_dict.branch_weight + \
+                        trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
+                            fusion_branch_loss * self.losses_params.fusion_sup_dict.branch_weight + \
+                                depth_estimation_branch_loss * self.losses_params.depth_est_sup_dict.branch_weight
+            
+            
+            rendered_fusion_list = [rendered_color_fuse,rendered_depth_fuse]
+            rendered_volume_list = [rendered_color_volume,rendered_depth_volume]
+            rendered_cv_list = [rendered_color_cv,rendered_depth_cv]
             
             
             if mode=='train':
-                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list
+                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_list
             
             elif mode=='val':
-                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list,pred_depth,input_sparse_gt_depth,output_rgb,sparse_depth_gt,img
+                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_list
             
         elif mode=='test':
             return rendered_fusion_list

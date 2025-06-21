@@ -396,10 +396,11 @@ class ModelWarpper(nn.Module):
                 
                 elif cfg.loss_settings_dict.depth_estimator_suppervision_type =='sparse_gt_pseudo':
                     pred_depth = results_dict['depth_preds'][0]
-                    valid_mask_01 = input_pseudo_depth>0
+                    valid_mask_01 = input_sparse_gt_depth>0
                     
                     valid_mask_01_float = valid_mask_01.float()
-                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float + (1-valid_mask_01_float)*input_pseudo_depth
+                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float \
+                                    + (1-valid_mask_01_float)*input_pseudo_depth
                     valid_mask_02 = input_pseudo_gt_fusion_depth>0
                     valid_mask_03 = input_pseudo_gt_fusion_depth<150
                     valid_mask = valid_mask_02 * valid_mask_03
