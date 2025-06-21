@@ -307,20 +307,52 @@ def main(args):
                     if accelerator.is_main_process:
                         
                         
-                        output_rgb_meter_center = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                        #=========================================================================#
+                        output_rgb_meter_center_fusion = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
                                                    "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_first = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                        output_rgb_meter_first_fusion = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_last ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                        output_rgb_meter_last_fusion ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
                                                 "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_depth_meter_center = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                        output_depth_meter_center_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
                                                     "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_first = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                        output_depth_meter_first_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
                                                     "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_last = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                        output_depth_meter_last_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
                                                     "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        input_depth_meter = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                        input_depth_meter_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
                                                     "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        #=========================================================================#
+                        output_rgb_meter_center_vol = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_first_vol = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_last_vol ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_depth_meter_center_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_first_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_last_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        input_depth_meter_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        #=========================================================================#
+                        output_rgb_meter_center_cv = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_first_cv = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_rgb_meter_last_cv ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+                        output_depth_meter_center_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_first_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        output_depth_meter_last_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+                        input_depth_meter_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+            
                         
                         for i_iter_val, batch_val in enumerate(val_dataloader):
                             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
@@ -334,112 +366,217 @@ def main(args):
                             if args.gpus<=1:
                                 # forward here 
                                 # get the psnr, ssim, mae and mse as well as the saved the visualization results
-                                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
                             else:
-                                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
-                        
-                            # saved the intermeidate results here for the RGB Here
-                            output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
-                            output_rgb_meter_center_view_left_ssim = output_rgb_meter_dict['center_view']['left']['ssim']
-                            output_rgb_meter_center_view_right_psnr = output_rgb_meter_dict['center_view']['right']['psnr']
-                            output_rgb_meter_center_view_right_ssim = output_rgb_meter_dict['center_view']['right']['ssim']   
-                            output_rgb_meter_center['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
-                            output_rgb_meter_center['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
-                            
-                            output_rgb_meter_first_view_left_psnr = output_rgb_meter_dict['first_view']['left']['psnr']
-                            output_rgb_meter_first_view_left_ssim = output_rgb_meter_dict['first_view']['left']['ssim']   
-                            output_rgb_meter_first_view_right_psnr = output_rgb_meter_dict['first_view']['right']['psnr']
-                            output_rgb_meter_first_view_right_ssim = output_rgb_meter_dict['first_view']['right']['ssim']
-                            output_rgb_meter_first['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
-                            output_rgb_meter_first['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
-                            
-                            output_rgb_meter_last_view_left_psnr = output_rgb_meter_dict['last_view']['left']['psnr']
-                            output_rgb_meter_last_view_left_ssim = output_rgb_meter_dict['last_view']['left']['ssim']   
-                            output_rgb_meter_last_view_right_psnr = output_rgb_meter_dict['last_view']['right']['psnr']
-                            output_rgb_meter_last_view_right_ssim = output_rgb_meter_dict['last_view']['right']['ssim']
-                            output_rgb_meter_last["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
-                            output_rgb_meter_last["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
-                            
-                            
-                            # saved the intermeidate results here for the Depth here
-                            output_depth_meter_center_view_left_mae = output_depth_meter_dict['center_view']['left']['mae']
-                            output_depth_meter_center_view_left_mse = output_depth_meter_dict['center_view']['left']['mse']
-                            output_depth_meter_center_view_right_mae = output_depth_meter_dict['center_view']['right']['mae']
-                            output_depth_meter_center_view_right_mse = output_depth_meter_dict['center_view']['right']['mse']
-                            output_depth_meter_center["left"].update(mae=output_depth_meter_center_view_left_mae,
-                                                                    mse=output_depth_meter_center_view_left_mse)
-                            output_depth_meter_center["right"].update(mae=output_depth_meter_center_view_right_mae,
-                                                                    mse=output_depth_meter_center_view_right_mse)
+                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
 
-                            output_depth_meter_first_view_left_mae = output_depth_meter_dict['first_view']['left']['mae']
-                            output_depth_meter_first_view_left_mse = output_depth_meter_dict['first_view']['left']['mse']
-                            output_depth_meter_first_view_right_mae = output_depth_meter_dict['first_view']['right']['mae']
-                            output_depth_meter_first_view_right_mse = output_depth_meter_dict['first_view']['right']['mse']
-                            output_depth_meter_first["left"].update(mae=output_depth_meter_first_view_left_mae,
-                                                                    mse=output_depth_meter_first_view_left_mse)
-                            output_depth_meter_first["right"].update(mae=output_depth_meter_first_view_right_mae,
-                                                                    mse=output_depth_meter_first_view_right_mse)
-                            
+                            for i in range(len(metrics_rendered_rgb_list)):
+                                output_rgb_meter_dict = metrics_rendered_rgb_list[i]
+                                output_depth_meter_dict = metrics_rendered_depth_list[i]
+                                input_depth_meter_dict = metrics_estimated_depth_list[i]
+                                
+      
+                                
+                                # saved the intermeidate results here for the RGB Here
+                                output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
+                                output_rgb_meter_center_view_left_ssim = output_rgb_meter_dict['center_view']['left']['ssim']
+                                output_rgb_meter_center_view_right_psnr = output_rgb_meter_dict['center_view']['right']['psnr']
+                                output_rgb_meter_center_view_right_ssim = output_rgb_meter_dict['center_view']['right']['ssim']
+                                
+                                output_rgb_meter_first_view_left_psnr = output_rgb_meter_dict['first_view']['left']['psnr']
+                                output_rgb_meter_first_view_left_ssim = output_rgb_meter_dict['first_view']['left']['ssim']   
+                                output_rgb_meter_first_view_right_psnr = output_rgb_meter_dict['first_view']['right']['psnr']
+                                output_rgb_meter_first_view_right_ssim = output_rgb_meter_dict['first_view']['right']['ssim']
 
-                            output_depth_meter_last_view_left_mae = output_depth_meter_dict['last_view']['left']['mae']
-                            output_depth_meter_last_view_left_mse = output_depth_meter_dict['last_view']['left']['mse']
-                            output_depth_meter_last_view_right_mae = output_depth_meter_dict['last_view']['right']['mae']
-                            output_depth_meter_last_view_right_mse = output_depth_meter_dict['last_view']['right']['mse']
-                            output_depth_meter_last["left"].update(mae=output_depth_meter_last_view_left_mae,
-                                                                    mse=output_depth_meter_last_view_left_mse)
-                            output_depth_meter_last["right"].update(mae=output_depth_meter_last_view_right_mae,
-                                                                    mse=output_depth_meter_last_view_right_mse)
-                            
-                            # saved the input results
-                            
-                            input_depth_meter_left_mae = input_depth_meter_dict['input_depth']['left']['mae']
-                            input_depth_meter_left_mse = input_depth_meter_dict['input_depth']['left']['mse']
-                            input_depth_meter_right_mae = input_depth_meter_dict['input_depth']['right']['mae']
-                            input_depth_meter_right_mse = input_depth_meter_dict['input_depth']['right']['mse']       
+                                output_rgb_meter_last_view_left_psnr = output_rgb_meter_dict['last_view']['left']['psnr']
+                                output_rgb_meter_last_view_left_ssim = output_rgb_meter_dict['last_view']['left']['ssim']   
+                                output_rgb_meter_last_view_right_psnr = output_rgb_meter_dict['last_view']['right']['psnr']
+                                output_rgb_meter_last_view_right_ssim = output_rgb_meter_dict['last_view']['right']['ssim']
 
-                            input_depth_meter['left'].update(mae=input_depth_meter_left_mae,
-                                                             mse=input_depth_meter_left_mse)
-                            input_depth_meter['right'].update(mae=input_depth_meter_right_mae,
-                                                              mse=input_depth_meter_right_mse)
+                                output_depth_meter_center_view_left_mae = output_depth_meter_dict['center_view']['left']['mae']
+                                output_depth_meter_center_view_left_mse = output_depth_meter_dict['center_view']['left']['mse']
+                                output_depth_meter_center_view_right_mae = output_depth_meter_dict['center_view']['right']['mae']
+                                output_depth_meter_center_view_right_mse = output_depth_meter_dict['center_view']['right']['mse']
+
+                                output_depth_meter_first_view_left_mae = output_depth_meter_dict['first_view']['left']['mae']
+                                output_depth_meter_first_view_left_mse = output_depth_meter_dict['first_view']['left']['mse']
+                                output_depth_meter_first_view_right_mae = output_depth_meter_dict['first_view']['right']['mae']
+                                output_depth_meter_first_view_right_mse = output_depth_meter_dict['first_view']['right']['mse']
+
+                                output_depth_meter_last_view_left_mae = output_depth_meter_dict['last_view']['left']['mae']
+                                output_depth_meter_last_view_left_mse = output_depth_meter_dict['last_view']['left']['mse']
+                                output_depth_meter_last_view_right_mae = output_depth_meter_dict['last_view']['right']['mae']
+                                output_depth_meter_last_view_right_mse = output_depth_meter_dict['last_view']['right']['mse']
+
+                                input_depth_meter_left_mae = input_depth_meter_dict['input_depth']['left']['mae']
+                                input_depth_meter_left_mse = input_depth_meter_dict['input_depth']['left']['mse']
+                                input_depth_meter_right_mae = input_depth_meter_dict['input_depth']['right']['mae']
+                                input_depth_meter_right_mse = input_depth_meter_dict['input_depth']['right']['mse']  
+                                
+                                if i==0:
+                                    output_rgb_meter_center_fusion['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
+                                    output_rgb_meter_center_fusion['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
+                                    output_rgb_meter_first_fusion['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
+                                    output_rgb_meter_first_fusion['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
+                                    output_rgb_meter_last_fusion["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
+                                    output_rgb_meter_last_fusion["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
+                                    
+                                    output_depth_meter_center_fusion["left"].update(mae=output_depth_meter_center_view_left_mae,
+                                                                            mse=output_depth_meter_center_view_left_mse)
+                                    output_depth_meter_center_fusion["right"].update(mae=output_depth_meter_center_view_right_mae,
+                                                                            mse=output_depth_meter_center_view_right_mse)
+                                    output_depth_meter_first_fusion["left"].update(mae=output_depth_meter_first_view_left_mae,
+                                                                            mse=output_depth_meter_first_view_left_mse)
+                                    output_depth_meter_first_fusion["right"].update(mae=output_depth_meter_first_view_right_mae,
+                                                                            mse=output_depth_meter_first_view_right_mse)
+                                    output_depth_meter_last_fusion["left"].update(mae=output_depth_meter_last_view_left_mae,
+                                                                            mse=output_depth_meter_last_view_left_mse)
+                                    output_depth_meter_last_fusion["right"].update(mae=output_depth_meter_last_view_right_mae,
+                                                                            mse=output_depth_meter_last_view_right_mse)
+                                    input_depth_meter_fusion['left'].update(mae=input_depth_meter_left_mae,
+                                                                    mse=input_depth_meter_left_mse)
+                                    input_depth_meter_fusion['right'].update(mae=input_depth_meter_right_mae,
+                                                                    mse=input_depth_meter_right_mse)
+                                if i==1:
+                                    output_rgb_meter_center_vol['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
+                                    output_rgb_meter_center_vol['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
+                                    output_rgb_meter_first_vol['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
+                                    output_rgb_meter_first_vol['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
+                                    output_rgb_meter_last_vol["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
+                                    output_rgb_meter_last_vol["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
+                                    
+                                    output_depth_meter_center_vol["left"].update(mae=output_depth_meter_center_view_left_mae,
+                                                                            mse=output_depth_meter_center_view_left_mse)
+                                    output_depth_meter_center_vol["right"].update(mae=output_depth_meter_center_view_right_mae,
+                                                                            mse=output_depth_meter_center_view_right_mse)
+                                    output_depth_meter_first_vol["left"].update(mae=output_depth_meter_first_view_left_mae,
+                                                                            mse=output_depth_meter_first_view_left_mse)
+                                    output_depth_meter_first_vol["right"].update(mae=output_depth_meter_first_view_right_mae,
+                                                                            mse=output_depth_meter_first_view_right_mse)
+                                    output_depth_meter_last_vol["left"].update(mae=output_depth_meter_last_view_left_mae,
+                                                                            mse=output_depth_meter_last_view_left_mse)
+                                    output_depth_meter_last_vol["right"].update(mae=output_depth_meter_last_view_right_mae,
+                                                                            mse=output_depth_meter_last_view_right_mse)
+                                    input_depth_meter_vol['left'].update(mae=input_depth_meter_left_mae,
+                                                                    mse=input_depth_meter_left_mse)
+                                    input_depth_meter_vol['right'].update(mae=input_depth_meter_right_mae,
+                                                                    mse=input_depth_meter_right_mse)
+                                
+                                if i==2:
+                                    output_rgb_meter_center_cv['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
+                                    output_rgb_meter_center_cv['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
+                                    output_rgb_meter_first_cv['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
+                                    output_rgb_meter_first_cv['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
+                                    output_rgb_meter_last_cv["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
+                                    output_rgb_meter_last_cv["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
+                                    
+                                    output_depth_meter_center_cv["left"].update(mae=output_depth_meter_center_view_left_mae,
+                                                                            mse=output_depth_meter_center_view_left_mse)
+                                    output_depth_meter_center_cv["right"].update(mae=output_depth_meter_center_view_right_mae,
+                                                                            mse=output_depth_meter_center_view_right_mse)
+                                    output_depth_meter_first_cv["left"].update(mae=output_depth_meter_first_view_left_mae,
+                                                                            mse=output_depth_meter_first_view_left_mse)
+                                    output_depth_meter_first_cv["right"].update(mae=output_depth_meter_first_view_right_mae,
+                                                                            mse=output_depth_meter_first_view_right_mse)
+                                    output_depth_meter_last_cv["left"].update(mae=output_depth_meter_last_view_left_mae,
+                                                                            mse=output_depth_meter_last_view_left_mse)
+                                    output_depth_meter_last_cv["right"].update(mae=output_depth_meter_last_view_right_mae,
+                                                                            mse=output_depth_meter_last_view_right_mse)
+                                    input_depth_meter_cv['left'].update(mae=input_depth_meter_left_mae,
+                                                                    mse=input_depth_meter_left_mse)
+                                    input_depth_meter_cv['right'].update(mae=input_depth_meter_right_mae,
+                                                                    mse=input_depth_meter_right_mse)
                             
                         
                         # for this
-                        output_rgb_meter_center['left'] = output_rgb_meter_center['left'].get_stats()
-                        output_rgb_meter_center['right'] = output_rgb_meter_center['right'].get_stats()
-                        
-                        output_rgb_meter_first['left'] = output_rgb_meter_first['left'].get_stats()
-                        output_rgb_meter_first['right'] = output_rgb_meter_first['right'].get_stats()
-                        
-                        output_rgb_meter_last['left'] = output_rgb_meter_last['left'].get_stats()
-                        output_rgb_meter_last['right'] = output_rgb_meter_last['right'].get_stats()
-                        
-                        output_depth_meter_center['left'] = output_depth_meter_center['left'].get_stats()
-                        output_depth_meter_center['right'] = output_depth_meter_center['right'].get_stats()
+                        output_rgb_meter_center_fusion['left'] = output_rgb_meter_center_fusion['left'].get_stats()
+                        output_rgb_meter_center_fusion['right'] = output_rgb_meter_center_fusion['right'].get_stats()
+                        output_rgb_meter_first_fusion['left'] = output_rgb_meter_first_fusion['left'].get_stats()
+                        output_rgb_meter_first_fusion['right'] = output_rgb_meter_first_fusion['right'].get_stats()
+                        output_rgb_meter_last_fusion['left'] = output_rgb_meter_last_fusion['left'].get_stats()
+                        output_rgb_meter_last_fusion['right'] = output_rgb_meter_last_fusion['right'].get_stats()
+                        output_depth_meter_center_fusion['left'] = output_depth_meter_center_fusion['left'].get_stats()
+                        output_depth_meter_center_fusion['right'] = output_depth_meter_center_fusion['right'].get_stats()
+                        output_depth_meter_first_fusion['left'] = output_depth_meter_first_fusion['left'].get_stats()
+                        output_depth_meter_first_fusion['right'] = output_depth_meter_first_fusion['right'].get_stats()    
+                        output_depth_meter_last_fusion['left'] = output_depth_meter_last_fusion['left'].get_stats()
+                        output_depth_meter_last_fusion['right'] = output_depth_meter_last_fusion['right'].get_stats()
+                        input_depth_meter_fusion['left'] = input_depth_meter_fusion['left'].get_stats()
+                        input_depth_meter_fusion['right'] = input_depth_meter_fusion['right'].get_stats()
 
-                        output_depth_meter_first['left'] = output_depth_meter_first['left'].get_stats()
-                        output_depth_meter_first['right'] = output_depth_meter_first['right'].get_stats()
+                        output_rgb_meter_center_vol['left'] = output_rgb_meter_center_vol['left'].get_stats()
+                        output_rgb_meter_center_vol['right'] = output_rgb_meter_center_vol['right'].get_stats()
+                        output_rgb_meter_first_vol['left'] = output_rgb_meter_first_vol['left'].get_stats()
+                        output_rgb_meter_first_vol['right'] = output_rgb_meter_first_vol['right'].get_stats()
+                        output_rgb_meter_last_vol['left'] = output_rgb_meter_last_vol['left'].get_stats()
+                        output_rgb_meter_last_vol['right'] = output_rgb_meter_last_vol['right'].get_stats()
+                        output_depth_meter_center_vol['left'] = output_depth_meter_center_vol['left'].get_stats()
+                        output_depth_meter_center_vol['right'] = output_depth_meter_center_vol['right'].get_stats()
+                        output_depth_meter_first_vol['left'] = output_depth_meter_first_vol['left'].get_stats()
+                        output_depth_meter_first_vol['right'] = output_depth_meter_first_vol['right'].get_stats()    
+                        output_depth_meter_last_vol['left'] = output_depth_meter_last_vol['left'].get_stats()
+                        output_depth_meter_last_vol['right'] = output_depth_meter_last_vol['right'].get_stats()
+                        input_depth_meter_vol['left'] = input_depth_meter_vol['left'].get_stats()
+                        input_depth_meter_vol['right'] = input_depth_meter_vol['right'].get_stats()
                         
-                        output_depth_meter_last['left'] = output_depth_meter_last['left'].get_stats()
-                        output_depth_meter_last['right'] = output_depth_meter_last['right'].get_stats()
-                        
-                        
-                        input_depth_meter['left'] = input_depth_meter['left'].get_stats()
-                        input_depth_meter['right'] = input_depth_meter['right'].get_stats()
-                        
-                        
-                        results_dict = {
-                        "rgb_center": output_rgb_meter_center,
-                        "rgb_first": output_rgb_meter_first,
-                        "rgb_last": output_rgb_meter_last,
-                        "depth_center":output_depth_meter_center,
-                        "depth_first":output_depth_meter_first,
-                        "depth_last":output_depth_meter_last,
-                        "input_depth":input_depth_meter
+
+
+                        output_rgb_meter_center_cv['left'] = output_rgb_meter_center_cv['left'].get_stats()
+                        output_rgb_meter_center_cv['right'] = output_rgb_meter_center_cv['right'].get_stats()
+                        output_rgb_meter_first_cv['left'] = output_rgb_meter_first_cv['left'].get_stats()
+                        output_rgb_meter_first_cv['right'] = output_rgb_meter_first_cv['right'].get_stats()
+                        output_rgb_meter_last_cv['left'] = output_rgb_meter_last_cv['left'].get_stats()
+                        output_rgb_meter_last_cv['right'] = output_rgb_meter_last_cv['right'].get_stats()
+                        output_depth_meter_center_cv['left'] = output_depth_meter_center_cv['left'].get_stats()
+                        output_depth_meter_center_cv['right'] = output_depth_meter_center_cv['right'].get_stats()
+                        output_depth_meter_first_cv['left'] = output_depth_meter_first_cv['left'].get_stats()
+                        output_depth_meter_first_cv['right'] = output_depth_meter_first_cv['right'].get_stats()    
+                        output_depth_meter_last_cv['left'] = output_depth_meter_last_cv['left'].get_stats()
+                        output_depth_meter_last_cv['right'] = output_depth_meter_last_cv['right'].get_stats()
+                        input_depth_meter_cv['left'] = input_depth_meter_cv['left'].get_stats()
+                        input_depth_meter_cv['right'] = input_depth_meter_cv['right'].get_stats()
+
+
+                        results_dict_fusion = {
+                            "rgb_center": output_rgb_meter_center_fusion,
+                            "rgb_first": output_rgb_meter_first_fusion,
+                            "rgb_last": output_rgb_meter_last_fusion,
+                            "depth_center":output_depth_meter_center_fusion,
+                            "depth_first":output_depth_meter_first_fusion,
+                            "depth_last":output_depth_meter_last_fusion,
+                            "input_depth":input_depth_meter_fusion
+                            
+                        }
+                        results_dict_volume = {
+                            "rgb_center": output_rgb_meter_center_vol,
+                            "rgb_first": output_rgb_meter_first_vol,
+                            "rgb_last": output_rgb_meter_last_vol,
+                            "depth_center":output_depth_meter_center_vol,
+                            "depth_first":output_depth_meter_first_vol,
+                            "depth_last":output_depth_meter_last_vol,
+                            "input_depth":input_depth_meter_vol
+                            
+                        }
+    
+                        results_dict_cv = {
+                            "rgb_center": output_rgb_meter_center_cv,
+                            "rgb_first": output_rgb_meter_first_cv,
+                            "rgb_last": output_rgb_meter_last_cv,
+                            "depth_center":output_depth_meter_center_cv,
+                            "depth_first":output_depth_meter_first_cv,
+                            "depth_last":output_depth_meter_last_cv,
+                            "input_depth":input_depth_meter_cv
                             
                         }
                         
-                        saved_into_json(data_dict=results_dict,
-                                        path=os.path.join(overall_val_batch_save_dir,"metric.json"))
+                        saved_into_json(data_dict=results_dict_fusion,
+                                        path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
+
+                        saved_into_json(data_dict=results_dict_volume,
+                                        path=os.path.join(overall_val_batch_save_dir,"volume_metric.json"))
+
+                        saved_into_json(data_dict=results_dict_cv,
+                                        path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
                         
                     my_model.train()
 
