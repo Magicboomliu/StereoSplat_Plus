@@ -6,12 +6,11 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/gs/FeedForwardGS/VolumeFusion/First_As_Input/Baseline_All_Supervised"
+output_dir = "/gs/FeedForwardGS/VolumeFusion/First_As_Input/Baseline_Volume_and_Final_Supp"
 validation_vis_progress=True
 
-
 # learning rate setiing
-lr = 1e-4
+lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000

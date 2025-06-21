@@ -90,8 +90,8 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 TRAIN_KITTI360_VolumeFusion(){
 cd ../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version//Models_Lab/VolumeFusion/VolumeFusion/volumefusion_configs.py"
-work_dir="/gs/FeedForwardGS/VolumeFusion/First_As_Input/All_Supervised/saved_models"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/Models_Lab/VolumeFusion/VolumeFusion/volumefusion_configs.py"
+work_dir="/gs/FeedForwardGS/VolumeFusion/First_As_Input/Baseline_Volume_and_Final_Supp/saved_models"
 resume_from="None"
 
 #configs 
@@ -104,7 +104,8 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --resume-from $resume_from
 }
 
-TRAIN_KITTI360_DepthSplatRevised
+TRAIN_KITTI360_VolumeFusion
+# TRAIN_KITTI360_DepthSplatRevised
 # TRAIN_KITTI360_VolumeFusion
 # TRAIN_KITTI360_DepthSplat
 #TRAIN_KITTI360_OmniScene
