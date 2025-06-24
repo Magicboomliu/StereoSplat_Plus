@@ -928,6 +928,244 @@ class VolumeFusion(BaseModule):
         return metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list
 
 
+    
+    def validation_step_with_token_names(self, batch, val_result_savedir,cfg=None):
+        
+        bin_token_name = batch['bin_token'][0][:-4]
+        
+
+        # loss and loss terms
+        with torch.no_grad():
+            loss, loss_terms,rendered_fusion_list,\
+                rendered_volume_list,rendered_cv_results_list, \
+                    predicted_input_depth,input_sparse_gt_depth,\
+                        output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
+                                                            cfg=cfg)
+
+        batch_data_for_eval = {
+            "output_gt_rgb": output_rgb,
+            "output_gt_sparse_depth": sparse_depth_gt,
+            "input_images": input_images,
+            "input_gt_sparse_gt": input_sparse_gt_depth,
+            "predicted_input_depth": predicted_input_depth,
+            "rendered_fusion": rendered_fusion_list,
+            "rendered_cost_volume":rendered_cv_results_list,
+            "rendered_volume":rendered_volume_list,
+            "bin_token_name": bin_token_name
+        }
+            
+            
+            
+        # saved into the val_result_dir: the visualiation results
+        
+        # rendered RGBs
+        # rendered Depths
+        # GT RGBs
+        # GT Depths
+        # Estimated Depths
+        
+        metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list,final_rendered_rgb_list,final_rendered_depth_list,final_gt_rgb_list,final_gt_depth_list = self.save_val_results_with_tokens(batch_data_for_eval,val_result_savedir,cfg=cfg)
+        
+        return metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list,final_rendered_rgb_list,final_rendered_depth_list,final_gt_rgb_list,final_gt_depth_list
+
+
+
+
+    def save_val_results_with_tokens(self,batch_data_for_eval,saved_dir,cfg):
+        
+        '''input batch data for evaluation'''
+        
+        rendered_fusion = batch_data_for_eval['rendered_fusion']
+        rendered_volume = batch_data_for_eval['rendered_volume']
+        rendered_cv = batch_data_for_eval['rendered_cost_volume']
+        
+        rendered_list = [rendered_fusion,rendered_volume,rendered_cv]
+        names = ['fusion','volume','cost_volume']
+        
+        metrics_rendered_rgb_list = []
+        metrics_rendered_depth_list = []
+        metrics_estimated_depth_list = []
+        
+        # from "fusion"----> "volume" -----> "cost volume"
+        
+        final_rendered_rgb_list = []
+        final_rendered_depth_list = []
+        final_gt_rgb_list = []
+        final_gt_depth_list = []
+        
+        
+        for idx, rendered_output in enumerate(rendered_list):
+            
+            current_name = names[idx]
+            output_rgb_meter_dict = dict()
+            # get the psnr and ssim for the output view
+            output_rendered_rgb = rendered_output[0] #torch.Size([1, 6, 3, 224, 832]) # 0 is the rgb
+            output_gt_rgb = batch_data_for_eval['output_gt_rgb'] #torch.Size([1, 6, 3, 224, 832])
+            
+            # rendered center
+            center_frame_left_est =  output_rendered_rgb[:,0,:,:,:]
+            center_frame_right_est = output_rendered_rgb[:,2,:,:,:]
+            last_frame_left_est =  output_rendered_rgb[:,1,:,:,:]
+            last_frame_right_est =  output_rendered_rgb[:,3,:,:,:]
+            first_frame_left_est = output_rendered_rgb[:,4,:,:,:]
+            first_frame_right_est = output_rendered_rgb[:,5,:,:,:]
+            
+            center_frame_left_gt =  output_gt_rgb[:,0,:,:,:]
+            center_frame_right_gt = output_gt_rgb[:,2,:,:,:]
+            last_frame_left_gt =  output_gt_rgb[:,1,:,:,:]
+            last_frame_right_gt =  output_gt_rgb[:,3,:,:,:]
+            first_frame_left_gt = output_gt_rgb[:,4,:,:,:]
+            first_frame_right_gt = output_gt_rgb[:,5,:,:,:]
+            
+            
+            cl_psnr,cl_ssim = compute_psnr_ssim(pred=center_frame_left_est,target=center_frame_left_gt)
+            cr_psnr,cr_ssim = compute_psnr_ssim(pred=center_frame_right_est,target=center_frame_right_gt)
+            ll_psnr,ll_ssim = compute_psnr_ssim(pred=last_frame_left_est,target=last_frame_left_gt)
+            lr_psnr,lr_ssim = compute_psnr_ssim(pred=last_frame_right_est,target=last_frame_right_gt)
+            fl_psnr,fl_ssim = compute_psnr_ssim(pred=first_frame_left_est,target=first_frame_left_gt)
+            fr_psnr,fr_ssim = compute_psnr_ssim(pred=first_frame_right_est,target=first_frame_right_gt)
+            
+            output_rgb_meter_dict['center_view'] = dict()
+            output_rgb_meter_dict['center_view']['left'] = dict()
+            output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr.data.item()
+            output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim.data.item()
+
+            output_rgb_meter_dict['center_view']['right'] = dict()
+            output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr.data.item()
+            output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim.data.item()
+            
+
+            output_rgb_meter_dict['last_view'] = dict()
+            output_rgb_meter_dict['last_view']['left'] = dict()
+            output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr.data.item()
+            output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim.data.item()
+
+            output_rgb_meter_dict['last_view']['right'] = dict()
+            output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr.data.item()
+            output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim.data.item()
+
+
+            output_rgb_meter_dict['first_view'] = dict()
+            output_rgb_meter_dict['first_view']['left'] = dict()
+            output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr.data.item()
+            output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim.data.item()
+
+            output_rgb_meter_dict['first_view']['right'] = dict()
+            output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr.data.item()
+            output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim.data.item()
+
+            
+            # get the MAE and the MSE of the output view
+            output_depth_meter_dict = dict()
+            output_rendered_depth = rendered_output[1] #torch.Size([1, 6, 3, 224, 832]) # 1 is the depth
+            output_gt_depth = batch_data_for_eval['output_gt_sparse_depth'] #torch.Size([1, 6, 3, 224, 832])
+            
+
+            center_frame_left_est_depth =  output_rendered_depth[:,0,:,:]
+            center_frame_right_est_depth = output_rendered_depth[:,2,:,:]
+            last_frame_left_est_depth =  output_rendered_depth[:,1,:,:]
+            last_frame_right_est_depth =  output_rendered_depth[:,3,:,:]
+            first_frame_left_est_depth = output_rendered_depth[:,4,:,:]
+            first_frame_right_est_depth = output_rendered_depth[:,5,:,:]
+
+            center_frame_left_gt_depth =  output_gt_depth[:,0,:,:]
+            center_frame_right_gt_depth = output_gt_depth[:,2,:,:]
+            last_frame_left_gt_depth =  output_gt_depth[:,1,:,:]
+            last_frame_right_gt_depth =  output_gt_depth[:,3,:,:]
+            first_frame_left_gt_depth = output_gt_depth[:,4,:,:]
+            first_frame_right_gt_depth = output_gt_depth[:,5,:,:]
+
+            cl_mae,cl_mse = compute_depth_mae_mse(depth_pred=center_frame_left_est_depth,
+                                depth_gt=center_frame_left_gt_depth)
+            
+            cr_mae,cr_mse = compute_depth_mae_mse(depth_pred=center_frame_right_est_depth,
+                                depth_gt=center_frame_right_gt_depth)
+            
+            ll_mae,ll_mse = compute_depth_mae_mse(depth_pred=last_frame_left_est_depth,
+                                depth_gt=last_frame_left_gt_depth)
+            
+            lr_mae,lr_mse = compute_depth_mae_mse(depth_pred=last_frame_right_est_depth,
+                                depth_gt=last_frame_right_gt_depth)
+            
+            fl_mae,fl_mse = compute_depth_mae_mse(depth_pred=first_frame_left_est_depth,
+                                depth_gt=first_frame_left_gt_depth)
+
+            fr_mae,fr_mse = compute_depth_mae_mse(depth_pred=first_frame_right_est_depth,
+                                depth_gt=first_frame_right_gt_depth)
+
+            output_depth_meter_dict['center_view'] = dict()
+            output_depth_meter_dict['center_view']['left'] = dict()
+            output_depth_meter_dict['center_view']['left']['mae'] = cl_mae.data.item()
+            output_depth_meter_dict['center_view']['left']['mse'] = cl_mse.data.item()
+
+            output_depth_meter_dict['center_view']['right'] = dict()
+            output_depth_meter_dict['center_view']['right']['mae'] = cr_mae.data.item()
+            output_depth_meter_dict['center_view']['right']['mse'] = cr_mse.data.item()
+            
+
+            output_depth_meter_dict['last_view'] = dict()
+            output_depth_meter_dict['last_view']['left'] = dict()
+            output_depth_meter_dict['last_view']['left']['mae'] = ll_mae.data.item()
+            output_depth_meter_dict['last_view']['left']['mse'] = ll_mse.data.item()
+
+            output_depth_meter_dict['last_view']['right'] = dict()
+            output_depth_meter_dict['last_view']['right']['mae'] = lr_mae.data.item()
+            output_depth_meter_dict['last_view']['right']['mse'] = lr_mse.data.item()
+
+
+            output_depth_meter_dict['first_view'] = dict()
+            output_depth_meter_dict['first_view']['left'] = dict()
+            output_depth_meter_dict['first_view']['left']['mae'] = fl_mae.data.item()
+            output_depth_meter_dict['first_view']['left']['mse'] = fl_mse.data.item()
+
+            output_depth_meter_dict['first_view']['right'] = dict()
+            output_depth_meter_dict['first_view']['right']['mae'] = fr_mae.data.item()
+            output_depth_meter_dict['first_view']['right']['mse'] = fr_mse.data.item()
+
+            
+            # get the MAE and the MSE of the input view (sterep)
+            input_depth_meter_dict = dict()
+            input_depth_estimation = batch_data_for_eval['predicted_input_depth'] #torch.Size([1, 2, 224, 832])
+            input_gt_depth = batch_data_for_eval['input_gt_sparse_gt'] #torch.Size([1, 2, 224, 832])
+            
+            input_depth_estimation_left = input_depth_estimation[:,0,:,:]
+            input_depth_estimation_right = input_depth_estimation[:,1,:,:]
+            
+            input_gt_depth_sparse_left = input_gt_depth[:,0,:,:]
+            input_gt_depth_sparse_right = input_gt_depth[:,1,:,:]
+            
+            
+            input_l_mae,input_l_mse =  compute_depth_mae_mse(depth_pred=input_depth_estimation_left,
+                                depth_gt=input_gt_depth_sparse_left)
+            
+            input_r_mae, input_r_mse = compute_depth_mae_mse(depth_pred=input_depth_estimation_right,
+                                depth_gt=input_gt_depth_sparse_right)
+            
+            
+            input_depth_meter_dict['input_depth'] = dict()
+            input_depth_meter_dict['input_depth']['left'] = dict()
+            input_depth_meter_dict['input_depth']['left']['mae'] = input_l_mae.data.item()
+            input_depth_meter_dict['input_depth']['left']['mse'] = input_l_mse.data.item()
+            
+            input_depth_meter_dict['input_depth']['right'] = dict()
+            input_depth_meter_dict['input_depth']['right']['mae'] = input_r_mae.data.item()
+            input_depth_meter_dict['input_depth']['right']['mse'] = input_r_mse.data.item()
+            
+
+            metrics_rendered_rgb_list.append(output_rgb_meter_dict)
+            metrics_rendered_depth_list.append(output_depth_meter_dict)
+            metrics_estimated_depth_list.append(input_depth_meter_dict)
+            
+            
+            final_rendered_rgb_list.append(rendered_output[0])
+            final_rendered_depth_list.append(rendered_output[1])
+            
+            final_gt_rgb_list.append(output_gt_rgb)
+            final_gt_depth_list.append(output_gt_depth)
+            
+            
+            
+        return metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list,final_rendered_rgb_list,final_rendered_depth_list,final_gt_rgb_list,final_gt_depth_list
 
 
 if __name__=="__main__":
