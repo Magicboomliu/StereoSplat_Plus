@@ -1,28 +1,26 @@
-render_flc_rgb_and_depth(){
+render_flc_rgb_and_depth_SH0(){
 cd ../../../..
 
 cd codes/validation/
 
-configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_configs.py"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/eval/volumefusion_configs.py"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 # val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 work_dir="/data1/zliu/temp_for_0617/Vis_And_Evals/VolumeFusion/"
-resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-15000/"
-# resume_from="none"
+resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
+
 #configs 
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
 # - Multi GPUs YAML: accelerate_config.yaml
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml models_lab/volumefusion/rendered_FLC_views_depths.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml models_lab/volumefusion/render_flc_rgb_depth_origin.py \
     --py-config $configs_path \
     --work-dir  $work_dir \
     --resume-from $resume_from \
     --val_filelist $val_filelist \
     --output_vis
 
-
-
 }
 
 
-render_flc_rgb_and_depth
+render_flc_rgb_and_depth_SH0

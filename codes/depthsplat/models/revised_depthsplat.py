@@ -1191,64 +1191,7 @@ class ModelWarpper(nn.Module):
                     last_frame_left_gt_depth,last_frame_right_gt_depth
         ]
         
-        
-
-        # if cfg.validation_vis_progress:
-        #     saved_bin_token_name = batch_data_for_eval["bin_token_name"]
-
-        #     # saved the output rendered images and the GT Images
-        #     saved_folder_for_visualization = os.path.join(saved_dir,saved_bin_token_name)
-        #     os.makedirs(saved_folder_for_visualization,exist_ok=True)
-            
-        #     center_left_vis = torch.cat([center_frame_left_est,center_frame_left_gt],dim=-2)
-        #     center_right_vis = torch.cat([center_frame_right_est,center_frame_right_gt],dim=-2)
-        #     center_view = torch.cat([center_left_vis,center_right_vis],dim=-1)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,'center.png'),(center_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
-            
-
-        #     first_left_vis = torch.cat([first_frame_left_est,first_frame_left_gt],dim=-2)
-        #     first_right_vis = torch.cat([first_frame_right_est,first_frame_right_gt],dim=-2)
-        #     first_view = torch.cat([first_left_vis,first_right_vis],dim=-1)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,'first.png'),(first_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
-            
-            
-        #     last_left_vis = torch.cat([last_frame_left_est,last_frame_left_gt],dim=-2)
-        #     last_right_vis = torch.cat([last_frame_right_est,last_frame_right_gt],dim=-2)
-        #     last_view = torch.cat([last_left_vis,last_right_vis],dim=-1)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,'last.png'),(last_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
-            
-            
-        #     # saved  the output rendered depths and the GT Sparse depth    
-        #     center_frame_left_depth_vis = torch.cat([center_frame_left_est_depth,center_frame_left_gt_depth],dim=-2)
-        #     center_frame_right_depth_vis = torch.cat([center_frame_right_est_depth,center_frame_right_gt_depth],dim=-2)
-        #     center_depth_vis = torch.cat([center_frame_left_depth_vis,center_frame_right_depth_vis],dim=-1)
-        #     center_depth_vis = center_depth_vis.squeeze(0).cpu().numpy()
-        #     center_depth_vis = convert_depth_to_disp(depth=center_depth_vis)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,"center_depth.png"),center_depth_vis)
-            
-            
-        #     first_frame_left_depth_vis = torch.cat([first_frame_left_est_depth,first_frame_left_gt_depth],dim=-2)
-        #     first_frame_right_depth_vis = torch.cat([first_frame_right_est_depth,first_frame_right_gt_depth],dim=-2)
-        #     first_depth_vis = torch.cat([first_frame_left_depth_vis,first_frame_right_depth_vis],dim=-1)
-        #     first_depth_vis = first_depth_vis.squeeze(0).cpu().numpy()
-        #     first_depth_vis = convert_depth_to_disp(depth=first_depth_vis)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,"first_depth.png"),first_depth_vis)
-            
-            
-        #     last_frame_left_depth_vis = torch.cat([last_frame_left_est_depth,last_frame_left_gt_depth],dim=-2)
-        #     last_frame_right_depth_vis = torch.cat([last_frame_right_est_depth,last_frame_right_gt_depth],dim=-2)
-        #     last_depth_vis = torch.cat([last_frame_left_depth_vis,last_frame_right_depth_vis],dim=-1)
-        #     last_depth_vis = last_depth_vis.squeeze(0).cpu().numpy()
-        #     last_depth_vis = convert_depth_to_disp(depth=last_depth_vis)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,"last_depth.png"),last_depth_vis)
-
-
-        #     # saved the input images,estimated depths and the GT Sparse Depth        
-        #     input_depth_estimation_vis = torch.cat([input_depth_estimation_left,input_depth_estimation_right],dim=-2)
-        #     input_depth_estimation_vis = input_depth_estimation_vis.squeeze(0).cpu().numpy()
-        #     input_depth_estimation_vis = convert_depth_to_disp(depth=input_depth_estimation_vis)
-        #     skimage.io.imsave(os.path.join(saved_folder_for_visualization,"input_depth.png"),input_depth_estimation_vis)
-        
+    
 
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths
 
