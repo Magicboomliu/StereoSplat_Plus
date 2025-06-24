@@ -28,8 +28,9 @@ from .metrics import compute_depth_mae_mse,compute_psnr_ssim,convert_depth_to_di
 import skimage.io
 from .utils import interpolate_extrinsics
 from tqdm import tqdm
-
 from .gaussian import GaussianRenderer
+import math
+import matplotlib.pyplot as plt
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -63,9 +64,6 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     mse = sq_error.mean()
 
     return mae, mse
-
-
-import math
 
 def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
@@ -148,7 +146,6 @@ class ModelWarpper(nn.Module):
         for param in self.perceptual_loss.parameters():
             param.requires_grad = False
         
-        
     @property
     def device(self):
         return next(self.parameters()).device
@@ -211,7 +208,6 @@ class ModelWarpper(nn.Module):
 
     
         return input_batch_dict,output_batch_dict
-    
     
     def forward(self,batch, mode="train", iter=0, cfg=None):
         
@@ -958,7 +954,6 @@ class ModelWarpper(nn.Module):
         
         return preds,bin_token_name
     
-
     def validation_step_with_token_names(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
@@ -1196,4 +1191,209 @@ class ModelWarpper(nn.Module):
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths
 
 
+    # Guassain Fusion Aggreagtion Inside the BIN
+    def forward_gaussain_fusion_inside_bin(self,batch,mode='val',cfg=None):
+        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+
         
+        return_depth = cfg.return_depth
+        iter_end = cfg.max_train_steps 
+        depth_max_value = cfg.max_depth # 100
+        depth_min_value = cfg.min_depth # 0.3   
+        
+        fusion_gaussain_cv = []
+        input_idx_list = [0,1,2]
+        
+        for input_idx in input_idx_list:
+            # inputs information
+            input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
+            intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
+            input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
+            input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
+            bs = input_images.shape[0]
+            input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
+            input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
+            
+            
+    
+
+            mask = input_sparse_gt_depth > 0
+            mask = mask.float()
+            input_nn_matrix = input_nn_matrix.long()
+
+
+            num_of_cameras = input_images.shape[1]
+            min_depth=1.0 / depth_max_value  # inverse depth range
+            max_depth=1.0 / depth_min_value
+            
+            min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            
+            height, width = input_images.shape[3:]
+            
+
+            intrinsics = intrinsics.clone()
+
+            results_dict = self.depth_estimator(
+                images=input_images,
+                attn_splits_list=[2],
+                intrinsics=intrinsics,
+                min_depth=min_depth,  # inverse depth range
+                max_depth=max_depth,
+                num_depth_candidates=192, # here I set it to 192
+                extrinsics=input_extrinsics,
+                nn_matrix=input_nn_matrix
+            ) 
+
+            
+            predicted_input_depth = results_dict['depth_preds'][0]
+        
+            gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+                                            extrinsics=input_extrinsics,
+                                            intrinsics = intrinsics,
+                                            results_dict=results_dict,
+                                            return_depth=return_depth)
+            
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            bs = gaussians_cv.shape[0] # batch size is 2
+            fusion_gaussain_cv.append(gaussians_cv)
+            
+        
+        fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+        #first 2 dimension is the novel final ,final dimension is the input view
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+        z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+        render_pkg_cv = self.renderer.render(
+            gaussians=fusion_gaussain,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )  
+        
+        rendered_results = render_pkg_cv
+        rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
+        
+        rendered_depth = rendered_depth.squeeze(2)
+        rendered_alpha = rendered_alpha.squeeze(2)
+        
+        rendered_color = torch.clamp(rendered_color,min=0,max=1.0).squeeze(0)
+        rendered_depth = torch.clamp(rendered_depth,min=0,max=150).squeeze(0)
+        
+
+
+        plt.figure(figsize=(20,10))
+        plt.subplot(3,2,1)
+        plt.axis('off')
+        plt.title("F-(l):Input")
+        plt.imshow(rendered_color[2].permute(1,2,0).cpu().numpy())
+        plt.subplot(3,2,2)
+        plt.axis('off')
+        plt.title("F-(r):Input")
+        plt.imshow(rendered_color[5].permute(1,2,0).cpu().numpy())
+        plt.subplot(3,2,3)
+        plt.axis('off')
+        plt.title("C-(l)")
+        plt.imshow(rendered_color[0].permute(1,2,0).cpu().numpy())
+        plt.subplot(3,2,4)
+        plt.axis('off')
+        plt.title("C-(r)")
+        plt.imshow(rendered_color[3].permute(1,2,0).cpu().numpy())
+        plt.subplot(3,2,5)
+        plt.axis('off')
+        plt.title("L-(l)")
+        plt.imshow(rendered_color[1].permute(1,2,0).cpu().numpy())
+        plt.subplot(3,2,6)
+        plt.axis('off')
+        plt.title("L-(r)")
+        plt.imshow(rendered_color[4].permute(1,2,0).cpu().numpy())
+        plt.savefig("rendered_RGB_fuse.png",bbox_inches='tight')
+        quit()
+        
+        
+
+        
+        
+
+    
+    def prepared_input_batch_data_completed(self,batch):
+        '''
+        dict_keys(['bin_token', 'bin_filenames', 
+                    'outputs', 'inputs', 
+                    'inputs_pix', 'inputs_vol'])
+        '''
+        device_id = self.device
+        input_batch_dict = dict()
+        output_batch_dict = dict()
+
+        bin_token_name = batch['bin_token']
+        
+        # input list
+        input_cam_batch_data_list = batch['inputs_pix']  # list                               
+        
+        input_batch_image_data_list = batch['inputs']['rgb'] # list
+        input_batch_image_name_list = batch['inputs']['rgb_path'] # list
+        
+        input_rgb_list = input_batch_image_data_list      # length is the num of pairs
+        input_rgb_name_list = input_batch_image_name_list # length is the num of pairs
+
+        input_camera_intrinsics_list = input_cam_batch_data_list['ck']
+        input_camera_extrinsics_list = input_cam_batch_data_list['c2w'] #(B,V,4,4)
+        
+        input_psuedo_depth_list = input_cam_batch_data_list['depth_m'] #(B,V,H,W)
+        input_sparse_depth_list = input_cam_batch_data_list['sparse_gt_depth'] #(B,V,H,W)
+
+
+        cameras_dist_index_list = []
+        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth_list[0].shape[0],1,1)
+
+
+        for idx in range(len(input_sparse_depth_list)):
+            cameras_dist_index_list.append(cameras_dist_index)
+            
+            
+        # X
+        input_rgb_list = [t.to(device_id, dtype=self.dtype) for t in input_rgb_list]
+        input_camera_intrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_intrinsics_list]
+        input_camera_extrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_extrinsics_list]
+        input_psuedo_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_psuedo_depth_list]
+        input_sparse_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_sparse_depth_list]
+        cameras_dist_index_list = [t.to(device_id, dtype=self.dtype) for t in cameras_dist_index_list]
+        
+        input_batch_dict['imgs'] = input_rgb_list
+        input_batch_dict['intrinsics'] = input_camera_intrinsics_list
+        input_batch_dict['extrinsics'] = input_camera_extrinsics_list
+        input_batch_dict['nn_matrix'] = cameras_dist_index_list
+        input_batch_dict['pseudo_depths'] = input_psuedo_depth_list
+        input_batch_dict['sparse_depths'] = input_sparse_depth_list
+        input_batch_dict['bin_token_name'] = bin_token_name
+        
+        
+        
+        # output dict
+        # for render and loss and eval
+        output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
+        output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
+                            batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
+        output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
+        
+
+        return input_batch_dict,output_batch_dict
