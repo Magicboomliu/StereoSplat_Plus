@@ -31,7 +31,6 @@ from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
 from data.KITTI360.transforms.loading import load_info,load_conditions
 import matplotlib.pyplot as plt
 
-
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -40,7 +39,6 @@ def read_text_lines(filepath):
 
 def swap_elements(lst, A, B):
     lst[A], lst[B] = lst[B], lst[A]
-
 
 class KITTI360DatasetFusion(Dataset):    
     def __init__(
@@ -391,6 +389,8 @@ class KITTI360DatasetFusion(Dataset):
         output_img_paths, output_c2ws, output_w2cs = [], [], []
         frame_num = len(bin_info["sensor_info"]["LIDAR_TOP"]) # how many frames, if no problems, here should be 7
         
+        
+
         # for training, using a certain number of the views for training.
         if self.split=="train":
             assert frame_num >=self.supp_view_nums, "only got {} frames for bin{}".format(frame_num, bin_token_name)
@@ -420,10 +420,13 @@ class KITTI360DatasetFusion(Dataset):
             if self.use_center:
                 rend_indices = [[1, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Frist and the Last
             if self.use_first:
-                rend_indices = [[0, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Second and the Last
+                rend_indices = [[0, 2, 1]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Second and the Last
             else:
                 rend_indices = [[0]] * len(self.camera_types)
-            
+        
+        
+        
+
         
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]
@@ -460,24 +463,24 @@ class KITTI360DatasetFusion(Dataset):
         output_fovys = torch.as_tensor(output_fovys, dtype=torch.float32)
 
 
-        # add input data to output
-        output_imgs = torch.cat([output_imgs, input_imgs], dim=0)
-        output_depths = torch.cat([output_depths, input_depths], dim=0)
-        output_depths_m = torch.cat([output_depths_m, input_depths_m], dim=0)
-        output_confs_m = torch.cat([output_confs_m, input_confs_m], dim=0)
+        # # add input data to output
+        # output_imgs = torch.cat([output_imgs, input_imgs], dim=0)
+        # output_depths = torch.cat([output_depths, input_depths], dim=0)
+        # output_depths_m = torch.cat([output_depths_m, input_depths_m], dim=0)
+        # output_confs_m = torch.cat([output_confs_m, input_confs_m], dim=0)
         
 
         if self.depth_info_dict.use_sparse_lidar:
             output_sparse_depth_gts = torch.cat([output_sparse_gt_depth,input_sparse_gt_depth],dim=0)
         
         
-        output_c2ws = torch.cat([output_c2ws, input_c2ws], dim=0) # first 2 dimension is the novel final ,final dimension is the input view
-        output_fovxs = torch.cat([output_fovxs, input_fovxs], dim=0)
-        output_fovys = torch.cat([output_fovys, input_fovys], dim=0)
-        output_fxs = torch.cat([output_fxs, input_fxs], dim=0)
-        output_fys = torch.cat([output_fys, input_fys], dim=0)
-        output_cxs = torch.cat([output_cxs, input_cxs], dim=0)
-        output_cys = torch.cat([output_cys, input_cys], dim=0)
+        # output_c2ws = torch.cat([output_c2ws, input_c2ws], dim=0) # first 2 dimension is the novel final ,final dimension is the input view
+        # output_fovxs = torch.cat([output_fovxs, input_fovxs], dim=0)
+        # output_fovys = torch.cat([output_fovys, input_fovys], dim=0)
+        # output_fxs = torch.cat([output_fxs, input_fxs], dim=0)
+        # output_fys = torch.cat([output_fys, input_fys], dim=0)
+        # output_cxs = torch.cat([output_cxs, input_cxs], dim=0)
+        # output_cys = torch.cat([output_cys, input_cys], dim=0)
         output_directions = []
         for fx, fy, cx, cy in zip(output_fxs, output_fys, output_cxs, output_cys):
             fovx = 2 * np.arctan(cx / fx)

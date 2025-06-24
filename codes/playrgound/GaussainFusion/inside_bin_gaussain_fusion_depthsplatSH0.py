@@ -267,11 +267,11 @@ def main(args):
                 # get the psnr, ssim, mae and mse as well as the saved the visualization results
                 output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict, \
                     rendered_images,rendered_depth,gt_images,gt_depths \
-                        = my_model.validation_step_with_token_names(batch_val, None,cfg)
+                        = my_model.forward_gaussain_fusion_inside_bin(batch_val, None,cfg)
             else:
                 output_rgb_meter_dict,output_depth_meter_dict,\
                     input_depth_meter_dict,rendered_images, \
-                        rendered_depth,gt_images,gt_depths = my_model.module.validation_step_with_token_names(batch_val, None,cfg)
+                        rendered_depth,gt_images,gt_depths = my_model.module.forward_gaussain_fusion_inside_bin(batch_val, None,cfg)
 
 
             quit()
