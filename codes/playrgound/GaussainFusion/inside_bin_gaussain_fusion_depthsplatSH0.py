@@ -11,7 +11,8 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-import data.KITTI360.dataloader as datasets
+# import data.KITTI360.dataloader as datasets
+import data.KITTI360_Fusion.dataloader as datasets
 
 import mmcv
 import mmengine
@@ -36,6 +37,9 @@ import matplotlib.pyplot as plt
 from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
 from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
 from depthsplat.models.revised_depthsplat import ModelWarpper
+
+
+from types import SimpleNamespace
 
 def kitti_colormap(disparity, maxval=-1):
 	"""
@@ -135,33 +139,48 @@ def main(args):
     
 
     #################### Dataset Configurration #############################
-    dataset_config = cfg.dataset_params
-
-
+    dataset_config = cfg.dataset_params    
+    dataset_config.dataset_name = "KITTI360DatasetFusion"
     # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
-    val_params = {
-        "datapath":dataset_config.datapath,
-        "train_filelist":dataset_config.train_filelist,
-        "val_filelist":args.val_filelist,
-        "test_filelist":args.val_filelist,
-        "data_version":dataset_config.data_version,
-        "resolution":dataset_config.resolution, 
-        "split":"val",
-        "sequence":dataset_config.sequence,
-        "use_center":dataset_config.use_center,
-        "use_first": dataset_config.use_first,
-        "use_last": dataset_config.use_last,
-        "supp_view_nums": 3,
-        "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model
-    }
     
+
+    depth_info_params = dict(
+        use_pseudo_depth=True,
+        pseudo_depth_type='NMRFStereo', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
+        use_sparse_lidar=True
+        )
+    
+    ns = SimpleNamespace(**depth_info_params)
+    
+    val_params = {
+        "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
+        "train_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
+        "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "data_version":"bin_infos_8.0",
+        "resolution":[224, 1088], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
+        "split":"val",
+        "sequence":'2013_05_28_drive_0000_sync',
+        "use_center":False,
+        "use_first": True,
+        "use_last": False,
+        "supp_view_nums": 3,
+        "camera_model":"OpenCV",
+        "depth_info_dict":ns,
+        "input_type": "all", # select from all, or "stereo" or "max"
+        "max_input_views": 10,
+        "pair_images":2
+    }
+
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
+    
+    
+    
     
     '''     Model Configuration   '''
     encoder_cfg = cfg.model.encoder
@@ -193,8 +212,6 @@ def main(args):
                                              gaussians_color_branch_dict=gaussain_color_branch_config)
     
     
-    
-    
     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
                             gaussain_head=gaussain_head,
                             unimatch_weight = cfg.unimatch_weights_path,
@@ -205,9 +222,11 @@ def main(args):
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader)
 
+
     # Potentially load in the weights and states from a previous save
     if args.resume_from:
         cfg.resume_from = args.resume_from
+    
     if cfg.resume_from:
         if cfg.resume_from == "None":
             path = None
@@ -222,19 +241,40 @@ def main(args):
                 path = dirs[-1]
             else:
                 path = None
+    
     if path:
         accelerator.load_state(path, map_location='cpu', strict=False)
         if accelerator.is_main_process:
             print('successfully resumed from {}'.format(path))
+    
     else:
         resume_step = -1
         print("No Pretrained Weighted Founded, Learning from Scratch")
 
     # replace here
     cfg.output_dir = args.work_dir
-    
     os.makedirs(cfg.output_dir,exist_ok=True)
+    
+    # do the visualization here
+    with torch.no_grad():
+        my_model.eval()
+        for i_iter_val, batch_val in enumerate(val_dataloader):
+            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+            bin_token = batch_val['bin_token'][0]
+            
+            if args.gpus<=1:
+                # forward here 
+                # get the psnr, ssim, mae and mse as well as the saved the visualization results
+                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict, \
+                    rendered_images,rendered_depth,gt_images,gt_depths \
+                        = my_model.validation_step_with_token_names(batch_val, None,cfg)
+            else:
+                output_rgb_meter_dict,output_depth_meter_dict,\
+                    input_depth_meter_dict,rendered_images, \
+                        rendered_depth,gt_images,gt_depths = my_model.module.validation_step_with_token_names(batch_val, None,cfg)
 
+
+            quit()
 
 
 
