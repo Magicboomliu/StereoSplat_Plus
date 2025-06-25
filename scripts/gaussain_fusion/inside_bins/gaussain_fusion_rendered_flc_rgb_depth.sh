@@ -1,5 +1,5 @@
 GaussainFusion_Inside_BIN_DepthSplat(){
-cd ../..
+cd ../../..
 cd codes/playrgound/
 
 configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_revised.py"

@@ -1472,9 +1472,6 @@ class ModelWarpper(nn.Module):
         
         return output_rgb_meter_dict,output_depth_meter_dict,rendered_color,rendered_depth,output_gt_images_data,output_sparse_depth_data
         
-        
-        
-    
     def prepared_input_batch_data_completed(self,batch):
         '''
         dict_keys(['bin_token', 'bin_filenames', 
@@ -1547,3 +1544,276 @@ class ModelWarpper(nn.Module):
         
 
         return input_batch_dict,output_batch_dict
+
+    def forward_gaussain_fusion_inside_bin_video(self,batch,mode='val',
+                                                 fuse_type='concat',
+                                                 cfg=None):
+        '''
+        fuse_type: should select from "None", "concat",'voxel_fusion'
+        '''
+        
+        bin_token_name = batch['bin_token']
+        
+        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+        return_depth = cfg.return_depth
+        iter_end = cfg.max_train_steps 
+        depth_max_value = cfg.max_depth # 100
+        depth_min_value = cfg.min_depth # 0.3   
+        
+        if fuse_type=="None":
+            input_idx_list = [1]
+        else:
+            input_idx_list = [0,1,2] 
+    
+        fusion_gaussain_cv = []
+        
+
+        start_time = time.time()
+        for input_idx in input_idx_list:
+            # inputs information
+            input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
+            intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
+            input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
+            input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
+            bs = input_images.shape[0]
+            input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
+            input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
+            
+            
+
+            mask = input_sparse_gt_depth > 0
+            mask = mask.float()
+            input_nn_matrix = input_nn_matrix.long()
+
+
+            num_of_cameras = input_images.shape[1]
+            min_depth=1.0 / depth_max_value  # inverse depth range
+            max_depth=1.0 / depth_min_value
+            
+            min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            
+            height, width = input_images.shape[3:]
+            
+
+            intrinsics = intrinsics.clone()
+
+            results_dict = self.depth_estimator(
+                images=input_images,
+                attn_splits_list=[2],
+                intrinsics=intrinsics,
+                min_depth=min_depth,  # inverse depth range
+                max_depth=max_depth,
+                num_depth_candidates=192, # here I set it to 192
+                extrinsics=input_extrinsics,
+                nn_matrix=input_nn_matrix
+            ) 
+
+            
+            predicted_input_depth = results_dict['depth_preds'][0]
+        
+            gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+                                            extrinsics=input_extrinsics,
+                                            intrinsics = intrinsics,
+                                            results_dict=results_dict,
+                                            return_depth=return_depth)
+            
+
+    
+            
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            bs = gaussians_cv.shape[0] # batch size is 2
+
+            
+            if fuse_type=='concat':
+                fusion_gaussain_cv.append(gaussians_cv)
+            
+            elif fuse_type =='voxel_fusion':
+                
+                cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
+                pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
+                gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
+                if input_idx==0:
+                    fusion_gaussain_cv.append(gaussians_cv_for_fusion)
+                else:
+                    # fused_gaussain =fuse_gaussians_by_voxel_with_depth_batched_vectorized(
+                    #     gaussians1=fusion_gaussain_cv[input_idx-1],
+                    #     gaussians2=gaussians_cv_for_fusion,
+                    #     point_cloud_range=cfg.point_cloud_range,
+                    #     voxel_size=0.1
+                    # )
+
+                    fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
+                        gaussians1_b=fusion_gaussain_cv[input_idx-1],
+                        gaussians2_b=gaussians_cv_for_fusion,
+                        point_cloud_range=cfg.point_cloud_range,
+                        voxel_size=0.1
+                    )
+                    
+                    fusion_gaussain_cv.append(fused_gaussain)
+            
+            elif fuse_type=="None":
+                fusion_gaussain_cv.append(gaussians_cv)
+                
+            
+        if fuse_type=='concat':
+            fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+        
+        elif fuse_type=='voxel_fusion':
+            fusion_gaussain = fusion_gaussain_cv[-1]
+            fusion_gaussain = fusion_gaussain[:,:,:14]
+            
+        elif fuse_type=="None":
+            assert len(fusion_gaussain_cv)==1
+            fusion_gaussain = fusion_gaussain_cv[0] 
+        
+        else:
+            raise NotImplementedError
+
+
+        # rendered for new views
+        c2w_lf_left = output_batch_dict["output_c2ws"][:, 1]
+        c2w_lf_right = output_batch_dict["output_c2ws"][:, 3]
+        c2w_ff_left = output_batch_dict["output_c2ws"][:, 4]
+        c2w_ff_right = output_batch_dict["output_c2ws"][:, 5]
+        c2w_cf_left = output_batch_dict["output_c2ws"][:, 0] #(1,2,4,4)
+        c2w_cf_right = output_batch_dict["output_c2ws"][:, 2] #(1,2,4,4)
+        
+        ''' 
+            Movement 0:  Center Left Rotation 45 Degree
+            Movement 1:  Center Rotation Back
+        '''
+    
+        # left backward 3---------rotation 45 ------rotation back 
+        theta = -math.pi / 4  # 
+        rot_0 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
+
+        c2w_cf_left_rot2_right = c2w_cf_left.clone()
+        c2w_cf_left_rot2_right[...,:3,:3] = rot_0@c2w_cf_left_rot2_right[...,:3,:3]
+
+        c2w_lf_left_rot2_right = c2w_lf_left.clone()
+        c2w_lf_left_rot2_right[...,:3,:3] = rot_0 @ c2w_lf_left_rot2_right[...,:3,:3]
+        
+        c2w_ff_left_rot2_right = c2w_ff_left.clone()
+        c2w_ff_left_rot2_right[...,:3,:3] = rot_0 @ c2w_ff_left_rot2_right[...,:3,:3]
+
+        ''' 
+            Movement 2:  Center Left Cam to Center Right
+            Movement 3:  Center Right Rot Inside
+            Movement 4: Rotation Back
+        '''
+        
+        # right backward 3---------rotation 45 ------rotation back:  short +1
+        theta = math.pi / 4  # 
+        rot_1 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
+        
+        c2w_cf_right_rot2_left = c2w_cf_right.clone()
+        c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
+        
+        c2w_lf_right_rot2_left = c2w_lf_right.clone()
+        c2w_lf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_lf_right_rot2_left[...,:3,:3]
+        
+        c2w_ff_right_rot2_left = c2w_ff_right.clone() 
+        c2w_ff_right_rot2_left[...,:3,:3] = rot_1 @ c2w_ff_right_rot2_left[...,:3,:3]
+        
+        
+        ''' Movement 5: from right to left '''
+        '''Movement 6: From Center left to Last Left'''
+        num_frames_short = 60
+        num_frames_long = 60
+        
+        t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
+        t_long = torch.linspace(0, 1 - 1 / (num_frames_long + 1), num_frames_long, dtype=torch.float32, device=self.device)
+        # center left rot
+        movement_0 = interpolate_extrinsics(c2w_cf_left,c2w_cf_left_rot2_right,t_short)
+        # center left rot back
+        movement_1 = interpolate_extrinsics(c2w_cf_left_rot2_right,c2w_cf_left,t_short)
+        # center left to right
+        movement_2 = interpolate_extrinsics(c2w_cf_left,c2w_cf_right,t_short)
+        # center right rot
+        movement_3 = interpolate_extrinsics(c2w_cf_right,c2w_cf_right_rot2_left,t_short)
+        # center right rot back
+        movement_4 = interpolate_extrinsics(c2w_cf_right_rot2_left,c2w_cf_right,t_short)
+        # center right to left
+        movement_5 = interpolate_extrinsics(c2w_cf_right,c2w_cf_left,t_short)
+        # center left to last left
+        movement_6 = interpolate_extrinsics(c2w_cf_left,c2w_lf_left,t_short)
+        # last left to rot
+        movement_7 = interpolate_extrinsics(c2w_lf_left,c2w_lf_left_rot2_right,t_short)
+        # last left rot back
+        movement_8 = interpolate_extrinsics(c2w_lf_left_rot2_right,c2w_lf_left,t_short)
+        # last left to last right
+        movement_9 = interpolate_extrinsics(c2w_lf_left,c2w_lf_right,t_short)
+        
+        # last right rot
+        movement_10 = interpolate_extrinsics(c2w_lf_right,c2w_lf_right_rot2_left,t_short)
+        movement_11 = interpolate_extrinsics(c2w_lf_right_rot2_left, c2w_lf_right,t_short)
+        movement_12 = interpolate_extrinsics(c2w_lf_right,c2w_lf_left ,t_short)
+        movement_13 = interpolate_extrinsics(c2w_lf_left,c2w_ff_left,t_short)
+        movement_14 = interpolate_extrinsics(c2w_ff_left,c2w_ff_left_rot2_right,t_short)
+        movement_15 = interpolate_extrinsics(c2w_ff_left_rot2_right,c2w_ff_left,t_short)
+        movement_16 = interpolate_extrinsics(c2w_ff_left,c2w_ff_right,t_short)
+        movement_17 = interpolate_extrinsics(c2w_ff_right,c2w_ff_right_rot2_left,t_short)
+        movement_18 = interpolate_extrinsics(c2w_ff_right_rot2_left,c2w_ff_right,t_short)
+        
+        c2w_interp = torch.cat([movement_0, movement_1, movement_2,
+                                movement_3, movement_4,movement_5,
+                                movement_6,movement_7,
+                                movement_8,movement_9,
+                                movement_10,movement_11,
+                                movement_12,movement_13,
+                                movement_14,movement_15,
+                                movement_16,movement_17,
+                                movement_18
+                                ], dim=1)
+
+        N_Chunks = 10
+        interval = int(c2w_interp.shape[1]//N_Chunks)
+        
+        rendered_rgb_list = []
+        rendered_depth_list = []
+
+        for idx in tqdm(range(N_Chunks)):
+            
+            current_c2w_interp = c2w_interp[:,idx*interval:(idx+1)*interval,:]
+            
+            current_fovxs_interp = output_batch_dict["output_fovxs"][:, -6:-5].repeat(1, current_c2w_interp.shape[1])   # [4,960] --> Center
+            current_fovys_interp =output_batch_dict["output_fovys"][:, -6:-5].repeat(1, current_c2w_interp.shape[1]) 
+
+            render_pkg_cv = self.renderer.render(
+                gaussians=fusion_gaussain,
+                c2w=current_c2w_interp,
+                fovx=current_fovxs_interp ,
+                fovy=current_fovys_interp,
+                rays_o=None,
+                rays_d=None
+            )
+            rendered_results = render_pkg_cv
+
+            rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth = rendered_depth.squeeze(2)
+            rendered_alpha = rendered_alpha.squeeze(2)
+            
+            rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+            rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+
+            rendered_rgb_list.append(rendered_color)
+            rendered_depth_list.append(rendered_depth)
+            
+
+        rendered_rgb_final = torch.cat(rendered_rgb_list,dim=1)
+        rendered_depth_final = torch.cat(rendered_depth_list,dim=1)
+        
+        preds = {"img":rendered_rgb_final,"depth":rendered_depth_final}
+        
+        return preds,bin_token_name
