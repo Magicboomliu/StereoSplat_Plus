@@ -1196,19 +1196,21 @@ class ModelWarpper(nn.Module):
 
 
     # Guassain Fusion Aggreagtion Inside the BIN
-    def forward_gaussain_fusion_inside_bin(self,batch,mode='val',cfg=None):
-        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
-
+    def forward_gaussain_fusion_inside_bin_flc(self,batch,mode='val',fuse_type='concat',cfg=None):
+        '''
+        fuse_type: should select from "None", "concat",'voxel_fusion'
+        '''
         
+        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
         return_depth = cfg.return_depth
         iter_end = cfg.max_train_steps 
         depth_max_value = cfg.max_depth # 100
         depth_min_value = cfg.min_depth # 0.3   
         
-        
-        input_idx_list = [0,1,2]
-        
-        fuse_type ='voxel_fusion' # 'voxel-fusion'
+        if fuse_type=="None":
+            input_idx_list = [1]
+        else:
+            input_idx_list = [0,1,2] 
     
         fusion_gaussain_cv = []
         
@@ -1297,24 +1299,27 @@ class ModelWarpper(nn.Module):
                     
                     fusion_gaussain_cv.append(fused_gaussain)
             
-            
+            elif fuse_type=="None":
+                fusion_gaussain_cv.append(gaussians_cv)
+                
             
         if fuse_type=='concat':
             fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
         
-        if fuse_type=='voxel_fusion':
+        elif fuse_type=='voxel_fusion':
             fusion_gaussain = fusion_gaussain_cv[-1]
             fusion_gaussain = fusion_gaussain[:,:,:14]
+            
+        elif fuse_type=="None":
+            assert len(fusion_gaussain_cv)==1
+            fusion_gaussain = fusion_gaussain_cv[0] 
         
+        else:
+            raise NotImplementedError
         
         
         #first 2 dimension is the novel final ,final dimension is the input view
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
-
-        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
-        z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
-        z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
-
         render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
         render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
         render_pkg_cv = self.renderer.render(
@@ -1334,17 +1339,141 @@ class ModelWarpper(nn.Module):
         rendered_depth = rendered_depth.squeeze(2)
         rendered_alpha = rendered_alpha.squeeze(2)
         
-        rendered_color = torch.clamp(rendered_color,min=0,max=1.0).squeeze(0)
-        rendered_depth = torch.clamp(rendered_depth,min=0,max=150).squeeze(0)
+        rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+        rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
         
 
-        end_time = time.time()
-        duration = (end_time-start_time)
+        
+        # Get the Statics Information Here
+        output_gt_images_data = output_batch_dict["output_imgs"]
+        output_sparse_depth_data = output_batch_dict['output_sparse_depth']
+        
 
 
+        output_rgb_meter_dict = dict()
+        # rendered center
+        center_frame_left_est =  rendered_color[:,0,:,:,:]
+        center_frame_right_est = rendered_color[:,3,:,:,:]
+        last_frame_left_est =  rendered_color[:,1,:,:,:]
+        last_frame_right_est =  rendered_color[:,4,:,:,:]
+        first_frame_left_est = rendered_color[:,2,:,:,:]
+        first_frame_right_est = rendered_color[:,5,:,:,:]
+        
+        center_frame_left_gt =  output_gt_images_data[:,0,:,:,:]
+        center_frame_right_gt = output_gt_images_data[:,3,:,:,:]
+        last_frame_left_gt =  output_gt_images_data[:,1,:,:,:]
+        last_frame_right_gt =  output_gt_images_data[:,4,:,:,:]
+        first_frame_left_gt = output_gt_images_data[:,2,:,:,:]
+        first_frame_right_gt = output_gt_images_data[:,5,:,:,:]
+
+
+        cl_psnr,cl_ssim = compute_psnr_ssim(pred=center_frame_left_est,target=center_frame_left_gt)
+        cr_psnr,cr_ssim = compute_psnr_ssim(pred=center_frame_right_est,target=center_frame_right_gt)
+        ll_psnr,ll_ssim = compute_psnr_ssim(pred=last_frame_left_est,target=last_frame_left_gt)
+        lr_psnr,lr_ssim = compute_psnr_ssim(pred=last_frame_right_est,target=last_frame_right_gt)
+        fl_psnr,fl_ssim = compute_psnr_ssim(pred=first_frame_left_est,target=first_frame_left_gt)
+        fr_psnr,fr_ssim = compute_psnr_ssim(pred=first_frame_right_est,target=first_frame_right_gt)
+        
+        output_rgb_meter_dict['center_view'] = dict()
+        output_rgb_meter_dict['center_view']['left'] = dict()
+        output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr.data.item()
+        output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim.data.item()
+
+        output_rgb_meter_dict['center_view']['right'] = dict()
+        output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr.data.item()
+        output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim.data.item()
+        
+
+        output_rgb_meter_dict['last_view'] = dict()
+        output_rgb_meter_dict['last_view']['left'] = dict()
+        output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr.data.item()
+        output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim.data.item()
+
+        output_rgb_meter_dict['last_view']['right'] = dict()
+        output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr.data.item()
+        output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim.data.item()
+
+
+        output_rgb_meter_dict['first_view'] = dict()
+        output_rgb_meter_dict['first_view']['left'] = dict()
+        output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr.data.item()
+        output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim.data.item()
+
+        output_rgb_meter_dict['first_view']['right'] = dict()
+        output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr.data.item()
+        output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim.data.item()
         
         
+        
 
+        output_depth_meter_dict = dict()
+
+        center_frame_left_est_depth =  rendered_depth[:,0,:,:]
+        center_frame_right_est_depth = rendered_depth[:,3,:,:]
+        last_frame_left_est_depth =  rendered_depth[:,1,:,:]
+        last_frame_right_est_depth =  rendered_depth[:,4,:,:]
+        first_frame_left_est_depth = rendered_depth[:,2,:,:]
+        first_frame_right_est_depth = rendered_depth[:,5,:,:]
+
+        center_frame_left_gt_depth =  output_sparse_depth_data[:,0,:,:]
+        center_frame_right_gt_depth = output_sparse_depth_data[:,3,:,:]
+        last_frame_left_gt_depth =  output_sparse_depth_data[:,1,:,:]
+        last_frame_right_gt_depth =  output_sparse_depth_data[:,4,:,:]
+        first_frame_left_gt_depth = output_sparse_depth_data[:,2,:,:]
+        first_frame_right_gt_depth = output_sparse_depth_data[:,5,:,:]
+
+        cl_mae,cl_mse = compute_depth_mae_mse(depth_pred=center_frame_left_est_depth,
+                              depth_gt=center_frame_left_gt_depth)
+        
+        cr_mae,cr_mse = compute_depth_mae_mse(depth_pred=center_frame_right_est_depth,
+                              depth_gt=center_frame_right_gt_depth)
+        
+        ll_mae,ll_mse = compute_depth_mae_mse(depth_pred=last_frame_left_est_depth,
+                              depth_gt=last_frame_left_gt_depth)
+        
+        lr_mae,lr_mse = compute_depth_mae_mse(depth_pred=last_frame_right_est_depth,
+                              depth_gt=last_frame_right_gt_depth)
+        
+        fl_mae,fl_mse = compute_depth_mae_mse(depth_pred=first_frame_left_est_depth,
+                              depth_gt=first_frame_left_gt_depth)
+
+        fr_mae,fr_mse = compute_depth_mae_mse(depth_pred=first_frame_right_est_depth,
+                              depth_gt=first_frame_right_gt_depth)
+
+        output_depth_meter_dict['center_view'] = dict()
+        output_depth_meter_dict['center_view']['left'] = dict()
+        output_depth_meter_dict['center_view']['left']['mae'] = cl_mae.data.item()
+        output_depth_meter_dict['center_view']['left']['mse'] = cl_mse.data.item()
+
+        output_depth_meter_dict['center_view']['right'] = dict()
+        output_depth_meter_dict['center_view']['right']['mae'] = cr_mae.data.item()
+        output_depth_meter_dict['center_view']['right']['mse'] = cr_mse.data.item()
+        
+
+        output_depth_meter_dict['last_view'] = dict()
+        output_depth_meter_dict['last_view']['left'] = dict()
+        output_depth_meter_dict['last_view']['left']['mae'] = ll_mae.data.item()
+        output_depth_meter_dict['last_view']['left']['mse'] = ll_mse.data.item()
+
+        output_depth_meter_dict['last_view']['right'] = dict()
+        output_depth_meter_dict['last_view']['right']['mae'] = lr_mae.data.item()
+        output_depth_meter_dict['last_view']['right']['mse'] = lr_mse.data.item()
+
+
+        output_depth_meter_dict['first_view'] = dict()
+        output_depth_meter_dict['first_view']['left'] = dict()
+        output_depth_meter_dict['first_view']['left']['mae'] = fl_mae.data.item()
+        output_depth_meter_dict['first_view']['left']['mse'] = fl_mse.data.item()
+
+        output_depth_meter_dict['first_view']['right'] = dict()
+        output_depth_meter_dict['first_view']['right']['mae'] = fr_mae.data.item()
+        output_depth_meter_dict['first_view']['right']['mse'] = fr_mse.data.item()
+
+        
+        return output_rgb_meter_dict,output_depth_meter_dict,rendered_color,rendered_depth,output_gt_images_data,output_sparse_depth_data
+        
+        
+        
     
     def prepared_input_batch_data_completed(self,batch):
         '''

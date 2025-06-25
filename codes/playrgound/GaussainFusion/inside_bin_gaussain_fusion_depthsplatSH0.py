@@ -153,18 +153,20 @@ def main(args):
     
     ns = SimpleNamespace(**depth_info_params)
     
+
+    
     val_params = {
-        "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
-        "train_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
-        "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "data_version":"bin_infos_8.0",
-        "resolution":[224, 1088], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
+        "datapath":dataset_config.datapath,
+        "train_filelist":dataset_config.train_filelist,
+        "val_filelist":args.val_filelist,
+        "test_filelist":args.val_filelist,
+        "data_version":dataset_config.data_version,
+        "resolution":dataset_config.resolution, 
         "split":"val",
-        "sequence":'2013_05_28_drive_0000_sync',
-        "use_center":False,
-        "use_first": True,
-        "use_last": False,
+        "sequence":dataset_config.sequence,
+        "use_center":dataset_config.use_center,
+        "use_first": dataset_config.use_first,
+        "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
         "camera_model":"OpenCV",
         "depth_info_dict":ns,
@@ -255,9 +257,35 @@ def main(args):
     cfg.output_dir = args.work_dir
     os.makedirs(cfg.output_dir,exist_ok=True)
     
+    
+    # fuse_type = "None"   # "voxel_fusion"
+    fuse_type = args.fusion_type
+    
+    saved_specific_folder = os.path.join(cfg.output_dir,fuse_type)
+    os.makedirs(saved_specific_folder,exist_ok=True)
+    saved_specific_folder_renderd= os.path.join(saved_specific_folder,'rendered')
+    saved_specific_folder_gt = os.path.join(saved_specific_folder,'gt')
+    os.makedirs(saved_specific_folder_renderd,exist_ok=True)
+    os.makedirs(saved_specific_folder_gt,exist_ok=True)
+    
     # do the visualization here
     with torch.no_grad():
         my_model.eval()
+
+        output_rgb_meter_center = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                    "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+        output_rgb_meter_first = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                    "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+        output_rgb_meter_last ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
+                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
+        output_depth_meter_center = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+        output_depth_meter_first = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+        output_depth_meter_last = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
+                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
+
+
         for i_iter_val, batch_val in enumerate(val_dataloader):
             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
             bin_token = batch_val['bin_token'][0]
@@ -265,18 +293,227 @@ def main(args):
             if args.gpus<=1:
                 # forward here 
                 # get the psnr, ssim, mae and mse as well as the saved the visualization results
-                output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict, \
-                    rendered_images,rendered_depth,gt_images,gt_depths \
-                        = my_model.forward_gaussain_fusion_inside_bin(batch_val, None,cfg)
+                output_rgb_meter_dict,output_depth_meter_dict,rendered_color,\
+                    rendered_depth,output_gt_images_data,output_sparse_depth_data \
+                        = my_model.forward_gaussain_fusion_inside_bin_flc(batch_val, None,fuse_type,cfg)
             else:
-                output_rgb_meter_dict,output_depth_meter_dict,\
-                    input_depth_meter_dict,rendered_images, \
-                        rendered_depth,gt_images,gt_depths = my_model.module.forward_gaussain_fusion_inside_bin(batch_val, None,cfg)
+                output_rgb_meter_dict,output_depth_meter_dict,rendered_color,\
+                    rendered_depth,output_gt_images_data,output_sparse_depth_data \
+                        = my_model.module.forward_gaussain_fusion_inside_bin_flc(batch_val, None,fuse_type,cfg)
 
 
-            quit()
+            if cfg.validation_vis_progress:# Omni-Scene
+                
+                plt.figure(figsize=(20,10))
+                plt.subplot(3,2,1)
+                plt.axis('off')
+                plt.title("F-(l):Input")
+                plt.imshow(rendered_color.squeeze(0)[2].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,2)
+                plt.axis('off')
+                plt.title("F-(r):Input")
+                plt.imshow(rendered_color.squeeze(0)[5].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,3)
+                plt.axis('off')
+                plt.title("C-(l)")
+                plt.imshow(rendered_color.squeeze(0)[0].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,4)
+                plt.axis('off')
+                plt.title("C-(r)")
+                plt.imshow(rendered_color.squeeze(0)[3].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,5)
+                plt.axis('off')
+                plt.title("L-(l)")
+                plt.imshow(rendered_color.squeeze(0)[1].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,6)
+                plt.axis('off')
+                plt.title("L-(r)")
+                plt.imshow(rendered_color.squeeze(0)[4].permute(1,2,0).cpu().numpy())
+                plt.savefig(os.path.join(saved_specific_folder_renderd,
+                            bin_token+"_rendered_RGB.png"),bbox_inches='tight')
+                
+                # Omni-Scene Disparity
+                plt.figure(figsize=(20,10))
+                plt.subplot(3,2,1)
+                plt.axis('off')
+                plt.title("F-(l):Input")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,2,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,2)
+                plt.axis('off')
+                plt.title("F-(r):Input")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,5,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,3)
+                plt.axis('off')
+                plt.title("C-(l)")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,0,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,4)
+                plt.axis('off')
+                plt.title("C-(r)")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,3,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,5)
+                plt.axis('off')
+                plt.title("L-(l)")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,1,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,6)
+                plt.axis('off')
+                plt.title("L-(r)")
+                plt.imshow(convert_depth_to_disp(depth=rendered_depth[:,4,:,:].squeeze(0).cpu().numpy()))
+                plt.savefig(os.path.join(saved_specific_folder_renderd,
+                            bin_token+"_rendered_Depth.png"),bbox_inches='tight')
 
 
+            
+                # RGB
+                plt.figure(figsize=(20,10))
+                plt.subplot(3,2,1)
+                plt.axis('off')
+                plt.title("F-(l):INPUT")
+                plt.imshow(output_gt_images_data.squeeze(0)[2].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,2)
+                plt.axis('off')
+                plt.title("F-(r):INPUT")
+                plt.imshow(output_gt_images_data.squeeze(0)[5].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,3)
+                plt.axis('off')
+                plt.title("C-(l)")
+                plt.imshow(output_gt_images_data.squeeze(0)[0].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,4)
+                plt.axis('off')
+                plt.title("C-(r)")
+                plt.imshow(output_gt_images_data.squeeze(0)[3].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,5)
+                plt.axis('off')
+                plt.title("L-(l)")
+                plt.imshow(output_gt_images_data.squeeze(0)[1].permute(1,2,0).cpu().numpy())
+                plt.subplot(3,2,6)
+                plt.axis('off')
+                plt.title("L-(r)")
+                plt.imshow(output_gt_images_data.squeeze(0)[4].permute(1,2,0).cpu().numpy())
+                plt.savefig(os.path.join(saved_specific_folder_gt,
+                            bin_token+"GT_RGB.png"),bbox_inches='tight')
+                
+                # Voxel Disparity
+                plt.figure(figsize=(20,10))
+                plt.subplot(3,2,1)
+                plt.axis('off')
+                plt.title("F-(l):Input")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,2,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,2)
+                plt.axis('off')
+                plt.title("F-(r):Input")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,5,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,3)
+                plt.axis('off')
+                plt.title("C-(l)")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,0,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,4)
+                plt.axis('off')
+                plt.title("C-(r)")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,3,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,5)
+                plt.axis('off')
+                plt.title("L-(l)")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,1,:,:].squeeze(0).cpu().numpy()))
+                plt.subplot(3,2,6)
+                plt.axis('off')
+                plt.title("L-(r)")
+                plt.imshow(convert_depth_to_disp(depth=output_sparse_depth_data[:,4,:,:].squeeze(0).cpu().numpy()))
+                plt.savefig(os.path.join(saved_specific_folder_gt,
+                            bin_token+"GT_Depth.png"),bbox_inches='tight')
+
+
+
+
+            # saved the intermeidate results here for the RGB Here
+            output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
+            output_rgb_meter_center_view_left_ssim = output_rgb_meter_dict['center_view']['left']['ssim']
+            output_rgb_meter_center_view_right_psnr = output_rgb_meter_dict['center_view']['right']['psnr']
+            output_rgb_meter_center_view_right_ssim = output_rgb_meter_dict['center_view']['right']['ssim']   
+            output_rgb_meter_center['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
+            output_rgb_meter_center['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
+            
+            output_rgb_meter_first_view_left_psnr = output_rgb_meter_dict['first_view']['left']['psnr']
+            output_rgb_meter_first_view_left_ssim = output_rgb_meter_dict['first_view']['left']['ssim']   
+            output_rgb_meter_first_view_right_psnr = output_rgb_meter_dict['first_view']['right']['psnr']
+            output_rgb_meter_first_view_right_ssim = output_rgb_meter_dict['first_view']['right']['ssim']
+            output_rgb_meter_first['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
+            output_rgb_meter_first['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
+            
+            output_rgb_meter_last_view_left_psnr = output_rgb_meter_dict['last_view']['left']['psnr']
+            output_rgb_meter_last_view_left_ssim = output_rgb_meter_dict['last_view']['left']['ssim']   
+            output_rgb_meter_last_view_right_psnr = output_rgb_meter_dict['last_view']['right']['psnr']
+            output_rgb_meter_last_view_right_ssim = output_rgb_meter_dict['last_view']['right']['ssim']
+            output_rgb_meter_last["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
+            output_rgb_meter_last["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
+            
+            
+            # saved the intermeidate results here for the Depth here
+            output_depth_meter_center_view_left_mae = output_depth_meter_dict['center_view']['left']['mae']
+            output_depth_meter_center_view_left_mse = output_depth_meter_dict['center_view']['left']['mse']
+            output_depth_meter_center_view_right_mae = output_depth_meter_dict['center_view']['right']['mae']
+            output_depth_meter_center_view_right_mse = output_depth_meter_dict['center_view']['right']['mse']
+            output_depth_meter_center["left"].update(mae=output_depth_meter_center_view_left_mae,
+                                                    mse=output_depth_meter_center_view_left_mse)
+            output_depth_meter_center["right"].update(mae=output_depth_meter_center_view_right_mae,
+                                                    mse=output_depth_meter_center_view_right_mse)
+
+            output_depth_meter_first_view_left_mae = output_depth_meter_dict['first_view']['left']['mae']
+            output_depth_meter_first_view_left_mse = output_depth_meter_dict['first_view']['left']['mse']
+            output_depth_meter_first_view_right_mae = output_depth_meter_dict['first_view']['right']['mae']
+            output_depth_meter_first_view_right_mse = output_depth_meter_dict['first_view']['right']['mse']
+            output_depth_meter_first["left"].update(mae=output_depth_meter_first_view_left_mae,
+                                                    mse=output_depth_meter_first_view_left_mse)
+            output_depth_meter_first["right"].update(mae=output_depth_meter_first_view_right_mae,
+                                                    mse=output_depth_meter_first_view_right_mse)
+            
+
+            output_depth_meter_last_view_left_mae = output_depth_meter_dict['last_view']['left']['mae']
+            output_depth_meter_last_view_left_mse = output_depth_meter_dict['last_view']['left']['mse']
+            output_depth_meter_last_view_right_mae = output_depth_meter_dict['last_view']['right']['mae']
+            output_depth_meter_last_view_right_mse = output_depth_meter_dict['last_view']['right']['mse']
+            output_depth_meter_last["left"].update(mae=output_depth_meter_last_view_left_mae,
+                                                    mse=output_depth_meter_last_view_left_mse)
+            output_depth_meter_last["right"].update(mae=output_depth_meter_last_view_right_mae,
+                                                        mse=output_depth_meter_last_view_right_mse)
+                
+
+                
+        # for this
+        output_rgb_meter_center['left'] = output_rgb_meter_center['left'].get_stats()
+        output_rgb_meter_center['right'] = output_rgb_meter_center['right'].get_stats()
+        
+        output_rgb_meter_first['left'] = output_rgb_meter_first['left'].get_stats()
+        output_rgb_meter_first['right'] = output_rgb_meter_first['right'].get_stats()
+        
+        output_rgb_meter_last['left'] = output_rgb_meter_last['left'].get_stats()
+        output_rgb_meter_last['right'] = output_rgb_meter_last['right'].get_stats()
+        
+        output_depth_meter_center['left'] = output_depth_meter_center['left'].get_stats()
+        output_depth_meter_center['right'] = output_depth_meter_center['right'].get_stats()
+
+        output_depth_meter_first['left'] = output_depth_meter_first['left'].get_stats()
+        output_depth_meter_first['right'] = output_depth_meter_first['right'].get_stats()
+        
+        output_depth_meter_last['left'] = output_depth_meter_last['left'].get_stats()
+        output_depth_meter_last['right'] = output_depth_meter_last['right'].get_stats()
+        
+        
+
+        
+        
+        results_dict = {
+        "rgb_center": output_rgb_meter_center,
+        "rgb_first": output_rgb_meter_first,
+        "rgb_last": output_rgb_meter_last,
+        "depth_center":output_depth_meter_center,
+        "depth_first":output_depth_meter_first,
+        "depth_last":output_depth_meter_last
+            
+        }
+        
+        if not cfg.validation_vis_progress:
+            saved_into_json(data_dict=results_dict,
+                            path=os.path.join(saved_specific_folder,"metric.json"))
 
 
 
@@ -290,6 +527,8 @@ if __name__=="__main__":
     parser.add_argument('--work-dir', type=str)
     parser.add_argument('--val_filelist', type=str)
     parser.add_argument('--resume-from', type=str, default='')
+
+    parser.add_argument('--fusion_type', type=str, default='')
     parser.add_argument(
         "--output_vis",
         action="store_true",
