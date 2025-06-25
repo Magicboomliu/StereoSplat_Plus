@@ -471,7 +471,7 @@ class KITTI360DatasetFusion(Dataset):
         
 
         if self.depth_info_dict.use_sparse_lidar:
-            output_sparse_depth_gts = torch.cat([output_sparse_gt_depth,input_sparse_gt_depth],dim=0)
+            output_sparse_depth_gts = output_sparse_gt_depth
         
         
         # output_c2ws = torch.cat([output_c2ws, input_c2ws], dim=0) # first 2 dimension is the novel final ,final dimension is the input view
