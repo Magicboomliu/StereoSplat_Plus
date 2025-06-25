@@ -31,6 +31,10 @@ from tqdm import tqdm
 from .gaussian import GaussianRenderer
 import math
 import matplotlib.pyplot as plt
+import open3d as o3d
+# from .utilsdir.gaussain_fusion import fuse_gaussians_by_voxel,fuse_gaussians_by_voxel_batched
+from .utilsdir.gaussain_fusion import fuse_gaussians_by_voxel_with_depth_batched_vectorized,fuse_gaussians_by_voxel_with_depth_scatter_batched
+import time
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -1201,9 +1205,15 @@ class ModelWarpper(nn.Module):
         depth_max_value = cfg.max_depth # 100
         depth_min_value = cfg.min_depth # 0.3   
         
-        fusion_gaussain_cv = []
+        
         input_idx_list = [0,1,2]
         
+        fuse_type ='voxel_fusion' # 'voxel-fusion'
+    
+        fusion_gaussain_cv = []
+        
+
+        start_time = time.time()
         for input_idx in input_idx_list:
             # inputs information
             input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
@@ -1215,7 +1225,6 @@ class ModelWarpper(nn.Module):
             input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
             
             
-    
 
             mask = input_sparse_gt_depth > 0
             mask = mask.float()
@@ -1254,12 +1263,51 @@ class ModelWarpper(nn.Module):
                                             results_dict=results_dict,
                                             return_depth=return_depth)
             
+
+    
+            
             gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
             bs = gaussians_cv.shape[0] # batch size is 2
-            fusion_gaussain_cv.append(gaussians_cv)
+
             
+            if fuse_type=='concat':
+                fusion_gaussain_cv.append(gaussians_cv)
+            
+            elif fuse_type =='voxel_fusion':
+                
+                cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
+                pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
+                gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
+                if input_idx==0:
+                    fusion_gaussain_cv.append(gaussians_cv_for_fusion)
+                else:
+                    # fused_gaussain =fuse_gaussians_by_voxel_with_depth_batched_vectorized(
+                    #     gaussians1=fusion_gaussain_cv[input_idx-1],
+                    #     gaussians2=gaussians_cv_for_fusion,
+                    #     point_cloud_range=cfg.point_cloud_range,
+                    #     voxel_size=0.1
+                    # )
+
+                    fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
+                        gaussians1_b=fusion_gaussain_cv[input_idx-1],
+                        gaussians2_b=gaussians_cv_for_fusion,
+                        point_cloud_range=cfg.point_cloud_range,
+                        voxel_size=0.1
+                    )
+                    
+                    fusion_gaussain_cv.append(fused_gaussain)
+            
+            
+            
+        if fuse_type=='concat':
+            fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
         
-        fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+        if fuse_type=='voxel_fusion':
+            fusion_gaussain = fusion_gaussain_cv[-1]
+            fusion_gaussain = fusion_gaussain[:,:,:14]
+        
+        
+        
         #first 2 dimension is the novel final ,final dimension is the input view
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
 
@@ -1290,36 +1338,9 @@ class ModelWarpper(nn.Module):
         rendered_depth = torch.clamp(rendered_depth,min=0,max=150).squeeze(0)
         
 
+        end_time = time.time()
+        duration = (end_time-start_time)
 
-        plt.figure(figsize=(20,10))
-        plt.subplot(3,2,1)
-        plt.axis('off')
-        plt.title("F-(l):Input")
-        plt.imshow(rendered_color[2].permute(1,2,0).cpu().numpy())
-        plt.subplot(3,2,2)
-        plt.axis('off')
-        plt.title("F-(r):Input")
-        plt.imshow(rendered_color[5].permute(1,2,0).cpu().numpy())
-        plt.subplot(3,2,3)
-        plt.axis('off')
-        plt.title("C-(l)")
-        plt.imshow(rendered_color[0].permute(1,2,0).cpu().numpy())
-        plt.subplot(3,2,4)
-        plt.axis('off')
-        plt.title("C-(r)")
-        plt.imshow(rendered_color[3].permute(1,2,0).cpu().numpy())
-        plt.subplot(3,2,5)
-        plt.axis('off')
-        plt.title("L-(l)")
-        plt.imshow(rendered_color[1].permute(1,2,0).cpu().numpy())
-        plt.subplot(3,2,6)
-        plt.axis('off')
-        plt.title("L-(r)")
-        plt.imshow(rendered_color[4].permute(1,2,0).cpu().numpy())
-        plt.savefig("rendered_RGB_fuse.png",bbox_inches='tight')
-        quit()
-        
-        
 
         
         
