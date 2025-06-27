@@ -183,7 +183,6 @@ def main(args):
     
     
     
-    
     '''     Model Configuration   '''
     encoder_cfg = cfg.model.encoder
     # depth unimatch model
