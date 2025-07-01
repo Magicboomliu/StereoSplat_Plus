@@ -49,26 +49,21 @@ class KITTI360DatasetVGGT(Dataset):
         datapath:str,
         train_filelist:str,
         val_filelist:str,
-        test_filelist:str,
         data_version:str,
         resolution: list,
         split: str = "train",
-        use_center: bool = True,
-        use_first: bool = False,
-        use_last: bool = False,
-        supp_view_nums: int=0,
         depth_info_dict: dict=None,
         camera_model: str='OpenGL',
         input_type:str='all',
         max_input_views:int=10,
         pair_images:int=2,
+        names_of_frames:int=2,
         **kwargs,
         ):
         super().__init__()
 
         self.datapath = datapath
         self.data_version = data_version
-        self.supp_view_nums = supp_view_nums
         self.depth_info_dict = depth_info_dict
         self.camera_model = camera_model
         
@@ -76,6 +71,8 @@ class KITTI360DatasetVGGT(Dataset):
         self.max_input_views = max_input_views
         
         self.pair_images = pair_images
+        
+        self.names_of_frames = names_of_frames
         
         
         self.camera_types = [
@@ -93,9 +90,7 @@ class KITTI360DatasetVGGT(Dataset):
         ]
         
         self.reso = resolution
-        self.use_center = use_center
-        self.use_first = use_first
-        self.use_last = use_last
+
         
         if split =='train':
             self.bin_tokens = read_text_lines(train_filelist)
@@ -143,11 +138,9 @@ class KITTI360DatasetVGGT(Dataset):
 
         # N Views
         nums_of_all_view = len(sensor_info_all)
-        selected_index = sorted(random.sample(list(range(nums_of_all_view)), 2))
+        selected_index = sorted(random.sample(list(range(nums_of_all_view)), self.names_of_frames))
         sensor_info_all = [sensor_info_all[ind] for ind in selected_index]
         
-
-
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
         
@@ -305,10 +298,6 @@ if __name__=="__main__":
         "resolution":[112, 518], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",
         "sequence":'2013_05_28_drive_0000_sync',
-        "use_center":False,
-        "use_first": True,
-        "use_last": False,
-        "supp_view_nums": 3,
         "camera_model":"OpenCV",
         "depth_info_dict":ns,
         "input_type": "all", # select from all, or "stereo" or "max"
