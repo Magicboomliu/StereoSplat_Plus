@@ -83,7 +83,7 @@ class CameraHead(nn.Module):
             list: A list of predicted camera encodings (post-activation) from each iteration.
         """
         # Use tokens from the last block for camera prediction.
-        tokens = aggregated_tokens_list[-1]
+        tokens = aggregated_tokens_list[-1] # 取 aggregated_tokens_list[-1] 作为输入（通常是 transformer encoder 的输出）
 
         # Extract the camera tokens
         pose_tokens = tokens[:, :, 0]

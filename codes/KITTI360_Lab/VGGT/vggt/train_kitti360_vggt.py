@@ -259,26 +259,30 @@ def main(args):
                     #               'world_points', 
                     #               'world_points_conf', 'images'])
                     '''
-                    preditions = my_model(batch) 
+                    predictions,loss,loss_terms = my_model(batch,mode='train',cfg=cfg) 
                     
-                    pred_depths = preditions['depth']
-                    
-                    plt.subplot(2,2,1)
-                    plt.axis("off")
-                    plt.imshow(pred_depths[0][0].squeeze(-1).detach().cpu().numpy())
-                    plt.subplot(2,2,2)
-                    plt.axis("off")
-                    plt.imshow(pred_depths[0][1].squeeze(-1).detach().cpu().numpy())  
-                    plt.subplot(2,2,3)
-                    plt.axis("off")
-                    plt.imshow(pred_depths[0][2].squeeze(-1).detach().cpu().numpy())  
-                    plt.subplot(2,2,4)
-                    plt.axis("off")
-                    plt.imshow(pred_depths[0][3].squeeze(-1).detach().cpu().numpy()) 
-                    plt.savefig("1.png")
-                    print(pred_depths.shape)
-                    print(preditions.keys())
+                    print(loss_terms)
+   
                     quit()
+                    
+                    # pred_depths = preditions['depth']
+                    
+                    # plt.subplot(2,2,1)
+                    # plt.axis("off")
+                    # plt.imshow(pred_depths[0][0].squeeze(-1).detach().cpu().numpy())
+                    # plt.subplot(2,2,2)
+                    # plt.axis("off")
+                    # plt.imshow(pred_depths[0][1].squeeze(-1).detach().cpu().numpy())  
+                    # plt.subplot(2,2,3)
+                    # plt.axis("off")
+                    # plt.imshow(pred_depths[0][2].squeeze(-1).detach().cpu().numpy())  
+                    # plt.subplot(2,2,4)
+                    # plt.axis("off")
+                    # plt.imshow(pred_depths[0][3].squeeze(-1).detach().cpu().numpy()) 
+                    # plt.savefig("1.png")
+                    # print(pred_depths.shape)
+                    # print(preditions.keys())
+                    # quit()
 
     
 
