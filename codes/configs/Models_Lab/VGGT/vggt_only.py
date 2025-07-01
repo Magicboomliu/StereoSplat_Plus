@@ -96,3 +96,22 @@ min_depth=0.3
 
 
 vggt_pretrained_weight="/data1/zliu/foundation_model/model.pt"
+
+
+
+
+loss_args = dict(
+    use_depth_loss=True,
+    use_pcd_loss=True,
+    use_pos_enc_loss=True,
+    depth_conf_loss=True,
+    pcd_conf_loss=True,
+    
+    alpha_weight=0.5,
+    
+    depth_loss_weight=1.0,
+    pcd_loss_weight=1.0,
+    pos_enc_loss_weight=1.0,
+    
+    
+)

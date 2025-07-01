@@ -3,12 +3,16 @@ import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 
 from vggt.models.aggregator import Aggregator
-from vggt.heads.camera_head import CameraHead
+# from vggt.heads.camera_head import CameraHead
+from vggt.heads.camera_head_extrin import CameraHeadExtrin
+
 from vggt.heads.dpt_head import DPTHead
 from vggt.heads.track_head import TrackHead
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri,extri_to_pose_encoding
 from vggt.utils.geometry import unproject_depth_map_to_point_map
+
+from vggt.losses.losses import depth_loss,camera_loss,pcd_loss
 
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
@@ -16,7 +20,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         super().__init__()
 
         self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim)
-        self.camera_head = CameraHead(dim_in=2 * embed_dim)
+        self.camera_head_extrin = CameraHeadExtrin(dim_in=2 * embed_dim)
         self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation="inv_log", conf_activation="expp1")
         self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1")
         # self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size)
@@ -147,36 +151,37 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         input_pos_enc = extri_to_pose_encoding(extrinsics=input_c2ws_relative_matrix) #(1,4,7)
 
-        input_pointmap = depth_to_world_points(depth=input_fusion_depth,K=input_intrinsic_matrix,cam2world=input_c2ws_relative_matrix)
+        input_pointmap = depth_to_world_points(depth=input_fusion_depth,
+                                                K=input_intrinsic_matrix,
+                                                cam2world=input_c2ws_relative_matrix)
 
         
         input_dict['input_c2ws_rel_mat'] = input_c2ws_relative_matrix
         input_dict['input_intrinsic_mat'] = input_intrinsic_matrix
         input_dict['input_pos_enc'] = input_pos_enc
         input_dict['input_pointmap'] = input_pointmap
+        input_dict['input_depth'] = input_fusion_depth
         
         return input_dict
         
     
-    def forward(self, batch):
+    def forward(self, batch,mode='train',cfg=None):
         '''Prepared the Following Input data'''
         
         input_dict = self.prepare_input_data(batch)
-        
         images = input_dict['input_rgb']
         
-    
         # If without batch dimension, add it
         if len(images.shape) == 4:
             images = images.unsqueeze(0)
-
         aggregated_tokens_list, patch_start_idx = self.aggregator(images)
 
+                
+        
         predictions = {}
-
         with torch.cuda.amp.autocast(enabled=False):
-            if self.camera_head is not None:
-                pose_enc_list = self.camera_head(aggregated_tokens_list)
+            if self.camera_head_extrin is not None:
+                pose_enc_list = self.camera_head_extrin(aggregated_tokens_list)
                 predictions["pose_enc"] = pose_enc_list[-1]  # pose encoding of the last iteration
 
             if self.depth_head is not None:
@@ -194,10 +199,87 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
                 predictions["world_points_conf"] = pts3d_conf
 
 
+        
+        if mode =='train' or mode=='val':
 
-        predictions["images"] = images
+            bs,vs,rgb_channel,cur_h,cur_w = images.shape[:5]
+            
+            predictions["images"] = images
+            
+            predicted_pose_enc = predictions["pose_enc"]
 
-        return predictions
+            predicted_depth = predictions['depth'].squeeze(-1).reshape(bs*vs,1,cur_h,cur_w)
+            predicted_depth_conf = predictions["depth_conf"].reshape(bs*vs,1,cur_h,cur_w)
+            
+            predicted_pcd = predictions['world_points'].permute(0,1,4,2,3).reshape(bs*vs,3,cur_h,cur_w)
+            predicted_pcd_conf = predictions['world_points_conf'].reshape(bs*vs,1,cur_h,cur_w)
+            
+            '''
+                input_dict['input_c2ws_rel_mat'] = input_c2ws_relative_matrix
+                input_dict['input_intrinsic_mat'] = input_intrinsic_matrix
+                input_dict['input_pos_enc'] = input_pos_enc
+                input_dict['input_pointmap'] = input_pointmap
+                input_dict['input_depth']
+            
+            '''
+            
+            gt_input_depth = input_dict['input_depth'].reshape(bs*vs,1,cur_h,cur_w)
+            gt_pcd = input_dict['input_pointmap'].reshape(bs*vs,3,cur_h,cur_w)
+            gt_pos_enc = input_dict['input_pos_enc']
+
+            
+            # Get the Loss Here
+            # ======================== losses ======================== #
+            loss = 0.0
+            loss_terms = {}
+            def set_loss(key, split, loss_value, loss_weight=1.0):
+                loss_terms[f"{split}/loss_{key}"] = loss_value.item()
+                loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight  
+            
+            if cfg.loss_args.use_depth_loss and cfg.loss_args.depth_conf_loss:
+                depth_loss_with_conf = depth_loss(pred_depth=predicted_depth,
+                                                  gt_depth=gt_input_depth,
+                                                  sigma_d=predicted_depth_conf,
+                                                  alpha=cfg.loss_args.alpha_weight)
+                
+                set_loss(key="depth_loss_with_conf",
+                         split=mode,
+                         loss_value=depth_loss_with_conf,
+                         loss_weight=cfg.loss_args.depth_loss_weight)
+                
+                loss +=depth_loss_with_conf* cfg.loss_args.depth_loss_weight
+            
+            elif cfg.loss_args.use_depth_loss and not cfg.loss_args.depth_conf_loss:
+                pass
+            
+            
+            if cfg.loss_args.use_pcd_loss and cfg.loss_args.pcd_conf_loss:
+                pcd_loss_with_conf = pcd_loss(pred_pcd=predicted_pcd,
+                         gt_pcd=gt_pcd,
+                         sigma_p=predicted_pcd_conf,
+                         alpha=cfg.loss_args.alpha_weight)
+                
+                loss +=pcd_loss_with_conf* cfg.loss_args.pcd_loss_weight
+                set_loss(key="pcd_loss_with_conf",
+                         split=mode,
+                         loss_value=pcd_loss_with_conf,
+                         loss_weight=cfg.loss_args.pcd_conf_loss)
+
+
+            elif cfg.loss_args.use_pcd_loss and not cfg.loss_args.pcd_conf_loss:
+                pass
+            
+            if cfg.loss_args.use_pos_enc_loss:
+                camera_loss_data = camera_loss(pred_camera=predicted_pose_enc, 
+                            gt_camera=gt_pos_enc)
+                loss +=camera_loss_data* cfg.loss_args.pos_enc_loss_weight
+
+                set_loss(key="camera_loss_data",
+                         split=mode,
+                         loss_value=camera_loss_data,
+                         loss_weight=cfg.loss_args.pos_enc_loss_weight)
+
+        return predictions,loss,loss_terms
 
 
 
