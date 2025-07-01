@@ -105,10 +105,8 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
 
 
 
-
 def main(args):
     
-
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir

@@ -38,13 +38,15 @@ val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/va
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
-supp_view_nums=3
-
-# if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-#unimatch_weights_path=None
-
 camera_model='OpenCV' # select from openCV and openGL
+
+
+
+input_type="all" # select from all, or "stereo" or "max"
+max_input_views=10
+pair_images=2
+names_of_frames=2
+
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -53,28 +55,28 @@ depth_info_params = dict(
     )
 
 dataset_params = dict(
-    dataset_name="KITTI360Dataset",
+    dataset_name="KITTI360DatasetVGGT",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
     val_filelist=val_filelist,
-    test_filelist=test_filelist,
     sequence=sequence,
     data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
-    use_center=None,
-    use_first=None,
-    use_last=None,
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
     num_workers_val=8,
     num_workers_test=4,
-    supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model
+    camera_model=camera_model,
+    input_type=input_type,
+    max_input_views=max_input_views,
+    pair_images=pair_images,
+    names_of_frames=names_of_frames
+    
 )
 
 num_cams = 2
@@ -92,3 +94,5 @@ return_depth=True
 max_depth=100
 min_depth=0.3
 
+
+vggt_pretrained_weight="/data1/zliu/foundation_model/model.pt"

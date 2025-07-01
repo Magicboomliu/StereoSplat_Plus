@@ -21,17 +21,15 @@ import numpy as np
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
-
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
-
 import sys
 sys.path.append("../../..")
 import data.KITTI360_VGGT.dataloader as datasets
-
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+import matplotlib.pyplot as plt
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -51,6 +49,7 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
 
     logger.propagate = False
     return logger
+
 
 def main(args):
     # load config
@@ -103,8 +102,185 @@ def main(args):
         logger.info(f'Config:\n{cfg.pretty_text}')
     
 
+    dataset = getattr(datasets, dataset_config.dataset_name)
+
+    train_params = {
+        "datapath":dataset_config.datapath,
+        "train_filelist":dataset_config.train_filelist,
+        "val_filelist":dataset_config.val_filelist,
+        
+        "data_version":dataset_config.data_version,
+        "resolution":dataset_config.resolution, 
+        
+        "split":"train",
+        
+        "sequence":dataset_config.sequence,
+        "depth_info_dict":dataset_config.depth_info_params,
+        "camera_model": dataset_config.camera_model,
+        
+        "input_type":dataset_config.input_type,
+        "max_input_views":dataset_config.max_input_views,
+        "pair_images":dataset_config.pair_images,
+        "names_of_frames":dataset_config.names_of_frames
+    
+    }
+
+    val_params = {
+        "datapath":dataset_config.datapath,
+        "train_filelist":dataset_config.train_filelist,
+        "val_filelist":dataset_config.val_filelist,
+
+        "data_version":dataset_config.data_version,
+        "resolution":dataset_config.resolution, 
+        "split":"val",
+        "sequence":dataset_config.sequence,
+
+        "depth_info_dict":dataset_config.depth_info_params,
+        "camera_model": dataset_config.camera_model,
+
+        "input_type":dataset_config.input_type,
+        "max_input_views":dataset_config.max_input_views,
+        "pair_images":dataset_config.pair_images,
+        "names_of_frames":dataset_config.names_of_frames
+    }
 
 
+    # Define the dataloader
+    train_dataset = dataset(**train_params)
+    val_dataset = dataset(**val_params)
+
+    train_dataloader = DataLoader(
+        train_dataset, dataset_config.batch_size_train, shuffle=True,
+        num_workers=dataset_config.num_workers
+    )
+    val_dataloader = DataLoader(
+        val_dataset, dataset_config.batch_size_val, shuffle=False,
+        num_workers=dataset_config.num_workers_val
+    )
+    
+    # VGGT Networks
+    my_model = VGGT()
+    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
+    if logger is not None:
+        logger.info(f'Number of params: {n_parameters}')
+    param_groups = [
+        {"params": [], "lr": cfg.lr},             # 默认组
+        {"params": [], "lr": cfg.lr * 0.1},      # 'pretrained' 组，lr_mult=0.01
+    ]
+    
+    for name, param in my_model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "aggregator" in name:
+            param_groups[1]["params"].append(param)
+        else:
+            param_groups[0]["params"].append(param)
+
+
+    if cfg.vggt_pretrained_weight!="None":
+        # loaded the pretrained weight
+        my_model.load_state_dict(torch.load(cfg.vggt_pretrained_weight),strict=False)
+
+
+
+    optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.optimizer.weight_decay,betas=(0.9, 0.999))
+    # learning rate scheme
+    warm_up = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        1 / (cfg.warmup_steps*accelerator.num_processes),
+        1,
+        total_iters=cfg.warmup_steps*accelerator.num_processes,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.max_train_steps*accelerator.num_processes, eta_min=cfg.lr * 0.1)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warm_up, scheduler], milestones=[cfg.warmup_steps*accelerator.num_processes])
+        
+    
+    # move to the accelerate
+    my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
+        my_model, optimizer, train_dataloader, val_dataloader, scheduler
+    )
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
+
+    # resume and load
+    epoch = 0
+    global_iter = 0
+    first_epoch = 0
+
+    # Potentially load in the weights and states from a previous save
+    if args.resume_from:
+        cfg.resume_from = args.resume_from
+    if cfg.resume_from:
+        if cfg.resume_from == "None":
+            path = None
+        elif cfg.resume_from != "latest":
+            path = cfg.resume_from
+        else:
+            # Get the most recent checkpoint
+            dirs = os.listdir(cfg.work_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            if len(dirs) > 0:
+                dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+                path = dirs[-1]
+            else:
+                path = None
+
+    if path:
+        accelerator.print(f"Resuming from checkpoint {path}")
+        accelerator.load_state(path, map_location='cpu', strict=False)
+        global_iter = int(path.split("/")[-2].split("-")[1])
+        first_epoch = global_iter // num_update_steps_per_epoch
+        resume_step = global_iter % num_update_steps_per_epoch
+        if accelerator.is_main_process:
+            print(f'successfully resumed from epoch{first_epoch}-iter{global_iter}')
+    
+    else:
+        resume_step = -1
+    
+    if accelerator.is_main_process:
+        print('work dir: ', args.work_dir)
+        print("max iteration steps: ",cfg.max_train_steps)
+
+    # training
+    print_freq = cfg.print_freq
+
+    while epoch < max_num_epochs:
+        my_model.train()
+        data_time_s = time.time()
+        time_s = time.time()
+        for i_iter, batch in enumerate(train_dataloader):
+            data_time_e = time.time()
+        
+            with accelerator.accumulate(my_model):
+                optimizer.zero_grad()
+                if args.gpus <= 1:
+                    '''
+                    #dict_keys(['pose_enc', 'depth', 'depth_conf', 
+                    #               'world_points', 
+                    #               'world_points_conf', 'images'])
+                    '''
+                    preditions = my_model(batch) 
+                    
+                    pred_depths = preditions['depth']
+                    
+                    plt.subplot(2,2,1)
+                    plt.axis("off")
+                    plt.imshow(pred_depths[0][0].squeeze(-1).detach().cpu().numpy())
+                    plt.subplot(2,2,2)
+                    plt.axis("off")
+                    plt.imshow(pred_depths[0][1].squeeze(-1).detach().cpu().numpy())  
+                    plt.subplot(2,2,3)
+                    plt.axis("off")
+                    plt.imshow(pred_depths[0][2].squeeze(-1).detach().cpu().numpy())  
+                    plt.subplot(2,2,4)
+                    plt.axis("off")
+                    plt.imshow(pred_depths[0][3].squeeze(-1).detach().cpu().numpy()) 
+                    plt.savefig("1.png")
+                    print(pred_depths.shape)
+                    print(preditions.keys())
+                    quit()
+
+    
 
 
 if __name__ == '__main__':

@@ -1265,9 +1265,9 @@ class ModelWarpper(nn.Module):
                                             results_dict=results_dict,
                                             return_depth=return_depth)
             
-
-    
             
+            
+            # np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
             gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
             bs = gaussians_cv.shape[0] # batch size is 2
 
@@ -1281,28 +1281,25 @@ class ModelWarpper(nn.Module):
                 pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
                 gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
                 if input_idx==0:
-                    fusion_gaussain_cv.append(gaussians_cv_for_fusion)
+                    fused_gaussain = gaussians_cv_for_fusion
+                    
                 else:
-                    # fused_gaussain =fuse_gaussians_by_voxel_with_depth_batched_vectorized(
-                    #     gaussians1=fusion_gaussain_cv[input_idx-1],
-                    #     gaussians2=gaussians_cv_for_fusion,
-                    #     point_cloud_range=cfg.point_cloud_range,
-                    #     voxel_size=0.1
-                    # )
-
                     fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
                         gaussians1_b=fusion_gaussain_cv[input_idx-1],
                         gaussians2_b=gaussians_cv_for_fusion,
                         point_cloud_range=cfg.point_cloud_range,
-                        voxel_size=0.1
+                        voxel_size=1.0
                     )
                     
-                    fusion_gaussain_cv.append(fused_gaussain)
+                fusion_gaussain_cv.append(fused_gaussain)
             
             elif fuse_type=="None":
                 fusion_gaussain_cv.append(gaussians_cv)
-                
             
+        #     estimated_pcd = fused_gaussain[0][:,:3].detach().cpu().numpy()
+        #     np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
+
+        # quit()
         if fuse_type=='concat':
             fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
         
