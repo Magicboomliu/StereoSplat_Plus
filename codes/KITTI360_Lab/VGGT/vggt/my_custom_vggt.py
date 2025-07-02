@@ -13,7 +13,10 @@ from vggt.utils.pose_enc import pose_encoding_to_extri,extri_to_pose_encoding
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from vggt.losses.losses import depth_loss,camera_loss,pcd_loss
-
+from vggt.metrics.metrics import compute_rra_rta_absolute,compute_depth_mae_mse,compute_pcd_mae_mse,convert_depth_to_disp
+import os
+import numpy as np
+import skimage.io
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(self, img_size=518, patch_size=14, embed_dim=1024):
@@ -140,7 +143,10 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         
         valid_depth_mask = input_depth_sparse> 0
         valid_depth_mask =  valid_depth_mask.float()
-        input_fusion_depth = valid_depth_mask * input_depth_sparse + (1-valid_depth_mask) * input_depth
+        #FIXME Here
+        #input_fusion_depth = valid_depth_mask * input_depth_sparse + (1-valid_depth_mask) * input_depth
+        input_fusion_depth = input_depth
+        
         
         input_c2ws_relative_matrix = compute_relative_camera_pose(input_c2ws) #(B,V,4,4)
         
@@ -279,10 +285,102 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
                          loss_value=camera_loss_data,
                          loss_weight=cfg.loss_args.pos_enc_loss_weight)
 
-        return predictions,loss,loss_terms
+        if mode=='train':
+            return predictions,loss,loss_terms
+        elif mode =='val':
+            return predictions,loss,loss_terms,input_dict
 
+    
+    def validation_step(self,batch,val_results_saved_dir,cfg=None):
+        
+        with torch.no_grad():
+            predictions,loss,loss_terms,input_dict= self.forward(batch,mode='val',cfg=cfg) 
+                
+        batch_data_for_eval= {
+            "pred_pos_enc": predictions["pose_enc"],
+            "predicted_depth": predictions['depth'].squeeze(-1),
+            "predicted_depth_conf":predictions["depth_conf"],
+            "predicted_pcd" : predictions['world_points'].permute(0,1,4,2,3),
+            "predicted_pcd_conf":predictions['world_points_conf'],
+            
+            "gt_input_depth":input_dict['input_depth'],
+            "gt_pcd":input_dict['input_pointmap'],
+            "gt_pos_enc":input_dict['input_pos_enc'],
+            "input_images":input_dict['input_rgb']   
+        }
+        
+        output_rgb_meter_dict = self.save_val_results(batch_data_for_eval=batch_data_for_eval,
+                              saved_dir=val_results_saved_dir,
+                              cfg=cfg)
+        
+        return predictions,loss,loss_terms,input_dict,output_rgb_meter_dict
+    
+    
+    def save_val_results(self,batch_data_for_eval,saved_dir,cfg):
+        output_rgb_meter_dict = dict()
+        
+        input_images = batch_data_for_eval['input_images']
+        
+        predicted_pos_enc = batch_data_for_eval["pred_pos_enc"]
+        gt_pos_enc = batch_data_for_eval['gt_pos_enc']
+        
+        pred_cam2world = pose_encoding_to_extri(predicted_pos_enc)
+        gt_cam2world = pose_encoding_to_extri(gt_pos_enc)
 
+        rra, rta = compute_rra_rta_absolute(est=pred_cam2world,
+                                 gt=gt_cam2world)
+        
+        predicted_depth = batch_data_for_eval["predicted_depth"]
+        predicted_depth_conf = batch_data_for_eval["predicted_depth_conf"]
+        gt_depth = batch_data_for_eval["gt_input_depth"]
+        
+        
+        depth_mae, depth_mse = compute_depth_mae_mse(depth_pred=predicted_depth,
+                              depth_gt=gt_depth)
+        
+        pred_pcd =  batch_data_for_eval["predicted_pcd"]
+        pred_pcd_conf = batch_data_for_eval['predicted_pcd_conf']
+        gt_pcd = batch_data_for_eval["gt_pcd"]
+        
+        pcd_mae, pcd_mse = compute_pcd_mae_mse(est_pcd=pred_pcd,
+                            gt_pcd=gt_pcd)
+        
+        
+        output_rgb_meter_dict['rra'] = rra.data.data.item()
+        output_rgb_meter_dict['rta'] = rta.data.item()
+        output_rgb_meter_dict['depth_mae'] = depth_mae.data.item()
+        output_rgb_meter_dict['depth_mse'] = depth_mse.data.item()
+        
+        output_rgb_meter_dict['pcd_mae'] = pcd_mae.data.item()
+        output_rgb_meter_dict['pcd_mse'] = pcd_mse.data.item()
 
+        # saved into images.
+        os.makedirs(saved_dir,exist_ok=True)
+
+        if cfg.validation_vis_progress:
+            
+            bs,view_num,cur_height,cur_width = predicted_depth.shape
+            
+            for idx in range(view_num):
+                predict_depth_per = predicted_depth[0][idx].cpu().numpy()
+                predict_depth_per_vis = convert_depth_to_disp(depth=predict_depth_per)
+                skimage.io.imsave(os.path.join(saved_dir,"pred_depth_{}.png".format(idx)),
+                                  predict_depth_per_vis)
+                
+                
+                gt_depth_per = gt_depth[0][idx].cpu().numpy()
+                gt_depth_per_vis = convert_depth_to_disp(depth=gt_depth_per)
+                skimage.io.imsave(os.path.join(saved_dir,"gt_depth_{}.png".format(idx)),
+                                  gt_depth_per_vis)
+                
+                
+                skimage.io.imsave(os.path.join(saved_dir,'input_image_{}.png'.format(idx)),
+                                   (input_images.squeeze(0)[idx].permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+        
+        
+        return output_rgb_meter_dict
+        
 
 if __name__=="__main__":
     from vggt.utils.pose_enc import pose_encoding_to_extri_intri
