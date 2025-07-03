@@ -248,10 +248,10 @@ def main(args):
             param_groups[0]["params"].append(param)
 
 
-    if cfg.vggt_pretrained_weight!="None":
+    #if cfg.vggt_pretrained_weight!="None":
         # loaded the pretrained weight
-        my_model.load_state_dict(torch.load(cfg.vggt_pretrained_weight),strict=False)
-        logging.info("Loading the VGGT Weight Successfully!")
+    my_model.load_state_dict(torch.load(cfg.vggt_pretrained_weight),strict=False)
+       
 
 
 
