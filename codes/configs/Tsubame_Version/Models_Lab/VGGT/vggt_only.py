@@ -38,7 +38,7 @@ test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 camera_model='OpenCV' # select from openCV and openGL
-vggt_pretrained_weight="/gs/cache_models/VGGT/foundation_model"
+vggt_pretrained_weight="/gs/cache_models/VGGT/foundation_model/model.pt"
 
 input_type="all" # select from all, or "stereo" or "max"
 max_input_views=10
