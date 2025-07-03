@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "vggt_only_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs/VGGT_Only/Debugs/outputs_vis/{}".format(exp_name)
+output_dir ="/gs/FeedForwardGS/VGGT/KITTI360_FineTuned/First_As_World_Rel_Pose/VIS"
 validation_vis_progress=True
 
 # learning rate setiing
@@ -31,14 +31,14 @@ resolution = [112, 518]
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 background_color=[0.0, 0.0, 0.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/gs/KITTI360_For_Upload"
+train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 camera_model='OpenCV' # select from openCV and openGL
-vggt_pretrained_weight="/data1/zliu/foundation_model/model.pt"
+vggt_pretrained_weight="/gs/cache_models/VGGT/foundation_model"
 
 input_type="all" # select from all, or "stereo" or "max"
 max_input_views=10
@@ -62,7 +62,7 @@ dataset_params = dict(
     data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
-    batch_size_train=1,
+    batch_size_train=3,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
