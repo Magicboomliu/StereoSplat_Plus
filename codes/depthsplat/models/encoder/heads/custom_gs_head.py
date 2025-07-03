@@ -228,6 +228,9 @@ class Custom_Gaussain_Head(nn.Module):
         means = rearrange(means, "b v c h w -> b (v h w) c",
                               b=b, v=v, c=3) #(B,V*H*W,14)
         
+        #FIXME
+        means = means + offsets
+        
         gaussians = torch.cat([means, rgbs, opacities, rotations, scales], dim=-1)
  
 
