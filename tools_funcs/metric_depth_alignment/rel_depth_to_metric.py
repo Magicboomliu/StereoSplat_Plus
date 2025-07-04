@@ -9,7 +9,6 @@ import cv2
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-
 def load_the_depthanytingV2_results(path,scale=50):
     # Read the image in unchanged mode (preserves uint16 format)
     img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
@@ -179,12 +178,23 @@ if __name__=="__main__":
     
     root_folder = "/data1/StereoDatasets/KITTI/KITTI360"
     
+    
     dpt_type = "NMRFStereo" # select from "depthanythingV2" and "Metric3DV2" and "NMRFStereo"
+    
+    
     matched_type = "None" # select from "LS" "Med", "None"
+    
+    
     if dpt_type =="depthanythingV2":
         est_depth_rel_root_path = "{}/monocular_depth/monodepthV2/".format(root_folder)
+    
+    
+    
     elif dpt_type =='Metric3DV2':
         est_depth_rel_root_path = "{}/monocular_depth/Metric3DV2/".format(root_folder)
+    
+    
+    
     elif dpt_type=='NMRFStereo':
         est_depth_rel_root_path = "{}/PseudoDepth_NMRFStereo/".format(root_folder)
     
@@ -199,6 +209,7 @@ if __name__=="__main__":
     mean_mse_right = 0
     
     idx = 0
+    
     for fname in tqdm(sorted(os.listdir(image_folder_left))):
         if "conf" in fname:
             continue

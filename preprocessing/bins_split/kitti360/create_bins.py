@@ -115,7 +115,6 @@ camera_types = [
     "CAM_LEFT",
     "CAM_RIGHT",]
 
-
 def get_c2ws(cam0_to_pose_path):
     camera_extrinsics_list = np.loadtxt(cam0_to_pose_path, dtype=np.float32)#(N,17)
     camera_extrinsics_dict = dict()
@@ -210,9 +209,6 @@ def loaded_sensors_data_info(root_path,annotation_path):
     # right cam to world
     right_cam2world = right_camera.cam2world[instance_id]   # left cam to world
     
-    
-    
-
     sequence_number_id = get_sequence_frame_number(sequence_name)
     velo = Kitti360Viewer3DRaw(mode = 'velodyne', seq = sequence_number_id, kitti360_path=args.root_path)
     
@@ -228,21 +224,19 @@ def loaded_sensors_data_info(root_path,annotation_path):
     
     
     return_dict = {
-        "left_cam_intrinsic":left_cam_intrinsic,
-        "left_cam_to_world": left_cam2world,
-        "left_cam_to_velo": RectCam0ToVelo,
-        "velo_to_left_cam": TrVeloToRectCam0,
-        "right_cam_intrinsic":right_cam_instrinsic,
-        "right_cam_to_world":right_cam2world,
-        "right_cam_to_velo": RectCam1ToVelo,
-        "velo_to_right_cam": TrVeloToRectCam1
-        
-        
-        
+        "left_cam_intrinsic":left_cam_intrinsic, # Left Instrinsic
+        "left_cam_to_world": left_cam2world,    # Left Cam To World
+        "left_cam_to_velo": RectCam0ToVelo,     # Left To Velo
+        "velo_to_left_cam": TrVeloToRectCam0,   # Velo To Left
+        "right_cam_intrinsic":right_cam_instrinsic,  # Right Instrinsic
+        "right_cam_to_world":right_cam2world,        # Right Cam To World
+        "right_cam_to_velo": RectCam1ToVelo,        # Right Cam To Velo
+        "velo_to_right_cam": TrVeloToRectCam1       # Velo To Right
     }
     
-    return return_dict
     
+    return return_dict
+
 def rotation_matrix_x(angles):
     cos = torch.cos(angles)
     sin = torch.sin(angles)
@@ -340,7 +334,9 @@ def obtain_sensor2_reference_lidar_top(args,
                                        reference_dict,
                                        sensor_type):
             
-    sensors_info_dict = loaded_sensors_data_info(root_path=args.root_path,annotation_path=current_annotation_path)        
+    sensors_info_dict = loaded_sensors_data_info(root_path=args.root_path,annotation_path=current_annotation_path)    
+    
+
     
     if sensor_type=="LIDAR_TOP":   
         data_path = current_annotation_path.replace("annotations","data_3d_raw").replace("image_00/data_rect","velodyne_points/data").replace(".json",".bin")
@@ -387,7 +383,8 @@ def obtain_sensor2_reference_lidar_top(args,
         "sensor2world_transform": sensor_to_world_transform,
         "sensor2lidar_translation":sensor_to_reference_lidar_translation,
         "sensor2lidar_rotation":sensor_to_refernece_lidar_rotation,
-        "sensor2lidar_transform":sensor_to_reference_lidar_transform
+        "sensor2lidar_transform":sensor_to_reference_lidar_transform,
+        "sensor2_reference_cam0": sensor_to_reference_cam0,
         
     }
     
@@ -406,9 +403,12 @@ def generate_bin_info(args,bin_token,scene_token,samples_all,bin_start, bin_end,
     first_sample_annotation_path = samples_all[bin_start]
     last_sample_annotation_path = samples_all[bin_end]
     center_sample_annotation_path = samples_all[bin_center]
-    # using the center view as the reference view
+    
+    
+    # using the first view as the reference view
     reference_sample_infos_dict = loaded_sensors_data_info(root_path=args.root_path,
-                                                      annotation_path=center_sample_annotation_path)
+                                                      annotation_path=first_sample_annotation_path)
+    
 
     # bin samples is order def
     bin_samples_annotation_path = [center_sample_annotation_path, first_sample_annotation_path, last_sample_annotation_path] + \
@@ -420,14 +420,13 @@ def generate_bin_info(args,bin_token,scene_token,samples_all,bin_start, bin_end,
         "scene_token": scene_token,
         "timestep":os.path.basename(center_sample_annotation_path)[:-4],
         "bin_length": bin_length,
+        "original_reference_view_info_dict": reference_sample_infos_dict
     }
     
     # {'LIDAR_TOP': [], 'CAM_LEFT': [], 'CAM_RIGHT': []}
     sensor_info = {k:[] for k in ["LIDAR_TOP"] + camera_types}
     
-    
-    for sample_path in bin_samples_annotation_path:
-        
+    for sample_path in bin_samples_annotation_path:    
         for sensor in sensor_info.keys():
             current_sensor_info = obtain_sensor2_reference_lidar_top(
                                             args=args,
@@ -442,6 +441,7 @@ def generate_bin_info(args,bin_token,scene_token,samples_all,bin_start, bin_end,
             
       
 def create_kitti_infos(args,annotation_path,current_seq_name):
+    
     def find_bin_end(bin_start,dists,min_bin_length):
         '''
         dists_cp: 复制 dists，用于遍历。
@@ -478,15 +478,13 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
             return bin_end + bin_start, bin_center + bin_start
         else:
             return None, None
-    
-    
+             
     assert os.path.exists(args.out_dir)
     assert args.out_dir is not None
     
     
     all_the_bins = {"bins": [], "adjacent_bins": []}
     train_scene_tokens = []
-
 
     annotations_list = read_text_lines(annotation_path)# 10238
     annotations_list = [os.path.join(args.root_path,f) for f in annotations_list]
@@ -499,12 +497,13 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
     dists = []
     
     for i in tqdm(range(len(annotations_list) - 1)):
-
+        
         sample_0 = annotations_list[i]
         sample_1 = annotations_list[i + 1]
-            
+        
+        # Left Cam to World at Sample 0
         left_cam2world_0 = loaded_sensors_data_info(args.root_path, sample_0)['left_cam_to_world']
-
+        # Left Cam to World at Smaple 1
         left_cam2world_1 = loaded_sensors_data_info(args.root_path, sample_1)['left_cam_to_world']
 
         translation_sample_0 = left_cam2world_0[:3,3]
@@ -566,12 +565,12 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
 def kitti360_data_prep(args):
     idx = 0
     all_sequence_names = sorted(os.listdir(args.filelist_folder))
-    all_sequence_names = all_sequence_names[4:]
+    all_sequence_names = all_sequence_names[:1]
+    
     for filename_list in all_sequence_names:
         seq_name = os.path.basename(filename_list)[:-9]
-        
         print("Processed Current Seq is {}, Finished {}/{}".format(seq_name,idx,len(os.listdir(args.filelist_folder))))
-        idx = idx +1
+        idx = idx +1    
         current_annotations_fname = os.path.join(args.filelist_folder, filename_list)
         create_kitti_infos(args=args,annotation_path=current_annotations_fname,current_seq_name=seq_name)        
 

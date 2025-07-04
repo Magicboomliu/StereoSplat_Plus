@@ -18,8 +18,8 @@ Note: all the predicted depth are using the alignment algorthims for scale match
 |           	|   Metric3D-V2   	|    Least Square    	|       1.70       	|        14.96       	|        1.75       	|        15.39       	|
 |           	|   Metric3D-V2   	| Medium Scale Align 	|       1.68       	|        16.09       	|        1.73       	|        16.73       	|
 |   Stereo  	|   NMRF-Stereo   	|        None        	|       1.19       	|        14.52       	|        1.21       	|        15.14       	|
-|   Stereo  	|   NMRF-Stereo   	|        Least Square        	|       1.54       	|        18.34      	|        1.56       	|        18.14       	|
-|   Stereo  	|   NMRF-Stereo   	|        Medium Scale Align        	|       1.59       	|        18.84      	|        1.59       	|        18.54       	|
+|   Stereo  	|   NMRF-Stereo   	|        Least Square   |       1.54       	|        18.34      	|        1.56       	|        18.14       	|
+|   Stereo  	|   NMRF-Stereo   	| Medium Scale Align    |       1.59       	|        18.84      	|        1.59       	|        18.54       	|
 
 ---
 
