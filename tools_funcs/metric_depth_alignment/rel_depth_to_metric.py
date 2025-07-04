@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
 import numpy as np
 import os
 import sys
@@ -177,26 +175,21 @@ def Med_Scaling_Depth(rel_depth,gt_sparse_depth,valid_mask):
     return aligned_depth,scale,offset   
 
 
-
-
-
-
-
-
 if __name__=="__main__":
+    
+    root_folder = "/data1/StereoDatasets/KITTI/KITTI360"
     
     dpt_type = "NMRFStereo" # select from "depthanythingV2" and "Metric3DV2" and "NMRFStereo"
     matched_type = "None" # select from "LS" "Med", "None"
     if dpt_type =="depthanythingV2":
-        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/monocular_depth/monodepthV2/"
+        est_depth_rel_root_path = "{}/monocular_depth/monodepthV2/".format(root_folder)
     elif dpt_type =='Metric3DV2':
-        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/monocular_depth/Metric3DV2/"
+        est_depth_rel_root_path = "{}/monocular_depth/Metric3DV2/".format(root_folder)
     elif dpt_type=='NMRFStereo':
-        est_depth_rel_root_path = "/media/zliu/data12/dataset/KITTI/KITTI360/PseudoDepth_NMRFStereo/"
+        est_depth_rel_root_path = "{}/PseudoDepth_NMRFStereo/".format(root_folder)
     
-    
-    
-    sparse_gt_projected_root_path = "/media/zliu/data12/dataset/KITTI/VSRD_Format/projected_sparse_lidar/"
+
+    sparse_gt_projected_root_path = "{}/projected_sparse_lidar/".format(root_folder)
     target_sequence_name = "2013_05_28_drive_0000_sync"
     image_folder_left = os.path.join(est_depth_rel_root_path,"data_2d_raw",target_sequence_name,"image_00/data_rect/")
     mean_mae = 0
