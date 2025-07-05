@@ -213,9 +213,73 @@ class ModelWarpper(nn.Module):
     
         return input_batch_dict,output_batch_dict
     
+    
+
+    def prepare_input_batch_data_from_list(self,batch):
+        
+        device_id = self.device
+        input_batch_dict = dict()
+        output_batch_dict = dict()
+        
+        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
+        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
+                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
+                                        #'sparse_gt_depth'])
+        bin_token_name = batch['bin_token']
+        input_cam_batch_data = batch['inputs_pix']                                 
+        input_batch_data = batch['inputs']
+        
+        # 1 is the first farme
+        input_rgb =  input_batch_data['rgb'][1] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        
+        
+        input_camera_intrinsics = input_cam_batch_data['ck'][1] #(B,V,3,3) 
+        input_camera_extrinsics = input_cam_batch_data['c2w'][1] #(B,V,4,4)
+        
+        input_psuedo_depth = input_cam_batch_data['depth_m'][1] #(B,V,H,W)
+        input_sparse_depth = input_cam_batch_data['sparse_gt_depth'][1] #(B,V,H,W)
+        
+
+        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth.shape[0],1,1)
+        
+        
+        # input_dict
+        input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
+        input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['nn_matrix'] =cameras_dist_index.to(device_id, dtype=self.dtype)
+        input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['bin_token_name'] = bin_token_name
+        
+        
+        # output dict
+        # for render and loss and eval
+        output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
+        output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
+                            batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
+        output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
+        
+    
+        return input_batch_dict,output_batch_dict
+
+    
+    
     def forward(self,batch, mode="train", iter=0, cfg=None):
         
-        input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
+        if 'pair_images' in cfg.keys():
+            input_batch_dict,output_batch_dict = self.prepare_input_batch_data_from_list(batch=batch)
+        else:
+            input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
         
         
         return_depth = cfg.return_depth
@@ -469,7 +533,9 @@ class ModelWarpper(nn.Module):
             
             elif mode=='val':
                 return loss, loss_terms,rendered_color,rendered_depth,rendered_alpha,gaussians_cv,predicted_input_depth,input_sparse_gt_depth,output_rgb,sparse_depth_gt,input_images
-            
+        
+
+        
         elif mode=='test':
             return rendered_color,rendered_depth,rendered_alpha,gaussians_cv
 

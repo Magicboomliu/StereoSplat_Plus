@@ -561,21 +561,22 @@ class KITTI360FirstFrameCAM(Dataset):
         input_dict_vol = {"w2i": input_w2is_list} # volume based methods
 
         
+        re_ordered_index =[0,1,3,4,2,5]
         # if self.split=='train':
-        output_dict = {"rgb": output_imgs, 
-                    "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-                    "rays_o": output_rays_o, "rays_d": output_rays_d,
+        output_dict = {"rgb": output_imgs[re_ordered_index], 
+                    "c2w": output_c2ws[re_ordered_index], "fovx": output_fovxs[re_ordered_index], "fovy": output_fovys[re_ordered_index],
+                    "rays_o": output_rays_o[re_ordered_index], "rays_d": output_rays_d[re_ordered_index],
                     "input_image_path":output_img_paths+ input_img_paths
                     }
         
         if self.depth_info_dict.use_pseudo_depth:
             output_dict.update({
-                "depth": output_depths,
-                    "depth_m": output_depths_m, "conf_m": output_confs_m
+                "depth": output_depths[re_ordered_index],
+                    "depth_m": output_depths_m[re_ordered_index], "conf_m": output_confs_m[re_ordered_index]
             })
         if self.depth_info_dict.use_sparse_lidar:
             output_dict.update({
-                'sparse_gt_depth':output_sparse_depth_gts,
+                'sparse_gt_depth':output_sparse_depth_gts[re_ordered_index],
             })
                 
   

@@ -86,8 +86,28 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 accelerate launch --config-file acce
     --resume-from $resume_from
 }
 
-TRAIN_KITTI360_VolumeFusion
+TRAIN_KITTI360_DepthSplat_Revised_FirstCAM_Ref(){
+cd ../..
+cd codes
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_revised_firstcam_as_ref.py"
+work_dir="/data1/zliu/feedforward_outputs/depthsplat_revised_FirstCAM_Ref"
+resume_from="/data1/zliu/temp_for_0617/DepthSplat/SH0_Version/checkpoint-99000/"
 
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 accelerate launch --config-file accelerate_config.yaml train_kitti360_sterep_depthsplat_revised_firstcam_as_reference.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
+
+TRAIN_KITTI360_DepthSplat_Revised_FirstCAM_Ref
+
+
+# TRAIN_KITTI360_VolumeFusion
 # TRAIN_KITTI360_DepthSplat
 # TRAIN_KITTI360_OmniScene
 # TRAIN_KITTI360_Unimatch_Only
