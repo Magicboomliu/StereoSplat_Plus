@@ -530,25 +530,38 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
         current_finished_files = 0
         while bin_start < len(annotations_list):
             # find one bin
+            
             bin_end, bin_center = find_bin_end(bin_start,list(dists[bin_start:]), min_bin_length)
+            
+            
             
             if bin_end is not None:
                 bin_token = "scene{}_bin{:03d}".format(current_seq_name, bin_id) # give a token names
-                
-                bin_info = generate_bin_info(args,bin_token,current_seq_name,annotations_list,bin_start,bin_end,bin_center,sum(dists[bin_start:bin_end]))
-                bin_start += 1
-                bin_id += 1
-                bin_tokens.append(bin_token)
-
                 bin_filename = osp.join(args.out_dir, "bin_infos_{}".format(str(args.min_bin_length)), "{}.pkl".format(bin_token))
-                mmengine.dump(bin_info, bin_filename)
-                all_the_bins['bins'].append(bin_token)
+
+
+                if os.path.exists(bin_filename):
+                    bin_start += 1
+                    bin_id += 1
+                    bin_tokens.append(bin_token)
+                    all_the_bins['bins'].append(bin_token)
+                    continue
+                
+                else:
+                    bin_info = generate_bin_info(args,bin_token,current_seq_name,annotations_list,bin_start,bin_end,bin_center,sum(dists[bin_start:bin_end]))
+                    bin_start += 1
+                    bin_id += 1
+                    bin_tokens.append(bin_token)
+
+                    #bin_filename = osp.join(args.out_dir, "bin_infos_{}".format(str(args.min_bin_length)), "{}.pkl".format(bin_token))
+                    mmengine.dump(bin_info, bin_filename)
+                
+                    all_the_bins['bins'].append(bin_token)
             
             else:
                 break
         
-        current_finished_files = current_finished_files +1
-        print("current Finished saved {}".format(current_finished_files))
+
             
         
         all_the_bins["adjacent_bins"]= bin_tokens
