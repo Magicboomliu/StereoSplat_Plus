@@ -527,6 +527,7 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
         bin_start, bin_end = 0, 0
         bin_tokens = [] # save all in this scences
         
+        current_finished_files = 0
         while bin_start < len(annotations_list):
             # find one bin
             bin_end, bin_center = find_bin_end(bin_start,list(dists[bin_start:]), min_bin_length)
@@ -546,8 +547,13 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
             else:
                 break
         
+        current_finished_files = current_finished_files +1
+        print("current Finished saved {}".format(current_finished_files))
+            
+        
         all_the_bins["adjacent_bins"]= bin_tokens
 
+    
         
     else:
         _, bin_center = find_bin_end(bin_start,list(dists[bin_start:]), min_bin_length)
@@ -574,6 +580,7 @@ def kitti360_data_prep(args):
         current_annotations_fname = os.path.join(args.filelist_folder, filename_list)
         create_kitti_infos(args=args,annotation_path=current_annotations_fname,current_seq_name=seq_name)        
 
+    print("All Has been Finished")
 
 
 if __name__=="__main__":

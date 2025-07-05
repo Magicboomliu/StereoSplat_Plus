@@ -222,6 +222,8 @@ class Custom_Gaussain_Head(nn.Module):
         rgbs = self.rgb_act(gaussians[..., 11:14]) # RGB
         
 
+        # rotations = lidar_quat_to_cam_quat(rotations)
+        
         means = get_world_points_from_depth(depth=depths,
                                             K=intrinsics,
                                             T=extrinsics)
@@ -229,7 +231,7 @@ class Custom_Gaussain_Head(nn.Module):
                               b=b, v=v, c=3) #(B,V*H*W,14)
         
         #FIXME
-        means = means + offsets
+        # means = means + offsets
         
         gaussians = torch.cat([means, rgbs, opacities, rotations, scales], dim=-1)
  
@@ -246,6 +248,76 @@ class Custom_Gaussain_Head(nn.Module):
 
 
         
+
+
+def quaternion_conjugate(q):
+    # q: (..., 4), format (x, y, z, w)
+    xyz, w = q[..., :3], q[..., 3:]
+    return torch.cat([-xyz, w], dim=-1)
+
+def quaternion_multiply(q1, q2):
+    # q1, q2: (..., 4), (x, y, z, w)
+    x1, y1, z1, w1 = q1.unbind(-1)
+    x2, y2, z2, w2 = q2.unbind(-1)
+
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+
+    return torch.stack([x, y, z, w], dim=-1)
+
+def matrix_to_quaternion(R):
+    """
+    R: (..., 3, 3)
+    Returns: (..., 4) quaternion in (x, y, z, w) format
+    Reference: https://github.com/facebookresearch/pytorch3d/blob/main/pytorch3d/transforms/rotation_conversions.py
+    """
+    m = R
+    batch_shape = m.shape[:-2]
+    m00 = m[..., 0, 0]
+    m01 = m[..., 0, 1]
+    m02 = m[..., 0, 2]
+    m10 = m[..., 1, 0]
+    m11 = m[..., 1, 1]
+    m12 = m[..., 1, 2]
+    m20 = m[..., 2, 0]
+    m21 = m[..., 2, 1]
+    m22 = m[..., 2, 2]
+
+    q_abs = 0.5 * torch.sqrt(
+        torch.clamp(1.0 + m00 + m11 + m22, min=0.0)
+    )
+    w = q_abs
+    x = 0.5 * torch.sign(m21 - m12) * torch.sqrt(torch.clamp(1.0 + m00 - m11 - m22, min=0.0))
+    y = 0.5 * torch.sign(m02 - m20) * torch.sqrt(torch.clamp(1.0 - m00 + m11 - m22, min=0.0))
+    z = 0.5 * torch.sign(m10 - m01) * torch.sqrt(torch.clamp(1.0 - m00 - m11 + m22, min=0.0))
+    return torch.stack([x, y, z, w], dim=-1)
+
+def lidar_quat_to_cam_quat(quat_lidar):
+    """
+    quat_lidar: (B, N, 4), (x, y, z, w), requires_grad supported
+    return: quat_cam: (B, N, 4)
+    """
+    B, N, _ = quat_lidar.shape
+    device = quat_lidar.device
+
+    # Step 1: 旋转矩阵 lidar2cam
+    R_lidar2cam = torch.tensor([
+        [0, -1,  0],
+        [0,  0, -1],
+        [1,  0,  0]
+    ], dtype=torch.float32, device=device)
+
+    qR = matrix_to_quaternion(R_lidar2cam[None])  # shape = (1, 4)
+    qR = qR.expand(B, N, 4)
+    qR_inv = quaternion_conjugate(qR)
+
+    # Step 2: q_cam = qR * q_lidar * qR_inv
+    q_mid = quaternion_multiply(qR, quat_lidar)
+    q_cam = quaternion_multiply(q_mid, qR_inv)
+
+    return q_cam
 
 
         
