@@ -327,7 +327,6 @@ if __name__ == '__main__':
     parser.add_argument('--resume-from', type=str, default='')
 
     args = parser.parse_args()
-    
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
     
