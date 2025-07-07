@@ -6,7 +6,8 @@ from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
 
-import data.KITTI360_FirstCam.dataloader as datasets
+# import data.KITTI360_FirstCam.dataloader as datasets
+import data.KITTI360_FirstCam.dataloder2 as datasets
 
 import mmcv
 import mmengine
@@ -260,8 +261,6 @@ def main(args):
         time_s = time.time()
         for i_iter, batch in enumerate(train_dataloader):
             data_time_e = time.time()
-            
-            
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 

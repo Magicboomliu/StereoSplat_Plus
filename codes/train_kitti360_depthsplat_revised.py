@@ -5,10 +5,6 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
-# import data.KITTI360_FirstCam.dataloader as datasets
-import data.KITTI360_FirstCam.dataloder2 as datasets
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
@@ -25,7 +21,6 @@ import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
 
-
 # Loading the models
 from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
 from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
@@ -34,6 +29,9 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
+
+
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -110,7 +108,14 @@ def main(args):
     if logger is not None:
         logger.info(f'Config:\n{cfg.pretty_text}')
 
-
+    if cfg.world_center is not None:
+        if cfg.world_center=="Center_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_Cam0":
+            pass
+    else:
+        import data.KITTI360_CenterCam_Ref.dataloader as datasets
+    
     # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
     train_params = {
@@ -127,12 +132,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-        
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
     val_params = {
@@ -149,12 +149,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
     # Define the dataloader
@@ -170,7 +165,6 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-    
     
     '------------------------------------------------'
     
@@ -203,6 +197,9 @@ def main(args):
                                              upsample_factor=cfg.model.encoder.upsample_factor,
                                              num_scales=cfg.model.encoder.num_scales,
                                              gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    
+    
     
     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
                             gaussain_head=gaussain_head,

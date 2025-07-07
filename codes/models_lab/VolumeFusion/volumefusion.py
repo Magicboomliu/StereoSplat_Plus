@@ -348,7 +348,7 @@ class VolumeFusion(BaseModule):
         # get inpout_batch_dict
         
         if 'pair_images' in cfg.keys():
-            input_batch_dict,output_batch_dict = self.prepare_input_batch_data_from_list(batch=batch)
+            input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
         else:
             input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
         
