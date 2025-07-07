@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "vggt_only_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs/VGGT_Only/Debugs/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs_new/VGGT_Only/visualization"
 validation_vis_progress=True
 
 # learning rate setiing
