@@ -150,7 +150,8 @@ class CostVolumeGS(nn.Module):
                                            extrinsics=input_extrinsics,
                                            intrinsics = intrinsics,
                                            results_dict=results_dict,
-                                           return_depth=False)
+                                           return_depth=False,
+                                           cfg=cfg)
             
         
         

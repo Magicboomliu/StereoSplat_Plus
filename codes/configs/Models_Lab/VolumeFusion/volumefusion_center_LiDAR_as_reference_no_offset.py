@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs/VolumeFusion/Debugs/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs_new/VolumeFusion/Center_LiDAR_As_Ref_No_Offset/visualization"
 validation_vis_progress=True
 
 
@@ -37,7 +37,6 @@ resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
 background_color=[0.0, 0.0, 0.0]
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
@@ -46,6 +45,8 @@ test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/v
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
+
+world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
 
 # if neccssary
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
@@ -103,6 +104,7 @@ max_depth=100
 min_depth=0.3
 
 
+used_3D_offset=False
 
 # Volume Branch Parameterization
 
