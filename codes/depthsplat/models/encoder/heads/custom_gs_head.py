@@ -164,7 +164,8 @@ class Custom_Gaussain_Head(nn.Module):
                 extrinsics,
                 intrinsics,
                 results_dict,
-                return_depth=True):
+                return_depth=True,
+                cfg=None):
         
         depth_preds = results_dict['depth_preds']
 
@@ -231,7 +232,8 @@ class Custom_Gaussain_Head(nn.Module):
                               b=b, v=v, c=3) #(B,V*H*W,14)
         
         #FIXME
-        means = means + offsets
+        if cfg.used_3D_offset:
+            means = means + offsets
         
         gaussians = torch.cat([means, rgbs, opacities, rotations, scales], dim=-1)
  

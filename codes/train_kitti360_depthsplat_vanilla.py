@@ -6,17 +6,18 @@ from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
 
-# import data.KITTI360_FirstCam.dataloader as datasets
-import data.KITTI360_FirstCam.dataloder2 as datasets
+# default is the center cam
+import data.KITTI360_CenterCam_Ref.dataloader as datasets
 
 import mmcv
 import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
-from torch import Tensor,nn
+
 from tqdm import tqdm
 import numpy as np
+
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
@@ -25,11 +26,12 @@ import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
 
+from depthsplat.vanilla.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.vanilla.models.encoder.unimatch.dpt_head import DPTHead
 
-# Loading the models
-from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
-from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
-from depthsplat.models.revised_depthsplat import ModelWarpper
+from depthsplat.vanilla.models.encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+from depthsplat.vanilla.models.decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
+from depthsplat.vanilla.models.model_warpper_splat import ModelWarpper
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 
 import os
@@ -60,7 +62,6 @@ class DecoderCFG(object):
 
 
 def main(args):
-    
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
@@ -127,12 +128,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-        
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
     val_params = {
@@ -149,34 +145,26 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
+    
     # Define the dataloader
     train_dataset = dataset(**train_params)
     val_dataset = dataset(**val_params)
-    # 7696
+
     train_dataloader = DataLoader(
         train_dataset, dataset_config.batch_size_train, shuffle=True,
         num_workers=dataset_config.num_workers
     )
-    # 8
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
     
-    
-    '------------------------------------------------'
-    
-    
     '''     Model Configuration   '''
     encoder_cfg = cfg.model.encoder
+    
     # depth unimatch model
     depth_estimator_unimatch = MultiViewUniMatch(
             num_scales=encoder_cfg.num_scales, # default is 1
@@ -199,15 +187,20 @@ def main(args):
             "num_surfaces":cfg.model.encoder.num_surfaces}
     
     # gaussain head estimation
-    gaussain_head = Custom_Gaussain_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+    gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
                                              upsample_factor=cfg.model.encoder.upsample_factor,
                                              num_scales=cfg.model.encoder.num_scales,
+                                             gaussian_head_settings_dict=gaussian_adapter_config,
                                              gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    dataset_config = DecoderCFG(background_color=cfg.background_color)
+    depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_config)
+    
     
     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
                             gaussain_head=gaussain_head,
-                            unimatch_weight = cfg.unimatch_weights_path,
-                            camera_args=cfg.camera_args
+                            decoder_branch=depthsplattercuda_decoder,
+                            unimatch_weight = cfg.unimatch_weights_path
                             )
     
     
@@ -306,10 +299,8 @@ def main(args):
                         out = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
                     else:
                         out = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
-                        
-                        
 
-                    loss, logs, rendered_color, rendered_depth, rendered_alpha, raw_gaussain_cv = out
+                    loss, logs, rendered_color, rendered_depth, rendered_alpha, estimated_raw_gaussains_dict = out
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
