@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Center_LiDAR_As_Ref/visualization"
+output_dir ="/data1/zliu/feedforward_outputs_new/OmniScene/Stereo/First_Cam_As_Ref/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -37,7 +37,7 @@ use_center, use_first, use_last = False, True, False
 resolution = [224, 1088]
 
 # LiDAR Range id different
-point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
+point_cloud_range = [-50.0, -12.0, -50.0, 50.0, 5.0, 50.0]
 
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
@@ -48,6 +48,7 @@ data_version="bin_infos_8.0"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
 
+world_center="First_Cam0" # Select from "Center_LiDAR" or "First_Cam0"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -129,8 +130,8 @@ _ffn_dim_ = _dim_ * 2
 
 # unit is a little bigger than the x_range,y_range and the z_range
 tpv_h_ = 192
-tpv_w_ = 192
-tpv_z_ = 16
+tpv_w_ = 16
+tpv_z_ = 192
 scale_h = 1
 scale_w = 1
 scale_z = 1

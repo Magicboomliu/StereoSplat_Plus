@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Center_LiDAR_As_Ref/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Stereo/Center_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -48,6 +48,8 @@ data_version="bin_infos_8.0"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
 
+
+world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
