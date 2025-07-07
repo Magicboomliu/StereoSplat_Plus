@@ -6,8 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/data1/zliu/feedforward_outputs/Debug/OmniScene/First_As_Input/Baseline_Supp3_NMRFStereo"
-
+output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Center_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -203,7 +202,6 @@ self_layer = dict(
     feedforward_channels=_ffn_dim_,
     ffn_dropout=0.1,
     operation_order=('self_attn', 'norm', 'ffn', 'norm'))
-
 
 # model definition
 model = dict(
