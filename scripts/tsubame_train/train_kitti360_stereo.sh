@@ -104,7 +104,52 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --resume-from $resume_from
 }
 
-TRAIN_KITTI360_VolumeFusion
+
+
+
+
+TRAIN_KITTI360_DepthSplat_Revised_FirstCAM_Ref(){
+cd ../..
+cd codes
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/DepthSplat/depthsplat_gs_revised_firstcam_as_ref.py"
+work_dir="/gs/FeedForwardGS/DepthSplat/First_As_Input_FirstCam_As_Ref/saved_models"
+resume_from="None"
+
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 accelerate launch --config-file accelerate_config_singleGPU.yaml train_kitti360_sterep_depthsplat_revised_firstcam_as_reference.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
+
+TRAIN_KITTI360_VolumeFusion_Revised_FirstCAM_Ref(){
+cd ../..
+cd codes
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_configs_firstasCam.py"
+work_dir="/gs/FeedForwardGS/VolumeFusion/First_As_Input_FrstCAM_As_Ref/saved_models"
+resume_from="None"
+
+#configs 
+# - Single GPU YAML: accelerate_config_singleGPU.yaml
+# - Multi GPUs YAML: accelerate_config.yaml
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1  accelerate launch  --config-file accelerate_config.yaml train_kitti360_stereo_volumefusion_revised_firstcam_as_reference.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from
+}
+
+
+TRAIN_KITTI360_VolumeFusion_Revised_FirstCAM_Ref
+TRAIN_KITTI360_DepthSplat_Revised_FirstCAM_Ref
+
+
+
+#TRAIN_KITTI360_VolumeFusion
 # TRAIN_KITTI360_DepthSplatRevised
 # TRAIN_KITTI360_VolumeFusion
 # TRAIN_KITTI360_DepthSplat

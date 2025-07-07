@@ -74,7 +74,7 @@ TRAIN_KITTI360_VolumeFusion_Revised_FirstCAM_Ref(){
 cd ../..
 cd codes
 configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_configs_firstasCam.py"
-work_dir="/data1/zliu/feedforward_outputs/VolumeFusion_FirstCAM/Debugs"
+work_dir="/data1/zliu/feedforward_outputs/VolumeFusion_FirstCAM/saved_models"
 resume_from="None"
 
 #configs 

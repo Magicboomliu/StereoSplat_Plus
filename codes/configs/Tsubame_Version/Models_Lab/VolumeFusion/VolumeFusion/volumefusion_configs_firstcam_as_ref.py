@@ -5,8 +5,10 @@ _base_ = [
 
 # exp name
 # output directionary
+# exp name
+# output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs/VolumeFusion_FirstCAM/outputs_vis/{}".format(exp_name)
+output_dir = "/gs/FeedForwardGS/VolumeFusion/First_As_Input_FrstCAM_As_Ref/visualization"
 validation_vis_progress=True
 
 
@@ -39,16 +41,15 @@ resolution = [224, 1088]
 point_cloud_range = [-50.0, -12.0, -50.0, 50.0, 5.0, 50.0]
 
 background_color=[0.0, 0.0, 0.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/gs/KITTI360_For_Upload"
+train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
-
 # if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+unimatch_weights_path="/gs/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 
 camera_model='OpenCV' # select from openCV and openGL
@@ -79,7 +80,7 @@ dataset_params = dict(
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
-    batch_size_train=1,
+    batch_size_train=2,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
