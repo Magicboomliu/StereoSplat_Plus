@@ -31,8 +31,6 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 
-
-
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
         return None
@@ -112,7 +110,7 @@ def main(args):
         if cfg.world_center=="Center_LiDAR":
             import data.KITTI360_CenterCam_Ref.dataloader as datasets
         elif cfg.world_center=="First_Cam0":
-            pass
+            import data.KITTI360_FirstCam_Ref.dataloader as datasets
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
     
@@ -197,9 +195,6 @@ def main(args):
                                              upsample_factor=cfg.model.encoder.upsample_factor,
                                              num_scales=cfg.model.encoder.num_scales,
                                              gaussians_color_branch_dict=gaussain_color_branch_config)
-    
-    
-    
     
     my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
                             gaussain_head=gaussain_head,
@@ -303,7 +298,6 @@ def main(args):
                         out = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
                     else:
                         out = my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
-                        
                         
 
                     loss, logs, rendered_color, rendered_depth, rendered_alpha, raw_gaussain_cv = out

@@ -4,9 +4,8 @@ _base_ = [
     ]
 
 # exp name
-# output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs/depthsplat_revised_FirstCam_ref_with_offset/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs_new/depthsplat_revised_FirstCam_ref_with_offset/visualization"
 validation_vis_progress=True
 
 
@@ -48,7 +47,7 @@ input_type='all'
 max_input_views=10
 pair_images=2
 # world_center="cam0"
-world_center="cam0"
+world_center="First_Cam0" # Select from "Center_LiDAR" or "First_Cam0"
 
 
 depth_info_params = dict(
@@ -59,7 +58,7 @@ depth_info_params = dict(
 
 
 dataset_params = dict(
-    dataset_name="KITTI360FirstFrameCAM",
+    dataset_name="KITTI360Dataset",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
@@ -168,7 +167,7 @@ model = dict(
     )
 )
 
-
+used_3D_offset=True
 
 # Define the Loss Here
 
