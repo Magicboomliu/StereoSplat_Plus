@@ -15,8 +15,6 @@ from jaxtyping import Float
 from torch import Tensor
 from .encoder.costvolume_gs import CostVolumeGS
 from .volume.TPVGaussainEster import VolumeGaussian
-
-
 from .losses import LPIPS
 # debug here
 # import matplotlib.pyplot as plt
@@ -365,8 +363,6 @@ class VolumeFusion(BaseModule):
         gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
                                                           images_feat=img_feats[0])
         
-
-
 
         # volume-gs prediction
         pc_range = self.dataset_params.pc_range

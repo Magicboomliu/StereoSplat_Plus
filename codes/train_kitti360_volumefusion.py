@@ -5,10 +5,6 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
-# import data.KITTI360_FirstCam.dataloader as datasets
-import data.KITTI360_FirstCam.dataloder2 as datasets
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
@@ -84,7 +80,16 @@ def main(args):
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
-    
+
+
+    if cfg.world_center is not None:
+        if cfg.world_center=="Center_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_Cam0":
+            import data.KITTI360_FirstCam_Ref.dataloader as datasets
+    else:
+        import data.KITTI360_CenterCam_Ref.dataloader as datasets
+
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
@@ -105,7 +110,6 @@ def main(args):
 
 
     # generate datasets
-    # generate datasets
     dataset = getattr(datasets, dataset_config.dataset_name)
     train_params = {
         "datapath":dataset_config.datapath,
@@ -121,12 +125,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": dataset_config.supp_view_nums,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-        
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
     val_params = {
@@ -143,12 +142,7 @@ def main(args):
         "use_last": dataset_config.use_last,
         "supp_view_nums": 3,
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-
-        "input_type":dataset_config.input_type,
-        "max_input_views": dataset_config.max_input_views,
-        "pair_images": dataset_config.pair_images,
-        "world_center": dataset_config.world_center
+        "camera_model": dataset_config.camera_model
     }
 
     
@@ -261,6 +255,8 @@ def main(args):
         time_s = time.time()
         for i_iter, batch in enumerate(train_dataloader):
             data_time_e = time.time()
+            
+            
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
