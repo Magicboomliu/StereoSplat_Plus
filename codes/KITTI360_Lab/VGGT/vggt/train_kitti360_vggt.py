@@ -5,11 +5,7 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
-
-
 from my_custom_vggt import VGGT
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
