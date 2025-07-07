@@ -28,7 +28,7 @@ from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
-from data.KITTI360.transforms.loading import load_info,load_conditions
+from data.KITTI360_FirstCam_Ref.transforms.loading import load_info,load_conditions
 
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
@@ -63,9 +63,7 @@ class KITTI360Dataset(Dataset):
         self.datapath = datapath
         self.data_version = data_version
         self.supp_view_nums = supp_view_nums
-        
         self.depth_info_dict = depth_info_dict
-        
         self.camera_model = camera_model
         
         
@@ -126,6 +124,21 @@ class KITTI360Dataset(Dataset):
         bin_token_name = self.bin_tokens[index]
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)    
         bin_info = self._load_pkl_file(abs_bin_token_fname)
+        
+
+        # Convert the from First Frame LIDAR to Fisrt Frame Camera
+        reference_pose_lidar_to_cam0 = np.linalg.inv(bin_info['original_reference_view_info_dict']['left_cam_to_velo']) 
+        for sensor_types in bin_info['sensor_info'].keys():
+            for frame_ind in range(len(bin_info['sensor_info'][sensor_types])):
+                current_sensor_info = bin_info['sensor_info'][sensor_types][frame_ind]
+                
+                # FIX the world coordinate part
+                current_sensor_info['sensor2lidar_transform'] = np.matmul(reference_pose_lidar_to_cam0,current_sensor_info['sensor2lidar_transform'])
+                current_sensor_info['sensor2lidar_rotation']= current_sensor_info['sensor2lidar_transform'][:3,:3]
+                current_sensor_info['sensor2lidar_translation']= current_sensor_info['sensor2lidar_transform'][:3,3]
+
+                bin_info['sensor_info'][sensor_types][frame_ind] = current_sensor_info
+        
         
         # center
         sensor_info_center = {sensor: bin_info["sensor_info"][sensor][0] for sensor in self.camera_types + ["LIDAR_TOP"]}
@@ -373,15 +386,6 @@ class KITTI360Dataset(Dataset):
             })
                 
   
-        # else:
-        #     output_dict = {"rgb": output_imgs, "depth": output_depths,
-        #                 "depth_m": output_depths_m, 
-        #                 'sparse_gt_depth':output_sparse_depth_gts,
-        #                 "conf_m": output_confs_m,
-        #                 "c2w": output_c2ws, "fovx": output_fovxs, "fovy": output_fovys,
-        #                 "rays_o": output_rays_o, "rays_d": output_rays_d,
-        #                 "input_image_path":output_img_paths+ input_img_paths
-        #                 }
 
         return {
             "bin_token": bin_token_name,
