@@ -26,13 +26,11 @@ mixed_precision = "no"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
-
 seed=42
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
 resolution = [224, 1088]
-
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 

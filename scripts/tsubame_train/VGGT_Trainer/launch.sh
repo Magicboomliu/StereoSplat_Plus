@@ -21,4 +21,4 @@ apptainer exec \
   -B /gs/bs/tga-lab_okmn/zliu/zliu/:/gs \
   -B /home \
   --nv -w /gs/bs/tga-lab_okmn/zliu/apptainer/stereogs \
-  bash train_kitti360_stereo.sh
+  bash train.sh
