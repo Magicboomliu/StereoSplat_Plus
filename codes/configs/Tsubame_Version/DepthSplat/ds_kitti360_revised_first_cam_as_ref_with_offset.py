@@ -6,12 +6,12 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/gs/FeedForwardGS/DepthSplat/First_As_Input/Baseline_All_Supervised"
+output_dir = "/gs/FeedForwardGS_New/DepthSplat/First_Frame_As_Ref_With_Offset/visualizations"
 validation_vis_progress=True
 
 
 # learning rate setiing
-lr = 2e-4
+lr = 6e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -29,23 +29,30 @@ report_to = "tensorboard"
 
 seed=42
 
-# only using the center for training
+# Fix the dataset part here
 use_center, use_first, use_last = False, True, False
 resolution = [224, 1088]
-
-# LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
 background_color=[0.0, 0.0, 0.0]
+
 datapath = "/gs/KITTI360_For_Upload"
 train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
 val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
+data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
 unimatch_weights_path="/gs/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
+
+
+#unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
+input_type='all'
+max_input_views=10
+pair_images=2
+# world_center="cam0"
+world_center="First_Cam0" # Select from "Center_LiDAR" or "First_Cam0"
+used_3D_offset=True
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -64,7 +71,6 @@ dataset_params = dict(
     sequence=sequence,
     data_version=data_version,
     resolution=resolution,
-    pc_range=point_cloud_range,
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
@@ -79,6 +85,8 @@ dataset_params = dict(
     camera_model=camera_model
 )
 
+
+
 num_cams = 2
 near = 0.1
 far = 1000.0
@@ -87,6 +95,7 @@ far = 1000.0
 # image resolution
 # Z-Near Planar
 # Z-Far Planar
+
 camera_args = dict(
     resolution=resolution,
     znear=near,
@@ -159,18 +168,18 @@ model = dict(
 
 
 
-
 # Define the Loss Here
 
 loss_settings_dict = dict(
-    
     depth_estimator_supervision=True,
     depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    
     rendered_depth_supervision=True,
     rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    
     rendered_rgb_supervision=True,
     rendered_rgb_supervison_type="MSE_LPIPS",
     lpips_alpha=0.05,
-    rendered_depth_weight=0.01,
+    rendered_depth_weight=0.05,
     depth_estimation_weight=0.05,
 )
