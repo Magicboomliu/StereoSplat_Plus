@@ -1,7 +1,7 @@
 TRAIN_KITTI360_VolumeFusion_Center_LiDAR_As_Ref_No_Offset(){
 cd ../../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_center_LiDAR_as_reference_no_offset.py"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/Models_Lab/VolumeFusion/VolumeFusion/volumefusion_center_lidar_as_ref_no_offset.py"
 work_dir="/gs/FeedForwardGS_New/VolumeFusion/CCenter_LiDAR_As_Ref_No_Offset/saved_models"
 #resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
 resume_from="None"
@@ -20,7 +20,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1  accelerate launch --config-file acc
 TRAIN_KITTI360_VolumeFusion_Center_LiDAR_As_Ref_With_Offset(){
 cd ../../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_center_LiDAR_as_reference_with_offset.py"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/Models_Lab/VolumeFusion/VolumeFusion/volumefusion_center_lidar_as_ref_with_offset.py"
 work_dir="/gs/FeedForwardGS_New/VolumeFusion/Center_LiDAR_As_Ref_With_Offset/saved_models"
 resume_from="None"
 #resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
@@ -39,7 +39,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1  accelerate launch --config-file acc
 TRAIN_KITTI360_VolumeFusion_First_Cam_As_Ref_No_Offset(){
 cd ../../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_first_cam_as_reference_no_offset.py"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/Models_Lab/VolumeFusion/VolumeFusion/volumefusion_first_cam_as_ref_no_offset.py"
 work_dir="/gs/FeedForwardGS_New/VolumeFusion/First_Cams_As_Ref_No_Offset/saved_models"
 # resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
 resume_from="None"
@@ -57,7 +57,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1  accelerate launch --config-file acc
 TRAIN_KITTI360_VolumeFusion_First_Cam_As_Ref_With_Offset(){
 cd ../../..
 cd codes
-configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_first_cam_as_reference_with_offset.py"
+configs_path="/home/2/ux04482/FeedStereoGS/codes/configs/Tsubame_Version/Models_Lab/VolumeFusion/VolumeFusion/volumefusion_first_cam_as_ref_with_offset.py"
 work_dir= "/gs/FeedForwardGS_New/VolumeFusion/First_Cams_As_Ref_With_Offset/saved_models"
 # resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
 resume_from="None"
