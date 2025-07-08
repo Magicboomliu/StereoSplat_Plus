@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-import data.KITTI360.dataloader as datasets
+
 
 import mmcv
 import mmengine
@@ -22,6 +22,7 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
+
 
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
@@ -96,6 +97,16 @@ def main(args):
     logger = create_logger(log_file=log_file, is_main_process=accelerator.is_main_process)
     if logger is not None:
         logger.info(f'Config:\n{cfg.pretty_text}')
+
+
+    if cfg.world_center is not None:
+        if cfg.world_center=="Center_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_Cam0":
+            import data.KITTI360_FirstCam_Ref.dataloader as datasets
+    else:
+        import data.KITTI360_CenterCam_Ref.dataloader as datasets
+
 
 
     # build model
@@ -235,24 +246,24 @@ def main(args):
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
-                # try:
-                if args.gpus<=1:
-                    loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
-                else:
-                    loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                try:
+                    if args.gpus<=1:
+                        loss, log, _, _, _, _, _, _, _ = my_model.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
+                    else:
+                        loss, log, _, _, _, _, _, _, _ = my_model.module.forward(batch, "train", iter=global_iter, iter_end=cfg.max_train_steps)
 
-                loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
-                
-                if torch.isnan(loss) or torch.isinf(loss):
-                    continue  # 直接跳过当前 iteration
-                
-                with torch.autograd.detect_anomaly():
-                    accelerator.backward(loss)
-                # except:
-                #     torch.cuda.empty_cache()
-                #     print(batch['bin_token'])
-                #     print("Here is Error Encounter......")
-                #     continue  # 或 return / break
+                    loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        continue  # 直接跳过当前 iteration
+                    
+                    with torch.autograd.detect_anomaly():
+                        accelerator.backward(loss)
+                except:
+                    torch.cuda.empty_cache()
+                    print(batch['bin_token'])
+                    print("Here is Error Encounter......")
+                    continue  # 或 return / break
 
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)

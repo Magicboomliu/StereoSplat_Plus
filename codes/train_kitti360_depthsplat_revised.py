@@ -323,7 +323,7 @@ def main(args):
                     torch.cuda.empty_cache()
                     continue
                 else:
-                    raise e  # 其他错误照常抛出
+                    continue  # 其他错误照常抛出
     
     
             # Checks if the accelerator has performed an optimization step behind the scenes
