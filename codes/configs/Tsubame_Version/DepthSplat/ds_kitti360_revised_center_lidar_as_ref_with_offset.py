@@ -4,13 +4,14 @@ _base_ = [
     ]
 
 # exp name
+# output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/gs/FeedForwardGS/DepthSplat/First_As_Input_FirstCam_As_Ref/visualizations"
-
+output_dir = "/gs/FeedForwardGS_New/DepthSplat/Center_LiDAR_As_Ref_With_Offset/visualizations"
 validation_vis_progress=True
 
+
 # learning rate setiing
-lr = 8e-5
+lr = 6e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -28,26 +29,27 @@ report_to = "tensorboard"
 
 seed=42
 
-# Fix the dataset part here
+# only using the center for training
 use_center, use_first, use_last = False, True, False
 resolution = [224, 1088]
+
+# LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
+
 background_color=[0.0, 0.0, 0.0]
 datapath = "/gs/KITTI360_For_Upload"
 train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
 val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0_FirstCAM"
+data_version="bin_infos_8.0"
 supp_view_nums=3
 unimatch_weights_path="/gs/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
+
 camera_model='OpenCV' # select from openCV and openGL
-input_type='all'
-max_input_views=10
-pair_images=2
-# world_center="cam0"
-world_center="cam0"
+world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
+used_3D_offset=True
 
 
 depth_info_params = dict(
@@ -58,7 +60,7 @@ depth_info_params = dict(
 
 
 dataset_params = dict(
-    dataset_name="KITTI360FirstFrameCAM",
+    dataset_name="KITTI360Dataset",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
@@ -67,6 +69,7 @@ dataset_params = dict(
     sequence=sequence,
     data_version=data_version,
     resolution=resolution,
+    pc_range=point_cloud_range,
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
@@ -78,12 +81,7 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model,
-    
-    input_type=input_type,
-    max_input_views=max_input_views,
-    pair_images=pair_images,
-    world_center=world_center    
+    camera_model=camera_model
 )
 
 
@@ -110,7 +108,6 @@ min_depth=0.3
 # Define the Models
 model = dict(
     type='DepthSplat',  # 假设你的顶层模型名叫这个
-    
     encoder=dict(
         type='DepthSplatEncoder',  # 原来的主类名
         name='depthsplat_encoder',
