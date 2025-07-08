@@ -14,7 +14,6 @@ module load nccl/2.20.5
 module load intel-mpi/2021.11  openmpi/5.0.2-gcc 
 module load forge/23.1.2  intel-vtune/2024.0
 
-
 export APPTAINER_CACHEDIR=/gs/bs/tga-lab_okmn/zliu/apptainer/cache
 
 apptainer exec \
