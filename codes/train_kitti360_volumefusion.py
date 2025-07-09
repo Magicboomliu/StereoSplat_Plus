@@ -87,6 +87,8 @@ def main(args):
             import data.KITTI360_CenterCam_Ref.dataloader as datasets
         elif cfg.world_center=="First_Cam0":
             import data.KITTI360_FirstCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
 
