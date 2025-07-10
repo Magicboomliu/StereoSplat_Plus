@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/gs/FeedForwardGS_New/OmniScene/Center_LiDAR_As_Ref/Metric3DV2/visualization"
+output_dir ="/gs/FeedForwardGS_New/OmniScene/First_LiDAR_As_Ref/Metric3DV2/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -44,10 +44,10 @@ train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainva
 val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
+data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
-world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
+world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
 
 depth_info_params = dict(
