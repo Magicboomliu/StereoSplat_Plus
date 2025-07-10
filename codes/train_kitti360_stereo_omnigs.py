@@ -98,12 +98,13 @@ def main(args):
     if logger is not None:
         logger.info(f'Config:\n{cfg.pretty_text}')
 
-
     if cfg.world_center is not None:
         if cfg.world_center=="Center_LiDAR":
             import data.KITTI360_CenterCam_Ref.dataloader as datasets
         elif cfg.world_center=="First_Cam0":
             import data.KITTI360_FirstCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
 

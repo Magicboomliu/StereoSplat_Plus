@@ -6,8 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/gs/FeedForwardGS/OmniScene/First_As_Input/Baseline_Supp3_Metric3Dv2"
-
+output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/MetricV2/First_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -40,15 +39,15 @@ resolution = [224, 1088]
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
-datapath = "/gs/KITTI360_For_Upload"
-train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+datapath = "/data1/StereoDatasets/KITTI/KITTI360"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
+data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
-
+world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -314,3 +313,4 @@ model = dict(
     loss_args=loss_args,
     dataset_params=dataset_params
 )
+

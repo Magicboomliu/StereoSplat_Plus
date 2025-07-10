@@ -6,9 +6,6 @@ from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
 
-# default is the center cam
-import data.KITTI360_CenterCam_Ref.dataloader as datasets
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
@@ -92,7 +89,17 @@ def main(args):
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
-    
+
+
+    if cfg.world_center is not None:
+        if cfg.world_center=="Center_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_Cam0":
+            import data.KITTI360_FirstCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+    else:
+        import data.KITTI360_CenterCam_Ref.dataloader as datasets
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params

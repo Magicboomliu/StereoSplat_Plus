@@ -9,7 +9,6 @@ exp_name = "depthsplat_kitti360_stereo_224x840"
 output_dir = "/data1/zliu/feedforward_outputs_new/depthsplat_revised_center_lidar_as_ref_no_offset/visualizations"
 validation_vis_progress=True
 
-
 # learning rate setiing
 lr = 6e-5
 grad_max_norm = 1.0
