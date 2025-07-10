@@ -4,8 +4,9 @@ _base_ = [
     ]
 
 # exp name
+# output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs_new/depthsplat_revised_FirstCam_ref_with_offset/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_new/depthsplat_revised_first_lidar_as_ref_no_offset/visualizations"
 validation_vis_progress=True
 
 
@@ -28,10 +29,13 @@ report_to = "tensorboard"
 
 seed=42
 
-# Fix the dataset part here
+# only using the center for training
 use_center, use_first, use_last = False, True, False
 resolution = [224, 1088]
+
+# LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
+
 background_color=[0.0, 0.0, 0.0]
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
@@ -43,12 +47,7 @@ supp_view_nums=3
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
-input_type='all'
-max_input_views=10
-pair_images=2
-# world_center="cam0"
-world_center="First_Cam0" # Select from "Center_LiDAR" or "First_Cam0"
-
+world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -67,6 +66,7 @@ dataset_params = dict(
     sequence=sequence,
     data_version=data_version,
     resolution=resolution,
+    pc_range=point_cloud_range,
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
@@ -78,12 +78,7 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model,
-    
-    input_type=input_type,
-    max_input_views=max_input_views,
-    pair_images=pair_images,
-    world_center=world_center    
+    camera_model=camera_model
 )
 
 
@@ -167,7 +162,7 @@ model = dict(
     )
 )
 
-used_3D_offset=True
+used_3D_offset=False
 
 # Define the Loss Here
 

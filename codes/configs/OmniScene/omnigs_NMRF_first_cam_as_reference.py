@@ -47,7 +47,6 @@ sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
-
 world_center="First_Cam0" # Select from "Center_LiDAR" or "First_Cam0"
 
 depth_info_params = dict(

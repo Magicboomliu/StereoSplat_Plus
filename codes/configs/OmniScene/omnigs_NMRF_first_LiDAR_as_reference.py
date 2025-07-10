@@ -1,62 +1,61 @@
 _base_ = [
     './_base_/optimizer.py',
-    './_base_/schedule.py'
-    ]
+    './_base_/schedule.py',
+]
 
 # exp name
 # output directionary
-exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/gs/FeedForwardGS_New/VolumeFusion/Center_LiDAR_As_Ref_With_Offset/visualization"
-validation_vis_progress=True
-
+exp_name = "omni_gs_kitti360_stereo_r50_224x804"
+output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Stereo/First_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
-lr = 8e-5
+lr = 1e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
-val_freq = 3000
-max_epochs = 150
+val_freq = 2000
+max_epochs = 50
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 100000
+max_train_steps = 50000
 warmup_steps = 1000
 mixed_precision = "no"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
 
-seed=42
+# using the volume 
+volume_only = False
+use_checkpoint = True
+seed = 0
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
-# resolution = [224, 832]
+# resolution = [224, 840]
+# resolution = [168, 632]
 resolution = [224, 1088]
-# resolution = [224, 544] #FIXME Here
 
-# LiDAR Range id different
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-background_color=[0.0, 0.0, 0.0]
-datapath = "/gs/KITTI360_For_Upload"
-train_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/2/ux04482/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
-supp_view_nums=3
-unimatch_weights_path="/gs/cache_models/unimatch/Unimatch/checkpoint-90000/model.safetensors"
-world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
-used_3D_offset=True
-camera_model='OpenCV' # select from openCV and openGL
 
+datapath = "/data1/StereoDatasets/KITTI/KITTI360"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+sequence='2013_05_28_drive_0000_sync'
+data_version="bin_infos_8.0_FirstCAM"
+supp_view_nums=3
+camera_model='OpenGL' # select from OpenCV and OpenGL
+world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
     pseudo_depth_type='NMRFStereo', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
     use_sparse_lidar=True
     )
+
+
 
 dataset_params = dict(
     dataset_name="KITTI360Dataset",
@@ -72,7 +71,7 @@ dataset_params = dict(
     use_center=use_center,
     use_first=use_first,
     use_last=use_last,
-    batch_size_train=2,
+    batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
     num_workers=8,
@@ -96,12 +95,27 @@ camera_args = dict(
     znear=near,
     zfar=far
 )
-train_depth_only=False
-return_depth=True
-max_depth=100
-min_depth=0.3
 
-# Volume Branch Parameterization
+eval_args = dict(
+    save_vis=False,
+    save_ply=False
+)
+
+# loss functions
+loss_args = dict(
+    recon_loss_type="l2", # reconstrunction loss
+    recon_loss_vol_type="l2_mask", # masked reconstruction loss for volume gaussains
+    perceptual_loss_vol_type="mask", # prcepstion loss? SSIM Loss using masked
+    depth_abs_loss_vol_type="mask", # depth abstract loss
+    mask_dptm=True,                 # whether using the mask dptm(metric3d-v2 as examples)
+    perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
+    weight_recon=1.0,
+    weight_perceptual=0.05,
+    weight_depth_abs=0.01,
+    weight_recon_vol=1.0,
+    weight_perceptual_vol=0.05,
+    weight_depth_abs_vol=0.01,
+)
 
 pc_range = point_cloud_range # [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 # x range, y_range and z_range in the LiDAR coordiante
@@ -129,7 +143,6 @@ num_points = [16, 32, 32]
 hybrid_attn_anchors = 16
 hybrid_attn_points = 32
 hybrid_attn_init = 0
-
 
 # cross layer
 self_cross_layer = dict(
@@ -191,116 +204,12 @@ self_layer = dict(
     operation_order=('self_attn', 'norm', 'ffn', 'norm'))
 
 
-
-return_types = ["gs",'depth','feature']
-# define the model 
- 
-use_checkpoint = True
-#unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 # model definition
-
-
-loss_args = dict(
-    use_volume=True,
-    depth_estimation=True,
-    use_fusion=True,
-    use_cv=False,
-    perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
-    
-    gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
-    
-    depth_est_sup_dict= dict(
-        branch_weight = 0.05,
-        loss_type ='L2' # select from L2, L1 and DPM Loss
-    ),
-    
-    
-    volume_sup_dict = dict(
-        recon_loss_vol_type="l2_mask", # masked reconstruction loss for volume gaussains,
-        perceptual_loss_vol_type="mask", # prcepstion loss? SSIM Loss using masked
-        depth_abs_loss_vol_type="mask", # depth abstract loss
-        weight_recon_vol=1.0,
-        weight_perceptual_vol=0.05,
-        weight_depth_abs_vol=0.01,
-        branch_weight = 1.0
-        
-    ),
-    
-    fusion_sup_dict = dict(
-        recon_loss_type="l2", # reconstrunction loss
-        weight_recon=1.0,
-        weight_perceptual=0.05,
-        weight_depth_abs=0.01,
-        branch_weight =1.0,
-    ),
-    
-    cv_sup_dict = dict(
-        recon_loss_cv_type="l2", # reconstrunction loss
-        weight_recon_cv=1.0,
-        weight_perceptual_cv=0.05,
-        weight_depth_abs_cv=0.01,
-        branch_weight =1.0,
-        
-    ),
-)
-
-
-
-
-# # Loss Function Definition Here
-# loss_configs_dict = dict(
-    
-#     depth_estimator_supervision=True,
-#     depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-#     depth_estimation_weight=0.05,
-    
-#     cost_volume_branch_sup=True,
-#     cv_branch_weight = 1.0,
-#     trip_plane_branch_sup =True,
-#     trip_branch_weight=1.0,
-#     fusion_volume_branch_sup=True,
-#     fusion_branch_weight=2.0,
-    
-#     # branch_wise_weight = [1.0,1.0,2.0],
-    
-#     cost_volume_branch_dict = dict(     
-#         rendered_depth_supervision=True,
-#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-#         rendered_rgb_supervision=True,
-#         rendered_rgb_supervison_type="MSE_LPIPS",
-#         lpips_alpha=0.05,
-#         rendered_depth_weight=0.01,
-        
-#     ),
-
-#    trip_volume_branch_dict = dict(
-#         rendered_depth_supervision=True,
-#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-#         rendered_rgb_supervision=True,
-#         rendered_rgb_supervison_type="MSE_LPIPS",
-#         lpips_alpha=0.05,
-#         rendered_depth_weight=0.01
-#     ),
-
-#    fuse_volume_branch_dict = dict(
-#         rendered_depth_supervision=True,
-#         rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
-        
-#         rendered_rgb_supervision=True,
-#         rendered_rgb_supervison_type="MSE_LPIPS",
-#         lpips_alpha=0.05,
-#         rendered_depth_weight=0.01
-#     ),
-    
-# )
-
-
-
 model = dict(
-    type='VolumeFusion',
+    type='OmniGaussian',
     use_checkpoint=use_checkpoint,
+    with_pixel=True,
+    volume_only=volume_only,
     backbone=dict(
         type='mmdet.ResNet',
         depth=50,
@@ -324,46 +233,44 @@ model = dict(
         add_extra_convs='on_input',
         num_outs=4),
     
-    # depthsplat-like: cost-volume-based
-    costvolume_gs = dict(
-        depth_estimator_kwargs = dict(
-                unimatch_weights_path=unimatch_weights_path,
-                multiview_trans_attn_split=2,
-                costvolume_unet_feat_dim=128,
-                costvolume_unet_channel_mult=[1, 1, 1],
-                costvolume_unet_attn_res=[],
-                depth_unet_feat_dim=64,
-                depth_unet_attn_res=[],
-                depth_unet_channel_mult=[1, 1, 1],
-                downscale_factor=4,
-                shim_patch_size=4,
-                local_mv_match=2,
-
-                monodepth_vit_type='vitb',
-
-                supervise_intermediate_depth=True,
-                return_depth=True,
-
-                num_scales=1,
-                upsample_factor=4,
-                lowest_feature_resolution=4,
-                depth_unet_channels=128,
-                grid_sample_disable_cudnn=False,
-                
-        ),
-
-        gaussain_head_kwargs = dict(
-            monodepth_vit_type='vitb',
-            upsample_factor=4,
-            num_scales=1,
-            gaussian_regressor_channels=64
-        ),
-    ),
+    pixel_gs=dict(
+        type="PixelGaussian",
+        use_checkpoint=use_checkpoint,
+        down_block=dict(
+            type='MVDownsample2D',
+            num_layers=num_layers,
+            resnet_act_fn="silu",
+            resnet_groups=32,
+            num_attention_heads=num_heads,
+            num_views=num_cams),
+        
+        up_block=dict(
+            type='MVUpsample2D',
+            num_layers=num_layers,
+            resnet_act_fn="silu",
+            resnet_groups=32,
+            num_attention_heads=num_heads,
+            num_views=num_cams),
+        mid_block=dict(
+            type='MVMiddle2D',
+            num_layers=num_layers,
+            resnet_act_fn="silu",
+            resnet_groups=32,
+            num_attention_heads=num_heads,
+            num_views=num_cams),
+        patch_sizes=patch_sizes,
+        in_embed_dim=_dim_,
+        out_embed_dims=[_dim_, _dim_*2, _dim_*4, _dim_*4],
+        num_cams=num_cams,
+        near=near,
+        far=far),
+    
     
     volume_gs=dict(
+        type="VolumeGaussian",
         use_checkpoint=use_checkpoint,
-        
         encoder=dict(
+            type='TPVFormerEncoder',
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -384,8 +291,8 @@ model = dict(
                 h=tpv_h_,
                 w=tpv_w_,
                 z=tpv_z_)),
-        
         gs_decoder = dict(
+            type='VolumeGaussianDecoder',
             tpv_h=tpv_h_,
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
@@ -402,10 +309,8 @@ model = dict(
             scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]
         )
     ),
-    
-    
-    losses_params=loss_args,
     camera_args=camera_args,
+    loss_args=loss_args,
     dataset_params=dataset_params
-    
 )
+
