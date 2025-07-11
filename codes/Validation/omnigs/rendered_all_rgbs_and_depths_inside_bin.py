@@ -102,8 +102,6 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
-
-
 def main(args):
     
     cfg = Config.fromfile(args.config_path)
@@ -139,7 +137,10 @@ def main(args):
         import sys
         sys.path.append("..")
         import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
-    
+    elif args.dataset_type=="First_LiDAR":
+        import sys
+        sys.path.append("..")
+        import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
     else:
         raise NotImplementedError
     
@@ -298,13 +299,8 @@ def main(args):
         }
         if not args.output_vis:
             saved_into_json(data_dict=results_dict,
-                                path=os.path.join(cfg.output_folder,"metric.json"))
-            
-            
-            
-            
-            
-
+                                path=os.path.join(args.output_folder,"metric.json"))
+                        
 def get_mean(list):
     return sum(list)*1.0/len(list)
     
@@ -329,6 +325,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
-    
-    
     main(args)
