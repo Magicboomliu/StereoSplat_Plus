@@ -17,15 +17,47 @@ from .gaussian import GaussianRenderer
 
 #from .losses import LPIPS, LossDepthTVS
 from .losses import LPIPS
-
-
 from .utils.image import maybe_resize
 from .utils.benchmarker import Benchmarker
 from torchmetrics import PearsonCorrCoef
 from .utils.interpolation import interpolate_extrinsics
-
+from .mertics import compute_psnr_ssim,kitti_colormap,convert_depth_to_disp
 import math
+import skimage.io
 
+
+def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
+    """
+    Computes MAE and MSE between predicted and GT depth maps, with optional valid range filtering.
+
+    Args:
+        depth_pred (torch.Tensor): Predicted depth, shape [B, V, H, W]
+        depth_gt (torch.Tensor): Ground truth depth, shape [B, V, H, W]
+        valid_min (float): minimum valid GT depth
+        valid_max (float): maximum valid GT depth
+
+    Returns:
+        mae (torch.Tensor): scalar mean absolute error
+        mse (torch.Tensor): scalar mean squared error
+    """
+    assert depth_pred.shape == depth_gt.shape, "Shape mismatch between prediction and GT"
+
+    # Create valid mask (only use pixels with valid GT depth)
+    valid_mask = (depth_gt > valid_min) & (depth_gt < valid_max)
+
+    # Compute errors
+    abs_error = torch.abs(depth_pred - depth_gt)
+    sq_error = (depth_pred - depth_gt) ** 2
+
+    # Apply mask
+    abs_error = abs_error[valid_mask]
+    sq_error = sq_error[valid_mask]
+
+    # Final metrics
+    mae = abs_error.mean()
+    mse = sq_error.mean()
+
+    return mae, mse
 
 def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
@@ -1152,3 +1184,257 @@ class OmniGaussian(BaseModule):
         
         return (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgbs_gt,sparse_gt_depth_data 
     
+    
+    
+    def prepare_data_complete(self,batch):
+        # ================== batch data process ================== #
+        device_id = self.device
+        data_dict = {}
+        # for img feature extraction
+        data_dict["imgs"] = batch["inputs"]["rgb"].to(device_id, dtype=self.dtype)
+        # for pixel-gs
+        rays_o = batch["inputs_pix"]["rays_o"].to(device_id, dtype=self.dtype)
+        rays_d = batch["inputs_pix"]["rays_d"].to(device_id, dtype=self.dtype)
+        data_dict["rays_o"] = rays_o
+        data_dict["rays_d"] = rays_d
+        data_dict["pluckers"] = self.plucker_embedder(rays_o, rays_d)
+        data_dict["fxs"] = batch["inputs_pix"]["fx"].to(device_id, dtype=self.dtype)
+        data_dict["fys"] = batch["inputs_pix"]["fy"].to(device_id, dtype=self.dtype)
+        data_dict["cxs"] = batch["inputs_pix"]["cx"].to(device_id, dtype=self.dtype)
+        data_dict["cys"] = batch["inputs_pix"]["cy"].to(device_id, dtype=self.dtype)
+        data_dict["c2ws"] = batch["inputs_pix"]["c2w"].to(device_id, dtype=self.dtype)
+        data_dict["cks"] = batch["inputs_pix"]["ck"].to(device_id, dtype=self.dtype)
+        data_dict["depths"] = batch["inputs_pix"]["depth_m"].to(device_id, dtype=self.dtype) # using metric depth.
+        data_dict["confs"] = batch["inputs_pix"]["conf_m"].to(device_id, dtype=self.dtype)   # using confidence map.
+        # for volume-gs
+        img_metas = []
+        bs, v, c, h, w = batch["inputs"]["rgb"].shape
+        for w2i in batch["inputs_vol"]["w2i"]:
+            img_metas.append({"lidar2img": w2i, "img_shape": [[h, w]] * v})
+        data_dict["img_metas"] = img_metas
+        
+        
+        output_list = []
+        
+        for ind in range(len(batch["outputs"]["rgb"])):
+            # for render and loss and eval
+            output_dict = dict()
+            output_dict["output_imgs"] = batch["outputs"]["rgb"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths"] = batch["outputs"]["depth"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths_m"] = batch["outputs"]["depth_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_confs_m"] = batch["outputs"]["conf_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_positions"] = (batch["outputs"]["rays_o"][ind] + batch["outputs"]["rays_d"][ind] * \
+                                batch["outputs"]["depth_m"][ind].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+            output_dict["output_rays_o"] = batch["outputs"]["rays_o"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_rays_d"] = batch["outputs"]["rays_d"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_c2ws"] = batch["outputs"]["c2w"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovxs"] = batch["outputs"]["fovx"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovys"] = batch["outputs"]["fovy"][ind].to(device_id, dtype=self.dtype)
+            output_dict['output_sparse_gt_depth'] = batch['outputs']['sparse_gt_depth'][ind].to(device_id, dtype=self.dtype)
+            output_list.append(output_dict)
+            
+            
+        data_dict['output_list'] = output_list
+        data_dict["bin_token"] = batch["bin_token"]
+        
+        return data_dict
+    
+    
+    
+    def validation_complete_with_bin_tokens(self,
+                                            batch,
+                                            val_result_savedir,
+                                            bin_token_list,
+                                            saved_label=False
+                                            ):
+        
+        data_dict = self.prepare_data_complete(batch=batch)
+        img = data_dict["imgs"] #[B,6,3,H,W]
+        
+        bs = img.shape[0]
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+        '''
+        - torch.Size([2, 6, 128, 56, 100]) ---> 1/4
+        - torch.Size([2, 6, 128, 28, 50])  ---> 1/8
+        - torch.Size([2, 6, 128, 14, 25])  ---> 1/16
+        - torch.Size([2, 6, 128, 7, 13])   ---> 1/32
+        '''
+        # pixel-gs prediction
+        gaussians_pixel, gaussians_feat = self.pixel_gs(
+                rearrange(img_feats[0], "b v c h w -> (b v) c h w"),
+                data_dict["depths"], data_dict["confs"], data_dict["pluckers"],
+                data_dict["rays_o"], data_dict["rays_d"])
+        
+        # gaussians_feat: torch.Size([2, 537600, 128])
+        # gaussians_pixel: torch.Size([2, 537600, 14])
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_pixel_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_pixel[b, :, 0] >= x_start) & (gaussians_pixel[b, :, 0] <= x_end) & \
+                        (gaussians_pixel[b, :, 1] >= y_start) & (gaussians_pixel[b, :, 1] <= y_end) & \
+                        (gaussians_pixel[b, :, 2] >= z_start) & (gaussians_pixel[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_pixel_mask_i = gaussians_pixel[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_pixel_mask.append(gaussians_pixel_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+        # volume gs: input the features and gaussains pixel mask and guassain fature mask
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                gaussians_pixel_mask,
+                gaussians_feat_mask,
+                data_dict["img_metas"])
+        
+        # Make Sure the estimate gaussains are valid
+        gaussians_pixel = sanitize_gaussians_tensor(gaussians_pixel)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        gaussians_all = torch.cat([gaussians_pixel, gaussians_volume], dim=1)
+        
+        bs = gaussians_all.shape[0] # batch size is 2
+        output_info_list_all = data_dict['output_list']
+        
+        output_rendered_pkg_fuse_list = []
+
+        # for the validation
+        rendered_left_images_list = []
+        rendered_right_images_list = []
+        gt_left_images_list = []
+        gt_right_images_list = []
+        
+        rendered_left_depth_list = []
+        rendered_right_depth_list = []
+        
+        gt_left_depth_list = []
+        gt_right_depth_list = []
+        
+        
+        left_psnr_list = []
+        left_ssim_list = []
+        right_psnr_list = []
+        right_ssim_list = []
+        
+        left_depth_mae_list = []
+        left_depth_mse_list = []
+        
+        right_depth_mae_list = []
+        right_depth_mse_list = []
+        
+
+        if saved_label:
+            saved_bin_token_name =data_dict["bin_token"][0][:-4]
+            current_saved_bin_folder = os.path.join(val_result_savedir,saved_bin_token_name)
+            os.makedirs(current_saved_bin_folder,exist_ok=True)
+        
+        
+        for internal_view_index, output_dict_info_temp in enumerate(output_info_list_all):
+            render_c2w = output_dict_info_temp["output_c2ws"] # render last and first camera 2 word: [B,6*3,4,4]
+            render_fovxs = output_dict_info_temp["output_fovxs"] # [B,6*3]
+            render_fovys = output_dict_info_temp["output_fovys"] # [B,6*3]
+            
+            gt_RGB = output_dict_info_temp["output_imgs"]
+            gt_sparse_depth = output_dict_info_temp['output_sparse_gt_depth']
+            
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )     
+            output_rendered_pkg_fuse_list.append(render_pkg_fuse)
+            
+            rendered_RGB = render_pkg_fuse['image'] #(B,V,3,H,W)
+            rendered_depth = render_pkg_fuse['depth'].squeeze(2)
+            
+            rendered_left_rgb = rendered_RGB[:,0,:,:,:]
+            gt_left_rgb = gt_RGB[:,0,:,:,:]
+            
+            rendered_right_rgb = rendered_RGB[:,1,:,:,:]
+            gt_right_rgb = gt_RGB[:,1,:,:,:]
+            
+            rendered_left_depth = rendered_depth[:,0,:,:]
+            gt_left_depth = gt_sparse_depth[:,0,:,:]
+            
+
+            rendered_right_depth = rendered_depth[:,1,:,:]
+            gt_right_depth = gt_sparse_depth[:,1,:,:]
+            
+            
+            left_psnr, left_ssim = compute_psnr_ssim(pred=rendered_left_rgb,
+                                                     target=gt_left_rgb)
+            
+            right_psnr, right_ssim = compute_psnr_ssim(pred=rendered_right_rgb,
+                                                       target=gt_right_rgb)
+            
+            left_mae, left_mse = compute_depth_mae_mse(depth_pred=rendered_left_depth,
+                                                       depth_gt=gt_left_depth)
+            
+            right_mae, right_mse = compute_depth_mae_mse(depth_pred=rendered_right_depth,
+                                                         depth_gt=gt_right_depth)
+
+            left_psnr_list.append(left_psnr)
+            left_ssim_list.append(left_ssim)
+            
+            right_psnr_list.append(right_psnr)
+            right_ssim_list.append(right_ssim)
+            
+            left_depth_mae_list.append(left_mae)
+            left_depth_mse_list.append(left_mse)
+            
+            right_depth_mae_list.append(right_mae)
+            right_depth_mse_list.append(right_mse)
+            
+            rendered_left_images_list.append(rendered_left_rgb)
+            rendered_right_images_list.append(rendered_right_rgb)
+            
+            gt_left_images_list.append(gt_left_rgb)
+            gt_right_images_list.append(gt_right_rgb)
+            
+            rendered_left_depth_list.append(rendered_left_depth)
+            rendered_right_depth_list.append(rendered_right_depth)
+            
+            gt_left_depth_list.append(gt_left_depth)
+            gt_right_depth_list.append(gt_right_depth)
+            
+            
+            if saved_label:
+                
+                rendered_left_images_vis = torch.cat([rendered_left_rgb,gt_left_rgb],dim=-2)
+                rendered_right_images_vis = torch.cat([rendered_right_rgb,gt_right_rgb],dim=-2)
+                rendered_view = torch.cat([rendered_left_images_vis,rendered_right_images_vis],dim=-1)
+
+                skimage.io.imsave(os.path.join(current_saved_bin_folder,"rendered_views_{}.png".format(internal_view_index)),
+                                  (rendered_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+                
+                
+                rendered_left_depth_vis = torch.cat([rendered_left_depth,gt_left_depth],dim=-2)
+                rendered_right_depth_vis = torch.cat([rendered_right_depth,gt_right_depth],dim=-2)
+                rendered_depth_vis = torch.cat([rendered_left_depth_vis,rendered_right_depth_vis],dim=-1)
+                rendered_depth_vis = rendered_depth_vis.squeeze(0).cpu().numpy()
+                rendered_depth_vis = convert_depth_to_disp(depth=rendered_depth_vis)
+                skimage.io.imsave(os.path.join(current_saved_bin_folder,"last_depth_{}.png".format(internal_view_index)),
+                                    rendered_depth_vis)
+                
+
+            
+            
+        return rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
+            left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list
+
+
+        
+
+        
+        
+
+        
+        
+

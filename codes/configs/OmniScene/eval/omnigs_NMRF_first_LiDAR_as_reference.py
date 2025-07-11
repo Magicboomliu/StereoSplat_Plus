@@ -6,11 +6,10 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "outputs/omni_gs_kitti360_novelview_r50_224x840"
-
+output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/Stereo/Center_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
-lr = 8e-5
+lr = 1e-4
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 3000
@@ -39,27 +38,27 @@ resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360/"
+
+datapath = "/data1/StereoDatasets/KITTI/KITTI360"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0"
+data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=3
 camera_model='OpenGL' # select from OpenCV and OpenGL
-
-
+world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
-    pseudo_depth_type='Metric3DV2', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
+    pseudo_depth_type='NMRFStereo', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
     use_sparse_lidar=True
     )
 
-
+pair_images=2
 
 dataset_params = dict(
-    dataset_name="KITTI360Dataset",
+    dataset_name="KITTI360DatasetComplete",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
@@ -69,9 +68,6 @@ dataset_params = dict(
     data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
-    use_center=use_center,
-    use_first=use_first,
-    use_last=use_last,
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
@@ -80,7 +76,8 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model
+    camera_model=camera_model,
+    pair_images=pair_images
 )
 
 num_cams = 2
