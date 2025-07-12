@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs/VolumeFusion/Debugs/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs_new/VolumeFusion/Center_LiDAR_As_Ref_No_Offset/visualization"
 validation_vis_progress=True
 
 
@@ -37,7 +37,6 @@ resolution = [224, 1088]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
-
 background_color=[0.0, 0.0, 0.0]
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
 train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
@@ -46,12 +45,10 @@ test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/v
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0"
 supp_view_nums=3
-
-# if neccssary
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
-
 camera_model='OpenCV' # select from openCV and openGL
+world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -59,8 +56,10 @@ depth_info_params = dict(
     use_sparse_lidar=True
     )
 
+
+pair_images=2
 dataset_params = dict(
-    dataset_name="KITTI360Dataset",
+    dataset_name="KITTI360DatasetComplete",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
@@ -70,9 +69,6 @@ dataset_params = dict(
     data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
-    use_center=use_center,
-    use_first=use_first,
-    use_last=use_last,
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
@@ -81,8 +77,10 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model
+    camera_model=camera_model,
+    pair_images=pair_images
 )
+
 
 num_cams = 2
 near = 0.1
@@ -103,6 +101,7 @@ max_depth=100
 min_depth=0.3
 
 
+used_3D_offset=False
 
 # Volume Branch Parameterization
 
