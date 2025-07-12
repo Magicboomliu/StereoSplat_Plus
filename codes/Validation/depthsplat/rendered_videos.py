@@ -10,21 +10,82 @@ import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
+from torch import Tensor,nn
 from tqdm import tqdm
+import numpy as np
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
+
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
-import json
-from tqdm import tqdm
+
 import sys
 sys.path.append("..")
+# Loading the models
+from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
+from depthsplat.models.revised_depthsplat import ModelWarpper
+from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
+
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+import json
+
 from tools.visualization import depths_to_colors
 
 import moviepy.editor as mpy
 import wandb
+
+
+def saved_into_json(data_dict,path):
+    with open(path, "w") as f:
+        json.dump(data_dict, f, indent=4)
+
+def convert_depth_to_disp(factor=328.318735,depth=None):
+    
+    mask = depth>0
+    mask = mask.astype(np.float32)
+
+    disparity = factor / (depth +1e-3)
+    disparity = disparity * mask
+    disparity = np.clip(disparity,a_max=220,a_min=0)
+    
+    disparity = kitti_colormap(disparity)
+    return disparity
+
+def kitti_colormap(disparity, maxval=-1):
+	"""
+	A utility function to reproduce KITTI fake colormap
+	Arguments:
+	  - disparity: numpy float32 array of dimension HxW
+	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
+	
+	Returns a numpy uint8 array of shape HxWx3.
+	"""
+	if maxval < 0:
+		maxval = np.max(disparity)
+
+	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
+	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
+	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
+
+	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
+	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
+	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
+	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
+	index = np.argmax(diffs, axis=-1)-1
+
+	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
+
+
+	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
+	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
+	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
+
+	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
+
 
 
 def main(args):
@@ -92,13 +153,46 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
 
+    '''     Model Configuration   '''
+    encoder_cfg = cfg.model.encoder
+    # depth unimatch model
+    depth_estimator_unimatch = MultiViewUniMatch(
+            num_scales=encoder_cfg.num_scales, # default is 1
+            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
+            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
+            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
+            unet_channels=encoder_cfg.depth_unet_channels, # 128
+            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
+        )
+    
+    # 3dgs head: define the the gaussain head
+    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
+    # color branch
+    gaussain_color_branch_config = {
+            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
+            "color_large_unet": cfg.model.encoder.color_large_unet,
+            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
+            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
+            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
+            "num_surfaces":cfg.model.encoder.num_surfaces}
+    
+    # gaussain head estimation
+    gaussain_head = Custom_Gaussain_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+                                             upsample_factor=cfg.model.encoder.upsample_factor,
+                                             num_scales=cfg.model.encoder.num_scales,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head,
+                            unimatch_weight = cfg.unimatch_weights_path,
+                            camera_args=cfg.camera_args
+                            )
 
-    from builder import builder as model_builder
-    my_model = model_builder.build(cfg.model).to(accelerator.device)
     # move to the accelerate
-    my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
-    
-    
+    my_modelval_dataloader = accelerator.prepare(
+        my_model,  val_dataloader
+    )
+
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -115,6 +209,7 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
 
+
     cfg.output_dir = args.output_folder
     
     with torch.no_grad():
@@ -122,7 +217,7 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-            preds, bin_tokens= my_model.forward_kitti360_videos(batch)
+            preds, bin_tokens= my_model.forward_kitti360_videos(batch,cfg=cfg)
 
 
             bs = preds["img"].shape[0]  
@@ -161,7 +256,7 @@ def main(args):
     accelerator.wait_for_everyone()
     accelerator.end_training()
 
-            
+
 
 if __name__ == '__main__':
     # Training settings

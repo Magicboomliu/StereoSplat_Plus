@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "depthsplat_kitti360_stereo_224x840"
-output_dir = "/data1/zliu/feedforward_outputs/depthsplat_revised/outputs_vis/{}".format(exp_name)
+output_dir = "/data1/zliu/feedforward_outputs_new/depthsplat_revised_center_lidar_as_ref_no_offset/visualizations"
 validation_vis_progress=True
 
 
@@ -31,7 +31,6 @@ seed=42
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
-# resolution = [224, 832]
 resolution = [224, 1088]
 
 # LiDAR Range id different
@@ -48,6 +47,7 @@ supp_view_nums=3
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
+world_center="Center_LiDAR" # Select from "Center_LiDAR" or "First_Cam0"
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -56,8 +56,9 @@ depth_info_params = dict(
     )
 
 
+pair_images=2
 dataset_params = dict(
-    dataset_name="KITTI360Dataset",
+    dataset_name="KITTI360DatasetComplete",
     seed=seed,
     datapath=datapath,
     train_filelist=train_filelist,
@@ -67,9 +68,6 @@ dataset_params = dict(
     data_version=data_version,
     resolution=resolution,
     pc_range=point_cloud_range,
-    use_center=use_center,
-    use_first=use_first,
-    use_last=use_last,
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
@@ -78,8 +76,10 @@ dataset_params = dict(
     num_workers_test=4,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
-    camera_model=camera_model
+    camera_model=camera_model,
+    pair_images=pair_images
 )
+
 
 
 
@@ -162,8 +162,10 @@ model = dict(
     )
 )
 
+used_3D_offset=False
 
 # Define the Loss Here
+
 loss_settings_dict = dict(
     depth_estimator_supervision=True,
     depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'

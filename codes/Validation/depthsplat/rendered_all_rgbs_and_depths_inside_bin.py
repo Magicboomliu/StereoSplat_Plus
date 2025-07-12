@@ -5,15 +5,14 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
-
+from torch import Tensor,nn
 from tqdm import tqdm
-
+import numpy as np
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
@@ -21,6 +20,17 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
+
+import sys
+sys.path.append("..")
+# Loading the models
+from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
+from depthsplat.models.revised_depthsplat import ModelWarpper
+from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
+
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 import json
 
 def saved_into_json(data_dict,path):
@@ -102,8 +112,8 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
+
 def main(args):
-    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
 
@@ -172,14 +182,47 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
+    
+    '''     Model Configuration   '''
+    encoder_cfg = cfg.model.encoder
+    # depth unimatch model
+    depth_estimator_unimatch = MultiViewUniMatch(
+            num_scales=encoder_cfg.num_scales, # default is 1
+            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
+            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
+            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
+            unet_channels=encoder_cfg.depth_unet_channels, # 128
+            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
+        )
+    
+    # 3dgs head: define the the gaussain head
+    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
+    # color branch
+    gaussain_color_branch_config = {
+            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
+            "color_large_unet": cfg.model.encoder.color_large_unet,
+            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
+            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
+            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
+            "num_surfaces":cfg.model.encoder.num_surfaces}
+    
+    # gaussain head estimation
+    gaussain_head = Custom_Gaussain_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+                                             upsample_factor=cfg.model.encoder.upsample_factor,
+                                             num_scales=cfg.model.encoder.num_scales,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head,
+                            unimatch_weight = cfg.unimatch_weights_path,
+                            camera_args=cfg.camera_args
+                            )
 
-
-    from builder import builder as model_builder
-    my_model = model_builder.build(cfg.model).to(accelerator.device)
     # move to the accelerate
-    my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
-    
-    
+    my_modelval_dataloader = accelerator.prepare(
+        my_model,  val_dataloader
+    )
+
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -189,15 +232,13 @@ def main(args):
     else:
         path = None
 
-
     if path:
         accelerator.print(f"Loading from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-
-
+        
 
     meter_rendered_results_dict = {
         "center_l": Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
@@ -211,7 +252,6 @@ def main(args):
     }
 
 
-
     with torch.no_grad():
         my_model.eval()
         for batch in tqdm(val_dataloader):
@@ -222,9 +262,11 @@ def main(args):
             left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list= my_model.validation_complete_with_bin_tokens(batch,
                                             args.output_folder,
                                             bin_token_list,
-                                            saved_label=args.output_vis
-                                                         )
-            
+                                            saved_label=args.output_vis,
+                                            cfg=cfg)
+
+
+
             left_psnr_first,left_psnr_center,left_psnr_last = left_psnr_list[:3]
             left_ssim_first, left_ssim_center,left_ssim_last = left_ssim_list[:3]
             right_psnr_first,right_psnr_center,right_psnr_last = right_psnr_list[:3]
@@ -286,7 +328,6 @@ def main(args):
                                         mse= get_mean(right_depth_mse_list).data.item()
             )
             
-        
         results_dict = {
             'first_l': meter_rendered_results_dict['first_l'].get_stats(),
             'first_r': meter_rendered_results_dict['first_r'].get_stats(),
@@ -300,7 +341,9 @@ def main(args):
         if not args.output_vis:
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
-                        
+            
+            
+            
 def get_mean(list):
     return sum(list)*1.0/len(list)
     
