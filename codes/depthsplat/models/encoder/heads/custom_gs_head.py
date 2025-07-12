@@ -232,6 +232,7 @@ class Custom_Gaussain_Head(nn.Module):
                               b=b, v=v, c=3) #(B,V*H*W,14)
         
         #FIXME
+
         if cfg.used_3D_offset:
             means = means + offsets
         

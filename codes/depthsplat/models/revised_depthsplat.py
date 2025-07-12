@@ -214,6 +214,69 @@ class ModelWarpper(nn.Module):
         return input_batch_dict,output_batch_dict
     
     
+    def prepare_data_complete(self,batch):
+        device_id = self.device
+        
+        input_batch_dict = dict()
+        output_batch_dict = dict()
+        
+        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
+        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
+                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
+                                        #'sparse_gt_depth'])
+        bin_token_name = batch['bin_token']
+        input_cam_batch_data = batch['inputs_pix']                                 
+        input_batch_data = batch['inputs']
+        
+        input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
+        input_camera_extrinsics = input_cam_batch_data['c2w'] #(B,V,4,4)
+        
+        input_psuedo_depth = input_cam_batch_data['depth_m'] #(B,V,H,W)
+        input_sparse_depth = input_cam_batch_data['sparse_gt_depth'] #(B,V,H,W)
+        
+
+        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth.shape[0],1,1)
+        
+        
+        # input_dict
+        input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
+        input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['nn_matrix'] =cameras_dist_index.to(device_id, dtype=self.dtype)
+        input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['bin_token_name'] = bin_token_name
+        
+        
+        output_list = []
+        
+        for ind in range(len(batch["outputs"]["rgb"])):
+            # for render and loss and eval
+            output_dict = dict()
+            output_dict["output_imgs"] = batch["outputs"]["rgb"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths"] = batch["outputs"]["depth"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths_m"] = batch["outputs"]["depth_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_confs_m"] = batch["outputs"]["conf_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_positions"] = (batch["outputs"]["rays_o"][ind] + batch["outputs"]["rays_d"][ind] * \
+                                batch["outputs"]["depth_m"][ind].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+            output_dict["output_rays_o"] = batch["outputs"]["rays_o"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_rays_d"] = batch["outputs"]["rays_d"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_c2ws"] = batch["outputs"]["c2w"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovxs"] = batch["outputs"]["fovx"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovys"] = batch["outputs"]["fovy"][ind].to(device_id, dtype=self.dtype)
+            output_dict['output_sparse_gt_depth'] = batch['outputs']['sparse_gt_depth'][ind].to(device_id, dtype=self.dtype)
+            output_list.append(output_dict)
+            
+            
+        output_batch_dict['output_list'] = output_list
+
+        
+        return input_batch_dict,output_batch_dict
+
+
+    
     
     def forward(self,batch, mode="train", iter=0, cfg=None):
         
@@ -1195,492 +1258,295 @@ class ModelWarpper(nn.Module):
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths
 
 
-    # Guassain Fusion Aggreagtion Inside the BIN
-    def forward_gaussain_fusion_inside_bin_flc(self,batch,mode='val',fuse_type='concat',cfg=None):
-        '''
-        fuse_type: should select from "None", "concat",'voxel_fusion'
-        '''
+    def validation_complete_with_bin_tokens(self,
+                                            batch,
+                                            val_result_savedir,
+                                            bin_token_list,
+                                            saved_label=False,
+                                            cfg=None
+                                            ):
         
-        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+        input_batch_dict,output_batch_dict = self.prepare_data_complete(batch=batch)
+
         return_depth = cfg.return_depth
         iter_end = cfg.max_train_steps 
         depth_max_value = cfg.max_depth # 100
-        depth_min_value = cfg.min_depth # 0.3   
+        depth_min_value = cfg.min_depth # 0.3    
         
-        if fuse_type=="None":
-            input_idx_list = [1]
+        # inputs information
+        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
+        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
+        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
+        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
+        bs = input_images.shape[0]
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+
+        mask = input_sparse_gt_depth > 0
+        mask = mask.float()
+        input_nn_matrix = input_nn_matrix.long()
+
+
+        num_of_cameras = input_images.shape[1]
+        min_depth=1.0 / depth_max_value  # inverse depth range
+        max_depth=1.0 / depth_min_value
+        
+        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        
+        height, width = input_images.shape[3:]
+        
+        # debug here
+        # intrinsics[:,:,0,2] = intrinsics[:,:,0,2] + 13
+        # intrinsics[:,:,1,2] = intrinsics[:,:,1,2] - 30
+        intrinsics = intrinsics.clone()
+        # # Normalized the instrinsics -----> Maybe not neccssary
+        # intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
+        # intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height
+        
+        results_dict = self.depth_estimator(
+            images=input_images,
+            attn_splits_list=[2],
+            intrinsics=intrinsics,
+            min_depth=min_depth,  # inverse depth range
+            max_depth=max_depth,
+            num_depth_candidates=192, # here I set it to 192
+            extrinsics=input_extrinsics,
+            nn_matrix=input_nn_matrix
+        ) 
+        # dict_keys(['features_cnn_all_scales', 'features_cnn', 
+            # 'features_mv', 'features_mono_intermediate', 
+            # 'features_mono', 'depth_preds', 'match_probs'])
+        
+        
+        
+        predicted_input_depth = results_dict['depth_preds'][0]
+        
+
+        if cfg.train_depth_only:
+            pass
+        
+        
         else:
-            input_idx_list = [0,1,2] 
-    
-        fusion_gaussain_cv = []
-        
-
-        start_time = time.time()
-        for input_idx in input_idx_list:
-            # inputs information
-            input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
-            intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
-            input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
-            input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
-            bs = input_images.shape[0]
-            input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
-            input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
-            
-            
-
-            mask = input_sparse_gt_depth > 0
-            mask = mask.float()
-            input_nn_matrix = input_nn_matrix.long()
-
-
-            num_of_cameras = input_images.shape[1]
-            min_depth=1.0 / depth_max_value  # inverse depth range
-            max_depth=1.0 / depth_min_value
-            
-            min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-            max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-            
-            height, width = input_images.shape[3:]
-            
-
-            intrinsics = intrinsics.clone()
-
-            results_dict = self.depth_estimator(
-                images=input_images,
-                attn_splits_list=[2],
-                intrinsics=intrinsics,
-                min_depth=min_depth,  # inverse depth range
-                max_depth=max_depth,
-                num_depth_candidates=192, # here I set it to 192
-                extrinsics=input_extrinsics,
-                nn_matrix=input_nn_matrix
-            ) 
-
-            
-            predicted_input_depth = results_dict['depth_preds'][0]
-        
+            # estimated the gs 
+            # change the head here
             gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
-                                            extrinsics=input_extrinsics,
-                                            intrinsics = intrinsics,
-                                            results_dict=results_dict,
-                                            return_depth=return_depth)
-            
-            
-            
-            # np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
-            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
-            bs = gaussians_cv.shape[0] # batch size is 2
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth,
+                                           cfg=cfg)
+        
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        bs = gaussians_cv.shape[0] # batch size is 2
+        
+        output_info_list_all = output_batch_dict['output_list']
+    
+        output_rendered_pkg_fuse_list = []
+        # for the validation
+        rendered_left_images_list = []
+        rendered_right_images_list = []
+        gt_left_images_list = []
+        gt_right_images_list = []
+        
+        rendered_left_depth_list = []
+        rendered_right_depth_list = []
+        
+        gt_left_depth_list = []
+        gt_right_depth_list = []
+        
+        
+        left_psnr_list = []
+        left_ssim_list = []
+        right_psnr_list = []
+        right_ssim_list = []
+        
+        left_depth_mae_list = []
+        left_depth_mse_list = []
+        
+        right_depth_mae_list = []
+        right_depth_mse_list = []
+        
+        if saved_label:
+            saved_bin_token_name =input_batch_dict['bin_token_name'][0][:-4]
+            current_saved_bin_folder = os.path.join(val_result_savedir,saved_bin_token_name)
+            os.makedirs(current_saved_bin_folder,exist_ok=True)
+        
 
+        for internal_view_index, output_dict_info_temp in enumerate(output_info_list_all):
+            render_c2w = output_dict_info_temp["output_c2ws"] # render last and first camera 2 word: [B,6*3,4,4]
+            render_fovxs = output_dict_info_temp["output_fovxs"] # [B,6*3]
+            render_fovys = output_dict_info_temp["output_fovys"] # [B,6*3]
             
-            if fuse_type=='concat':
-                fusion_gaussain_cv.append(gaussians_cv)
+            gt_RGB = output_dict_info_temp["output_imgs"]
+            gt_sparse_depth = output_dict_info_temp['output_sparse_gt_depth']
             
-            elif fuse_type =='voxel_fusion':
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_cv,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )     
+            output_rendered_pkg_fuse_list.append(render_pkg_fuse)
+            
+            rendered_RGB = render_pkg_fuse['image'] #(B,V,3,H,W)
+            rendered_depth = render_pkg_fuse['depth'].squeeze(2)
+            
+            rendered_left_rgb = rendered_RGB[:,0,:,:,:]
+            gt_left_rgb = gt_RGB[:,0,:,:,:]
+            
+            rendered_right_rgb = rendered_RGB[:,1,:,:,:]
+            gt_right_rgb = gt_RGB[:,1,:,:,:]
+            
+            rendered_left_depth = rendered_depth[:,0,:,:]
+            gt_left_depth = gt_sparse_depth[:,0,:,:]
+            
+
+            rendered_right_depth = rendered_depth[:,1,:,:]
+            gt_right_depth = gt_sparse_depth[:,1,:,:]
+            
+            
+            left_psnr, left_ssim = compute_psnr_ssim(pred=rendered_left_rgb,
+                                                     target=gt_left_rgb)
+            
+            right_psnr, right_ssim = compute_psnr_ssim(pred=rendered_right_rgb,
+                                                       target=gt_right_rgb)
+            
+            left_mae, left_mse = compute_depth_mae_mse(depth_pred=rendered_left_depth,
+                                                       depth_gt=gt_left_depth)
+            
+            right_mae, right_mse = compute_depth_mae_mse(depth_pred=rendered_right_depth,
+                                                         depth_gt=gt_right_depth)
+
+            left_psnr_list.append(left_psnr)
+            left_ssim_list.append(left_ssim)
+            
+            right_psnr_list.append(right_psnr)
+            right_ssim_list.append(right_ssim)
+            
+            left_depth_mae_list.append(left_mae)
+            left_depth_mse_list.append(left_mse)
+            
+            right_depth_mae_list.append(right_mae)
+            right_depth_mse_list.append(right_mse)
+            
+            rendered_left_images_list.append(rendered_left_rgb)
+            rendered_right_images_list.append(rendered_right_rgb)
+            
+            gt_left_images_list.append(gt_left_rgb)
+            gt_right_images_list.append(gt_right_rgb)
+            
+            rendered_left_depth_list.append(rendered_left_depth)
+            rendered_right_depth_list.append(rendered_right_depth)
+            
+            gt_left_depth_list.append(gt_left_depth)
+            gt_right_depth_list.append(gt_right_depth)
+            
+            
+            if saved_label:
                 
-                cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
-                pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
-                gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
-                if input_idx==0:
-                    fused_gaussain = gaussians_cv_for_fusion
-                    
-                else:
-                    fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
-                        gaussians1_b=fusion_gaussain_cv[input_idx-1],
-                        gaussians2_b=gaussians_cv_for_fusion,
-                        point_cloud_range=cfg.point_cloud_range,
-                        voxel_size=1.0
-                    )
-                    
-                fusion_gaussain_cv.append(fused_gaussain)
+                rendered_left_images_vis = torch.cat([rendered_left_rgb,gt_left_rgb],dim=-2)
+                rendered_right_images_vis = torch.cat([rendered_right_rgb,gt_right_rgb],dim=-2)
+                rendered_view = torch.cat([rendered_left_images_vis,rendered_right_images_vis],dim=-1)
+
+                skimage.io.imsave(os.path.join(current_saved_bin_folder,"rendered_views_{}.png".format(internal_view_index)),
+                                  (rendered_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+                
+                
+                rendered_left_depth_vis = torch.cat([rendered_left_depth,gt_left_depth],dim=-2)
+                rendered_right_depth_vis = torch.cat([rendered_right_depth,gt_right_depth],dim=-2)
+                rendered_depth_vis = torch.cat([rendered_left_depth_vis,rendered_right_depth_vis],dim=-1)
+                rendered_depth_vis = rendered_depth_vis.squeeze(0).cpu().numpy()
+                rendered_depth_vis = convert_depth_to_disp(depth=rendered_depth_vis)
+                skimage.io.imsave(os.path.join(current_saved_bin_folder,"last_depth_{}.png".format(internal_view_index)),
+                                    rendered_depth_vis)
+                
+
             
-            elif fuse_type=="None":
-                fusion_gaussain_cv.append(gaussians_cv)
             
-        #     estimated_pcd = fused_gaussain[0][:,:3].detach().cpu().numpy()
-        #     np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
+        return rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
+            left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list
 
-        # quit()
-        if fuse_type=='concat':
-            fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
-        
-        elif fuse_type=='voxel_fusion':
-            fusion_gaussain = fusion_gaussain_cv[-1]
-            fusion_gaussain = fusion_gaussain[:,:,:14]
-            
-        elif fuse_type=="None":
-            assert len(fusion_gaussain_cv)==1
-            fusion_gaussain = fusion_gaussain_cv[0] 
-        
-        else:
-            raise NotImplementedError
-        
-        
-        #first 2 dimension is the novel final ,final dimension is the input view
-        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
-        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
-        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
-        render_pkg_cv = self.renderer.render(
-            gaussians=fusion_gaussain,
-            c2w=render_c2w,
-            fovx=render_fovxs,
-            fovy=render_fovys,
-            rays_o=None,
-            rays_d=None
-        )  
-        
-        rendered_results = render_pkg_cv
-        rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
-        rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
-        rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
-        
-        rendered_depth = rendered_depth.squeeze(2)
-        rendered_alpha = rendered_alpha.squeeze(2)
-        
-        rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
-        rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
-        
 
         
-        # Get the Statics Information Here
-        output_gt_images_data = output_batch_dict["output_imgs"]
-        output_sparse_depth_data = output_batch_dict['output_sparse_depth']
-        
-
-
-        output_rgb_meter_dict = dict()
-        # rendered center
-        center_frame_left_est =  rendered_color[:,0,:,:,:]
-        center_frame_right_est = rendered_color[:,3,:,:,:]
-        last_frame_left_est =  rendered_color[:,1,:,:,:]
-        last_frame_right_est =  rendered_color[:,4,:,:,:]
-        first_frame_left_est = rendered_color[:,2,:,:,:]
-        first_frame_right_est = rendered_color[:,5,:,:,:]
-        
-        center_frame_left_gt =  output_gt_images_data[:,0,:,:,:]
-        center_frame_right_gt = output_gt_images_data[:,3,:,:,:]
-        last_frame_left_gt =  output_gt_images_data[:,1,:,:,:]
-        last_frame_right_gt =  output_gt_images_data[:,4,:,:,:]
-        first_frame_left_gt = output_gt_images_data[:,2,:,:,:]
-        first_frame_right_gt = output_gt_images_data[:,5,:,:,:]
-
-
-        cl_psnr,cl_ssim = compute_psnr_ssim(pred=center_frame_left_est,target=center_frame_left_gt)
-        cr_psnr,cr_ssim = compute_psnr_ssim(pred=center_frame_right_est,target=center_frame_right_gt)
-        ll_psnr,ll_ssim = compute_psnr_ssim(pred=last_frame_left_est,target=last_frame_left_gt)
-        lr_psnr,lr_ssim = compute_psnr_ssim(pred=last_frame_right_est,target=last_frame_right_gt)
-        fl_psnr,fl_ssim = compute_psnr_ssim(pred=first_frame_left_est,target=first_frame_left_gt)
-        fr_psnr,fr_ssim = compute_psnr_ssim(pred=first_frame_right_est,target=first_frame_right_gt)
-        
-        output_rgb_meter_dict['center_view'] = dict()
-        output_rgb_meter_dict['center_view']['left'] = dict()
-        output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr.data.item()
-        output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim.data.item()
-
-        output_rgb_meter_dict['center_view']['right'] = dict()
-        output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr.data.item()
-        output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim.data.item()
-        
-
-        output_rgb_meter_dict['last_view'] = dict()
-        output_rgb_meter_dict['last_view']['left'] = dict()
-        output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr.data.item()
-        output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim.data.item()
-
-        output_rgb_meter_dict['last_view']['right'] = dict()
-        output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr.data.item()
-        output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim.data.item()
-
-
-        output_rgb_meter_dict['first_view'] = dict()
-        output_rgb_meter_dict['first_view']['left'] = dict()
-        output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr.data.item()
-        output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim.data.item()
-
-        output_rgb_meter_dict['first_view']['right'] = dict()
-        output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr.data.item()
-        output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim.data.item()
-        
-        
-        
-
-        output_depth_meter_dict = dict()
-
-        center_frame_left_est_depth =  rendered_depth[:,0,:,:]
-        center_frame_right_est_depth = rendered_depth[:,3,:,:]
-        last_frame_left_est_depth =  rendered_depth[:,1,:,:]
-        last_frame_right_est_depth =  rendered_depth[:,4,:,:]
-        first_frame_left_est_depth = rendered_depth[:,2,:,:]
-        first_frame_right_est_depth = rendered_depth[:,5,:,:]
-
-        center_frame_left_gt_depth =  output_sparse_depth_data[:,0,:,:]
-        center_frame_right_gt_depth = output_sparse_depth_data[:,3,:,:]
-        last_frame_left_gt_depth =  output_sparse_depth_data[:,1,:,:]
-        last_frame_right_gt_depth =  output_sparse_depth_data[:,4,:,:]
-        first_frame_left_gt_depth = output_sparse_depth_data[:,2,:,:]
-        first_frame_right_gt_depth = output_sparse_depth_data[:,5,:,:]
-
-        cl_mae,cl_mse = compute_depth_mae_mse(depth_pred=center_frame_left_est_depth,
-                              depth_gt=center_frame_left_gt_depth)
-        
-        cr_mae,cr_mse = compute_depth_mae_mse(depth_pred=center_frame_right_est_depth,
-                              depth_gt=center_frame_right_gt_depth)
-        
-        ll_mae,ll_mse = compute_depth_mae_mse(depth_pred=last_frame_left_est_depth,
-                              depth_gt=last_frame_left_gt_depth)
-        
-        lr_mae,lr_mse = compute_depth_mae_mse(depth_pred=last_frame_right_est_depth,
-                              depth_gt=last_frame_right_gt_depth)
-        
-        fl_mae,fl_mse = compute_depth_mae_mse(depth_pred=first_frame_left_est_depth,
-                              depth_gt=first_frame_left_gt_depth)
-
-        fr_mae,fr_mse = compute_depth_mae_mse(depth_pred=first_frame_right_est_depth,
-                              depth_gt=first_frame_right_gt_depth)
-
-        output_depth_meter_dict['center_view'] = dict()
-        output_depth_meter_dict['center_view']['left'] = dict()
-        output_depth_meter_dict['center_view']['left']['mae'] = cl_mae.data.item()
-        output_depth_meter_dict['center_view']['left']['mse'] = cl_mse.data.item()
-
-        output_depth_meter_dict['center_view']['right'] = dict()
-        output_depth_meter_dict['center_view']['right']['mae'] = cr_mae.data.item()
-        output_depth_meter_dict['center_view']['right']['mse'] = cr_mse.data.item()
-        
-
-        output_depth_meter_dict['last_view'] = dict()
-        output_depth_meter_dict['last_view']['left'] = dict()
-        output_depth_meter_dict['last_view']['left']['mae'] = ll_mae.data.item()
-        output_depth_meter_dict['last_view']['left']['mse'] = ll_mse.data.item()
-
-        output_depth_meter_dict['last_view']['right'] = dict()
-        output_depth_meter_dict['last_view']['right']['mae'] = lr_mae.data.item()
-        output_depth_meter_dict['last_view']['right']['mse'] = lr_mse.data.item()
-
-
-        output_depth_meter_dict['first_view'] = dict()
-        output_depth_meter_dict['first_view']['left'] = dict()
-        output_depth_meter_dict['first_view']['left']['mae'] = fl_mae.data.item()
-        output_depth_meter_dict['first_view']['left']['mse'] = fl_mse.data.item()
-
-        output_depth_meter_dict['first_view']['right'] = dict()
-        output_depth_meter_dict['first_view']['right']['mae'] = fr_mae.data.item()
-        output_depth_meter_dict['first_view']['right']['mse'] = fr_mse.data.item()
-
-        
-        return output_rgb_meter_dict,output_depth_meter_dict,rendered_color,rendered_depth,output_gt_images_data,output_sparse_depth_data
-        
-    def prepared_input_batch_data_completed(self,batch):
-        '''
-        dict_keys(['bin_token', 'bin_filenames', 
-                    'outputs', 'inputs', 
-                    'inputs_pix', 'inputs_vol'])
-        '''
-        device_id = self.device
-        input_batch_dict = dict()
-        output_batch_dict = dict()
-
+    def forward_kitti360_videos(self,batch,cfg):
         bin_token_name = batch['bin_token']
         
-        # input list
-        input_cam_batch_data_list = batch['inputs_pix']  # list                               
-        
-        input_batch_image_data_list = batch['inputs']['rgb'] # list
-        input_batch_image_name_list = batch['inputs']['rgb_path'] # list
-        
-        input_rgb_list = input_batch_image_data_list      # length is the num of pairs
-        input_rgb_name_list = input_batch_image_name_list # length is the num of pairs
 
-        input_camera_intrinsics_list = input_cam_batch_data_list['ck']
-        input_camera_extrinsics_list = input_cam_batch_data_list['c2w'] #(B,V,4,4)
-        
-        input_psuedo_depth_list = input_cam_batch_data_list['depth_m'] #(B,V,H,W)
-        input_sparse_depth_list = input_cam_batch_data_list['sparse_gt_depth'] #(B,V,H,W)
-
-
-        cameras_dist_index_list = []
-        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
-        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth_list[0].shape[0],1,1)
-
-
-        for idx in range(len(input_sparse_depth_list)):
-            cameras_dist_index_list.append(cameras_dist_index)
-            
-            
-        # X
-        input_rgb_list = [t.to(device_id, dtype=self.dtype) for t in input_rgb_list]
-        input_camera_intrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_intrinsics_list]
-        input_camera_extrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_extrinsics_list]
-        input_psuedo_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_psuedo_depth_list]
-        input_sparse_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_sparse_depth_list]
-        cameras_dist_index_list = [t.to(device_id, dtype=self.dtype) for t in cameras_dist_index_list]
-        
-        input_batch_dict['imgs'] = input_rgb_list
-        input_batch_dict['intrinsics'] = input_camera_intrinsics_list
-        input_batch_dict['extrinsics'] = input_camera_extrinsics_list
-        input_batch_dict['nn_matrix'] = cameras_dist_index_list
-        input_batch_dict['pseudo_depths'] = input_psuedo_depth_list
-        input_batch_dict['sparse_depths'] = input_sparse_depth_list
-        input_batch_dict['bin_token_name'] = bin_token_name
-        
-        
-        
-        # output dict
-        # for render and loss and eval
-        output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
-        output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
-                            batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
-        output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
-        output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
-        output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
-        
-
-        return input_batch_dict,output_batch_dict
-
-    def forward_gaussain_fusion_inside_bin_video(self,batch,mode='val',
-                                                 fuse_type='concat',
-                                                 cfg=None):
-        '''
-        fuse_type: should select from "None", "concat",'voxel_fusion'
-        '''
-        
-        bin_token_name = batch['bin_token']
-        
-        input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+        # perform the Feed-Forward 3DGS Estimator
+        input_batch_dict,output_batch_dict = self.prepare_data_complete(batch=batch)
         return_depth = cfg.return_depth
         iter_end = cfg.max_train_steps 
         depth_max_value = cfg.max_depth # 100
-        depth_min_value = cfg.min_depth # 0.3   
+        depth_min_value = cfg.min_depth # 0.3    
         
-        if fuse_type=="None":
-            input_idx_list = [1]
+        # inputs information
+        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
+        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
+        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
+        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
+        bs = input_images.shape[0]
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+
+        mask = input_sparse_gt_depth > 0
+        mask = mask.float()
+        input_nn_matrix = input_nn_matrix.long()
+
+
+        num_of_cameras = input_images.shape[1]
+        min_depth=1.0 / depth_max_value  # inverse depth range
+        max_depth=1.0 / depth_min_value
+        
+        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        
+        height, width = input_images.shape[3:]
+        
+        intrinsics = intrinsics.clone()
+        
+        results_dict = self.depth_estimator(
+            images=input_images,
+            attn_splits_list=[2],
+            intrinsics=intrinsics,
+            min_depth=min_depth,  # inverse depth range
+            max_depth=max_depth,
+            num_depth_candidates=192, # here I set it to 192
+            extrinsics=input_extrinsics,
+            nn_matrix=input_nn_matrix
+        )
+        
+        predicted_input_depth = results_dict['depth_preds'][0]
+
+        if cfg.train_depth_only:
+            pass
+        
+        
         else:
-            input_idx_list = [0,1,2] 
-    
-        fusion_gaussain_cv = []
-        
-
-        start_time = time.time()
-        for input_idx in input_idx_list:
-            # inputs information
-            input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
-            intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
-            input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
-            input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
-            bs = input_images.shape[0]
-            input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
-            input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
-            
-            
-
-            mask = input_sparse_gt_depth > 0
-            mask = mask.float()
-            input_nn_matrix = input_nn_matrix.long()
-
-
-            num_of_cameras = input_images.shape[1]
-            min_depth=1.0 / depth_max_value  # inverse depth range
-            max_depth=1.0 / depth_min_value
-            
-            min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-            max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-            
-            height, width = input_images.shape[3:]
-            
-
-            intrinsics = intrinsics.clone()
-
-            results_dict = self.depth_estimator(
-                images=input_images,
-                attn_splits_list=[2],
-                intrinsics=intrinsics,
-                min_depth=min_depth,  # inverse depth range
-                max_depth=max_depth,
-                num_depth_candidates=192, # here I set it to 192
-                extrinsics=input_extrinsics,
-                nn_matrix=input_nn_matrix
-            ) 
-
-            
-            predicted_input_depth = results_dict['depth_preds'][0]
-        
+            # estimated the gs 
+            # change the head here
             gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
-                                            extrinsics=input_extrinsics,
-                                            intrinsics = intrinsics,
-                                            results_dict=results_dict,
-                                            return_depth=return_depth)
-            
-
-    
-            
-            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
-            bs = gaussians_cv.shape[0] # batch size is 2
-
-            
-            if fuse_type=='concat':
-                fusion_gaussain_cv.append(gaussians_cv)
-            
-            elif fuse_type =='voxel_fusion':
-                
-                cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
-                pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
-                gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
-                if input_idx==0:
-                    fusion_gaussain_cv.append(gaussians_cv_for_fusion)
-                else:
-                    # fused_gaussain =fuse_gaussians_by_voxel_with_depth_batched_vectorized(
-                    #     gaussians1=fusion_gaussain_cv[input_idx-1],
-                    #     gaussians2=gaussians_cv_for_fusion,
-                    #     point_cloud_range=cfg.point_cloud_range,
-                    #     voxel_size=0.1
-                    # )
-
-                    fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
-                        gaussians1_b=fusion_gaussain_cv[input_idx-1],
-                        gaussians2_b=gaussians_cv_for_fusion,
-                        point_cloud_range=cfg.point_cloud_range,
-                        voxel_size=0.1
-                    )
-                    
-                    fusion_gaussain_cv.append(fused_gaussain)
-            
-            elif fuse_type=="None":
-                fusion_gaussain_cv.append(gaussians_cv)
-                
-            
-        if fuse_type=='concat':
-            fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth,
+                                           cfg=cfg)
         
-        elif fuse_type=='voxel_fusion':
-            fusion_gaussain = fusion_gaussain_cv[-1]
-            fusion_gaussain = fusion_gaussain[:,:,:14]
-            
-        elif fuse_type=="None":
-            assert len(fusion_gaussain_cv)==1
-            fusion_gaussain = fusion_gaussain_cv[0] 
-        
-        else:
-            raise NotImplementedError
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        bs = gaussians_cv.shape[0] # batch size is 2
 
 
-        # rendered for new views
-        c2w_lf_left = output_batch_dict["output_c2ws"][:, 1]
-        c2w_lf_right = output_batch_dict["output_c2ws"][:, 3]
-        c2w_ff_left = output_batch_dict["output_c2ws"][:, 4]
-        c2w_ff_right = output_batch_dict["output_c2ws"][:, 5]
-        c2w_cf_left = output_batch_dict["output_c2ws"][:, 0] #(1,2,4,4)
-        c2w_cf_right = output_batch_dict["output_c2ws"][:, 2] #(1,2,4,4)
+        '''Output C2W'''
+        c2w_lf_left = output_batch_dict['output_list'][2]["output_c2ws"][:,0,:,:]
+        c2w_lf_right = output_batch_dict['output_list'][2]["output_c2ws"][:,1,:,:]
+        c2w_ff_left = output_batch_dict['output_list'][0]["output_c2ws"][:,0,:,:]
+        c2w_ff_right = output_batch_dict['output_list'][0]["output_c2ws"][:,1,:,:]
+        c2w_cf_left = output_batch_dict['output_list'][1]["output_c2ws"][:,0,:,:]
+        c2w_cf_right = output_batch_dict['output_list'][1]["output_c2ws"][:,1,:,:]
+
         
-        ''' 
-            Movement 0:  Center Left Rotation 45 Degree
-            Movement 1:  Center Rotation Back
-        '''
-    
         # left backward 3---------rotation 45 ------rotation back 
         theta = -math.pi / 4  # 
         rot_0 = torch.tensor([
@@ -1770,47 +1636,646 @@ class ModelWarpper(nn.Module):
                                 movement_14,movement_15,
                                 movement_16,movement_17,
                                 movement_18
-                                ], dim=1)
+                                ], dim=1)        
 
-        N_Chunks = 10
-        interval = int(c2w_interp.shape[1]//N_Chunks)
+        num_frames_all = 60 * c2w_interp.shape[1]
+        fovxs_interp =output_batch_dict['output_list'][0]["output_fovxs"][:, -2:-1].repeat(1, num_frames_all)
+        fovys_interp =output_batch_dict['output_list'][0]["output_fovys"][:, -2:-1].repeat(1, num_frames_all)
         
-        rendered_rgb_list = []
-        rendered_depth_list = []
-
-        for idx in tqdm(range(N_Chunks)):
-            
-            current_c2w_interp = c2w_interp[:,idx*interval:(idx+1)*interval,:]
-            
-            current_fovxs_interp = output_batch_dict["output_fovxs"][:, -6:-5].repeat(1, current_c2w_interp.shape[1])   # [4,960] --> Center
-            current_fovys_interp =output_batch_dict["output_fovys"][:, -6:-5].repeat(1, current_c2w_interp.shape[1]) 
-
-            render_pkg_cv = self.renderer.render(
-                gaussians=fusion_gaussain,
-                c2w=current_c2w_interp,
-                fovx=current_fovxs_interp ,
-                fovy=current_fovys_interp,
-                rays_o=None,
-                rays_d=None
-            )
-            rendered_results = render_pkg_cv
-
-            rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
-            rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
-            rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
-            rendered_depth = rendered_depth.squeeze(2)
-            rendered_alpha = rendered_alpha.squeeze(2)
-            
-            rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
-            rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
-
-            rendered_rgb_list.append(rendered_color)
-            rendered_depth_list.append(rendered_depth)
-            
-
-        rendered_rgb_final = torch.cat(rendered_rgb_list,dim=1)
-        rendered_depth_final = torch.cat(rendered_depth_list,dim=1)
         
-        preds = {"img":rendered_rgb_final,"depth":rendered_depth_final}
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_cv,
+            c2w=c2w_interp,
+            fovx=fovxs_interp,
+            fovy=fovys_interp,
+            rays_o=None,
+            rays_d=None
+        )
         
-        return preds,bin_token_name
+        output_imgs = render_pkg_fuse["image"] # b v 3 h w
+        output_depths = render_pkg_fuse["depth"].squeeze(2) # b v h w
+        preds = {"img": output_imgs, "depth": output_depths}
+
+
+        return preds, input_batch_dict['bin_token_name']
+
+
+    # # Guassain Fusion Aggreagtion Inside the BIN
+    # def forward_gaussain_fusion_inside_bin_flc(self,batch,mode='val',fuse_type='concat',cfg=None):
+    #     '''
+    #     fuse_type: should select from "None", "concat",'voxel_fusion'
+    #     '''
+        
+    #     input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+    #     return_depth = cfg.return_depth
+    #     iter_end = cfg.max_train_steps 
+    #     depth_max_value = cfg.max_depth # 100
+    #     depth_min_value = cfg.min_depth # 0.3   
+        
+    #     if fuse_type=="None":
+    #         input_idx_list = [1]
+    #     else:
+    #         input_idx_list = [0,1,2] 
+    
+    #     fusion_gaussain_cv = []
+        
+
+    #     start_time = time.time()
+    #     for input_idx in input_idx_list:
+    #         # inputs information
+    #         input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
+    #         intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
+    #         input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
+    #         input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
+    #         bs = input_images.shape[0]
+    #         input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
+    #         input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
+            
+            
+
+    #         mask = input_sparse_gt_depth > 0
+    #         mask = mask.float()
+    #         input_nn_matrix = input_nn_matrix.long()
+
+
+    #         num_of_cameras = input_images.shape[1]
+    #         min_depth=1.0 / depth_max_value  # inverse depth range
+    #         max_depth=1.0 / depth_min_value
+            
+    #         min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+    #         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            
+    #         height, width = input_images.shape[3:]
+            
+
+    #         intrinsics = intrinsics.clone()
+
+    #         results_dict = self.depth_estimator(
+    #             images=input_images,
+    #             attn_splits_list=[2],
+    #             intrinsics=intrinsics,
+    #             min_depth=min_depth,  # inverse depth range
+    #             max_depth=max_depth,
+    #             num_depth_candidates=192, # here I set it to 192
+    #             extrinsics=input_extrinsics,
+    #             nn_matrix=input_nn_matrix
+    #         ) 
+
+            
+    #         predicted_input_depth = results_dict['depth_preds'][0]
+        
+    #         gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+    #                                         extrinsics=input_extrinsics,
+    #                                         intrinsics = intrinsics,
+    #                                         results_dict=results_dict,
+    #                                         return_depth=return_depth)
+            
+            
+            
+    #         # np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
+    #         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+    #         bs = gaussians_cv.shape[0] # batch size is 2
+
+            
+    #         if fuse_type=='concat':
+    #             fusion_gaussain_cv.append(gaussians_cv)
+            
+    #         elif fuse_type =='voxel_fusion':
+                
+    #             cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
+    #             pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
+    #             gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
+    #             if input_idx==0:
+    #                 fused_gaussain = gaussians_cv_for_fusion
+                    
+    #             else:
+    #                 fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
+    #                     gaussians1_b=fusion_gaussain_cv[input_idx-1],
+    #                     gaussians2_b=gaussians_cv_for_fusion,
+    #                     point_cloud_range=cfg.point_cloud_range,
+    #                     voxel_size=1.0
+    #                 )
+                    
+    #             fusion_gaussain_cv.append(fused_gaussain)
+            
+    #         elif fuse_type=="None":
+    #             fusion_gaussain_cv.append(gaussians_cv)
+            
+    #     #     estimated_pcd = fused_gaussain[0][:,:3].detach().cpu().numpy()
+    #     #     np.save("/data1/zliu/temp_for_0617/ForVis/{}.npy".format(input_idx),estimated_pcd)
+
+    #     # quit()
+    #     if fuse_type=='concat':
+    #         fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+        
+    #     elif fuse_type=='voxel_fusion':
+    #         fusion_gaussain = fusion_gaussain_cv[-1]
+    #         fusion_gaussain = fusion_gaussain[:,:,:14]
+            
+    #     elif fuse_type=="None":
+    #         assert len(fusion_gaussain_cv)==1
+    #         fusion_gaussain = fusion_gaussain_cv[0] 
+        
+    #     else:
+    #         raise NotImplementedError
+        
+        
+    #     #first 2 dimension is the novel final ,final dimension is the input view
+    #     render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+    #     render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+    #     render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+    #     render_pkg_cv = self.renderer.render(
+    #         gaussians=fusion_gaussain,
+    #         c2w=render_c2w,
+    #         fovx=render_fovxs,
+    #         fovy=render_fovys,
+    #         rays_o=None,
+    #         rays_d=None
+    #     )  
+        
+    #     rendered_results = render_pkg_cv
+    #     rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
+    #     rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
+    #     rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
+        
+    #     rendered_depth = rendered_depth.squeeze(2)
+    #     rendered_alpha = rendered_alpha.squeeze(2)
+        
+    #     rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+    #     rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+        
+
+        
+    #     # Get the Statics Information Here
+    #     output_gt_images_data = output_batch_dict["output_imgs"]
+    #     output_sparse_depth_data = output_batch_dict['output_sparse_depth']
+        
+
+
+    #     output_rgb_meter_dict = dict()
+    #     # rendered center
+    #     center_frame_left_est =  rendered_color[:,0,:,:,:]
+    #     center_frame_right_est = rendered_color[:,3,:,:,:]
+    #     last_frame_left_est =  rendered_color[:,1,:,:,:]
+    #     last_frame_right_est =  rendered_color[:,4,:,:,:]
+    #     first_frame_left_est = rendered_color[:,2,:,:,:]
+    #     first_frame_right_est = rendered_color[:,5,:,:,:]
+        
+    #     center_frame_left_gt =  output_gt_images_data[:,0,:,:,:]
+    #     center_frame_right_gt = output_gt_images_data[:,3,:,:,:]
+    #     last_frame_left_gt =  output_gt_images_data[:,1,:,:,:]
+    #     last_frame_right_gt =  output_gt_images_data[:,4,:,:,:]
+    #     first_frame_left_gt = output_gt_images_data[:,2,:,:,:]
+    #     first_frame_right_gt = output_gt_images_data[:,5,:,:,:]
+
+
+    #     cl_psnr,cl_ssim = compute_psnr_ssim(pred=center_frame_left_est,target=center_frame_left_gt)
+    #     cr_psnr,cr_ssim = compute_psnr_ssim(pred=center_frame_right_est,target=center_frame_right_gt)
+    #     ll_psnr,ll_ssim = compute_psnr_ssim(pred=last_frame_left_est,target=last_frame_left_gt)
+    #     lr_psnr,lr_ssim = compute_psnr_ssim(pred=last_frame_right_est,target=last_frame_right_gt)
+    #     fl_psnr,fl_ssim = compute_psnr_ssim(pred=first_frame_left_est,target=first_frame_left_gt)
+    #     fr_psnr,fr_ssim = compute_psnr_ssim(pred=first_frame_right_est,target=first_frame_right_gt)
+        
+    #     output_rgb_meter_dict['center_view'] = dict()
+    #     output_rgb_meter_dict['center_view']['left'] = dict()
+    #     output_rgb_meter_dict['center_view']['left']['psnr'] = cl_psnr.data.item()
+    #     output_rgb_meter_dict['center_view']['left']['ssim'] = cl_ssim.data.item()
+
+    #     output_rgb_meter_dict['center_view']['right'] = dict()
+    #     output_rgb_meter_dict['center_view']['right']['psnr'] = cr_psnr.data.item()
+    #     output_rgb_meter_dict['center_view']['right']['ssim'] = cr_ssim.data.item()
+        
+
+    #     output_rgb_meter_dict['last_view'] = dict()
+    #     output_rgb_meter_dict['last_view']['left'] = dict()
+    #     output_rgb_meter_dict['last_view']['left']['psnr'] = ll_psnr.data.item()
+    #     output_rgb_meter_dict['last_view']['left']['ssim'] = ll_ssim.data.item()
+
+    #     output_rgb_meter_dict['last_view']['right'] = dict()
+    #     output_rgb_meter_dict['last_view']['right']['psnr'] = lr_psnr.data.item()
+    #     output_rgb_meter_dict['last_view']['right']['ssim'] = lr_ssim.data.item()
+
+
+    #     output_rgb_meter_dict['first_view'] = dict()
+    #     output_rgb_meter_dict['first_view']['left'] = dict()
+    #     output_rgb_meter_dict['first_view']['left']['psnr'] = fl_psnr.data.item()
+    #     output_rgb_meter_dict['first_view']['left']['ssim'] = fl_ssim.data.item()
+
+    #     output_rgb_meter_dict['first_view']['right'] = dict()
+    #     output_rgb_meter_dict['first_view']['right']['psnr'] = fr_psnr.data.item()
+    #     output_rgb_meter_dict['first_view']['right']['ssim'] = fr_ssim.data.item()
+        
+        
+        
+
+    #     output_depth_meter_dict = dict()
+
+    #     center_frame_left_est_depth =  rendered_depth[:,0,:,:]
+    #     center_frame_right_est_depth = rendered_depth[:,3,:,:]
+    #     last_frame_left_est_depth =  rendered_depth[:,1,:,:]
+    #     last_frame_right_est_depth =  rendered_depth[:,4,:,:]
+    #     first_frame_left_est_depth = rendered_depth[:,2,:,:]
+    #     first_frame_right_est_depth = rendered_depth[:,5,:,:]
+
+    #     center_frame_left_gt_depth =  output_sparse_depth_data[:,0,:,:]
+    #     center_frame_right_gt_depth = output_sparse_depth_data[:,3,:,:]
+    #     last_frame_left_gt_depth =  output_sparse_depth_data[:,1,:,:]
+    #     last_frame_right_gt_depth =  output_sparse_depth_data[:,4,:,:]
+    #     first_frame_left_gt_depth = output_sparse_depth_data[:,2,:,:]
+    #     first_frame_right_gt_depth = output_sparse_depth_data[:,5,:,:]
+
+    #     cl_mae,cl_mse = compute_depth_mae_mse(depth_pred=center_frame_left_est_depth,
+    #                           depth_gt=center_frame_left_gt_depth)
+        
+    #     cr_mae,cr_mse = compute_depth_mae_mse(depth_pred=center_frame_right_est_depth,
+    #                           depth_gt=center_frame_right_gt_depth)
+        
+    #     ll_mae,ll_mse = compute_depth_mae_mse(depth_pred=last_frame_left_est_depth,
+    #                           depth_gt=last_frame_left_gt_depth)
+        
+    #     lr_mae,lr_mse = compute_depth_mae_mse(depth_pred=last_frame_right_est_depth,
+    #                           depth_gt=last_frame_right_gt_depth)
+        
+    #     fl_mae,fl_mse = compute_depth_mae_mse(depth_pred=first_frame_left_est_depth,
+    #                           depth_gt=first_frame_left_gt_depth)
+
+    #     fr_mae,fr_mse = compute_depth_mae_mse(depth_pred=first_frame_right_est_depth,
+    #                           depth_gt=first_frame_right_gt_depth)
+
+    #     output_depth_meter_dict['center_view'] = dict()
+    #     output_depth_meter_dict['center_view']['left'] = dict()
+    #     output_depth_meter_dict['center_view']['left']['mae'] = cl_mae.data.item()
+    #     output_depth_meter_dict['center_view']['left']['mse'] = cl_mse.data.item()
+
+    #     output_depth_meter_dict['center_view']['right'] = dict()
+    #     output_depth_meter_dict['center_view']['right']['mae'] = cr_mae.data.item()
+    #     output_depth_meter_dict['center_view']['right']['mse'] = cr_mse.data.item()
+        
+
+    #     output_depth_meter_dict['last_view'] = dict()
+    #     output_depth_meter_dict['last_view']['left'] = dict()
+    #     output_depth_meter_dict['last_view']['left']['mae'] = ll_mae.data.item()
+    #     output_depth_meter_dict['last_view']['left']['mse'] = ll_mse.data.item()
+
+    #     output_depth_meter_dict['last_view']['right'] = dict()
+    #     output_depth_meter_dict['last_view']['right']['mae'] = lr_mae.data.item()
+    #     output_depth_meter_dict['last_view']['right']['mse'] = lr_mse.data.item()
+
+
+    #     output_depth_meter_dict['first_view'] = dict()
+    #     output_depth_meter_dict['first_view']['left'] = dict()
+    #     output_depth_meter_dict['first_view']['left']['mae'] = fl_mae.data.item()
+    #     output_depth_meter_dict['first_view']['left']['mse'] = fl_mse.data.item()
+
+    #     output_depth_meter_dict['first_view']['right'] = dict()
+    #     output_depth_meter_dict['first_view']['right']['mae'] = fr_mae.data.item()
+    #     output_depth_meter_dict['first_view']['right']['mse'] = fr_mse.data.item()
+
+        
+    #     return output_rgb_meter_dict,output_depth_meter_dict,rendered_color,rendered_depth,output_gt_images_data,output_sparse_depth_data
+        
+    # def prepared_input_batch_data_completed(self,batch):
+    #     '''
+    #     dict_keys(['bin_token', 'bin_filenames', 
+    #                 'outputs', 'inputs', 
+    #                 'inputs_pix', 'inputs_vol'])
+    #     '''
+    #     device_id = self.device
+    #     input_batch_dict = dict()
+    #     output_batch_dict = dict()
+
+    #     bin_token_name = batch['bin_token']
+        
+    #     # input list
+    #     input_cam_batch_data_list = batch['inputs_pix']  # list                               
+        
+    #     input_batch_image_data_list = batch['inputs']['rgb'] # list
+    #     input_batch_image_name_list = batch['inputs']['rgb_path'] # list
+        
+    #     input_rgb_list = input_batch_image_data_list      # length is the num of pairs
+    #     input_rgb_name_list = input_batch_image_name_list # length is the num of pairs
+
+    #     input_camera_intrinsics_list = input_cam_batch_data_list['ck']
+    #     input_camera_extrinsics_list = input_cam_batch_data_list['c2w'] #(B,V,4,4)
+        
+    #     input_psuedo_depth_list = input_cam_batch_data_list['depth_m'] #(B,V,H,W)
+    #     input_sparse_depth_list = input_cam_batch_data_list['sparse_gt_depth'] #(B,V,H,W)
+
+
+    #     cameras_dist_index_list = []
+    #     cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+    #     cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth_list[0].shape[0],1,1)
+
+
+    #     for idx in range(len(input_sparse_depth_list)):
+    #         cameras_dist_index_list.append(cameras_dist_index)
+            
+            
+    #     # X
+    #     input_rgb_list = [t.to(device_id, dtype=self.dtype) for t in input_rgb_list]
+    #     input_camera_intrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_intrinsics_list]
+    #     input_camera_extrinsics_list = [t.to(device_id, dtype=self.dtype) for t in input_camera_extrinsics_list]
+    #     input_psuedo_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_psuedo_depth_list]
+    #     input_sparse_depth_list = [t.to(device_id, dtype=self.dtype) for t in input_sparse_depth_list]
+    #     cameras_dist_index_list = [t.to(device_id, dtype=self.dtype) for t in cameras_dist_index_list]
+        
+    #     input_batch_dict['imgs'] = input_rgb_list
+    #     input_batch_dict['intrinsics'] = input_camera_intrinsics_list
+    #     input_batch_dict['extrinsics'] = input_camera_extrinsics_list
+    #     input_batch_dict['nn_matrix'] = cameras_dist_index_list
+    #     input_batch_dict['pseudo_depths'] = input_psuedo_depth_list
+    #     input_batch_dict['sparse_depths'] = input_sparse_depth_list
+    #     input_batch_dict['bin_token_name'] = bin_token_name
+        
+        
+        
+    #     # output dict
+    #     # for render and loss and eval
+    #     output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
+    #     output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
+    #                         batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
+    #     output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
+        
+
+    #     return input_batch_dict,output_batch_dict
+
+    # def forward_gaussain_fusion_inside_bin_video(self,batch,mode='val',
+    #                                              fuse_type='concat',
+    #                                              cfg=None):
+    #     '''
+    #     fuse_type: should select from "None", "concat",'voxel_fusion'
+    #     '''
+        
+    #     bin_token_name = batch['bin_token']
+        
+    #     input_batch_dict,output_batch_dict =  self.prepared_input_batch_data_completed(batch)
+    #     return_depth = cfg.return_depth
+    #     iter_end = cfg.max_train_steps 
+    #     depth_max_value = cfg.max_depth # 100
+    #     depth_min_value = cfg.min_depth # 0.3   
+        
+    #     if fuse_type=="None":
+    #         input_idx_list = [1]
+    #     else:
+    #         input_idx_list = [0,1,2] 
+    
+    #     fusion_gaussain_cv = []
+        
+
+    #     start_time = time.time()
+    #     for input_idx in input_idx_list:
+    #         # inputs information
+    #         input_images = input_batch_dict['imgs'][input_idx] # [B,V,3,H,W]
+    #         intrinsics = input_batch_dict['intrinsics'][input_idx] # [B,V,3,3]
+    #         input_extrinsics = input_batch_dict['extrinsics'][input_idx] # [B,V,4,4]
+    #         input_nn_matrix = input_batch_dict['nn_matrix'][input_idx] #[B,V,K]
+    #         bs = input_images.shape[0]
+    #         input_pseudo_depth = input_batch_dict['pseudo_depths'][input_idx]
+    #         input_sparse_gt_depth = input_batch_dict['sparse_depths'][input_idx]
+            
+            
+
+    #         mask = input_sparse_gt_depth > 0
+    #         mask = mask.float()
+    #         input_nn_matrix = input_nn_matrix.long()
+
+
+    #         num_of_cameras = input_images.shape[1]
+    #         min_depth=1.0 / depth_max_value  # inverse depth range
+    #         max_depth=1.0 / depth_min_value
+            
+    #         min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+    #         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+            
+    #         height, width = input_images.shape[3:]
+            
+
+    #         intrinsics = intrinsics.clone()
+
+    #         results_dict = self.depth_estimator(
+    #             images=input_images,
+    #             attn_splits_list=[2],
+    #             intrinsics=intrinsics,
+    #             min_depth=min_depth,  # inverse depth range
+    #             max_depth=max_depth,
+    #             num_depth_candidates=192, # here I set it to 192
+    #             extrinsics=input_extrinsics,
+    #             nn_matrix=input_nn_matrix
+    #         ) 
+
+            
+    #         predicted_input_depth = results_dict['depth_preds'][0]
+        
+    #         gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+    #                                         extrinsics=input_extrinsics,
+    #                                         intrinsics = intrinsics,
+    #                                         results_dict=results_dict,
+    #                                         return_depth=return_depth)
+            
+
+    
+            
+    #         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+    #         bs = gaussians_cv.shape[0] # batch size is 2
+
+            
+    #         if fuse_type=='concat':
+    #             fusion_gaussain_cv.append(gaussians_cv)
+            
+    #         elif fuse_type =='voxel_fusion':
+                
+    #             cur_bs,cur_view,cur_h,cur_w = pred_depths.shape        
+    #             pred_depths_for_concat = pred_depths.reshape(cur_bs,cur_view*cur_h*cur_w,1)
+    #             gaussians_cv_for_fusion = torch.cat((gaussians_cv,pred_depths_for_concat),dim=-1)
+    #             if input_idx==0:
+    #                 fusion_gaussain_cv.append(gaussians_cv_for_fusion)
+    #             else:
+    #                 # fused_gaussain =fuse_gaussians_by_voxel_with_depth_batched_vectorized(
+    #                 #     gaussians1=fusion_gaussain_cv[input_idx-1],
+    #                 #     gaussians2=gaussians_cv_for_fusion,
+    #                 #     point_cloud_range=cfg.point_cloud_range,
+    #                 #     voxel_size=0.1
+    #                 # )
+
+    #                 fused_gaussain =fuse_gaussians_by_voxel_with_depth_scatter_batched(
+    #                     gaussians1_b=fusion_gaussain_cv[input_idx-1],
+    #                     gaussians2_b=gaussians_cv_for_fusion,
+    #                     point_cloud_range=cfg.point_cloud_range,
+    #                     voxel_size=0.1
+    #                 )
+                    
+    #                 fusion_gaussain_cv.append(fused_gaussain)
+            
+    #         elif fuse_type=="None":
+    #             fusion_gaussain_cv.append(gaussians_cv)
+                
+            
+    #     if fuse_type=='concat':
+    #         fusion_gaussain = torch.cat(fusion_gaussain_cv,dim=1)
+        
+    #     elif fuse_type=='voxel_fusion':
+    #         fusion_gaussain = fusion_gaussain_cv[-1]
+    #         fusion_gaussain = fusion_gaussain[:,:,:14]
+            
+    #     elif fuse_type=="None":
+    #         assert len(fusion_gaussain_cv)==1
+    #         fusion_gaussain = fusion_gaussain_cv[0] 
+        
+    #     else:
+    #         raise NotImplementedError
+
+
+    #     # rendered for new views
+    #     c2w_lf_left = output_batch_dict["output_c2ws"][:, 1]
+    #     c2w_lf_right = output_batch_dict["output_c2ws"][:, 3]
+    #     c2w_ff_left = output_batch_dict["output_c2ws"][:, 4]
+    #     c2w_ff_right = output_batch_dict["output_c2ws"][:, 5]
+    #     c2w_cf_left = output_batch_dict["output_c2ws"][:, 0] #(1,2,4,4)
+    #     c2w_cf_right = output_batch_dict["output_c2ws"][:, 2] #(1,2,4,4)
+        
+    #     ''' 
+    #         Movement 0:  Center Left Rotation 45 Degree
+    #         Movement 1:  Center Rotation Back
+    #     '''
+    
+    #     # left backward 3---------rotation 45 ------rotation back 
+    #     theta = -math.pi / 4  # 
+    #     rot_0 = torch.tensor([
+    #         [math.cos(theta), -math.sin(theta), 0],
+    #         [math.sin(theta),  math.cos(theta), 0],
+    #         [0,                0,               1]
+    #     ], dtype=torch.float32).to(c2w_cf_left.device)
+
+    #     c2w_cf_left_rot2_right = c2w_cf_left.clone()
+    #     c2w_cf_left_rot2_right[...,:3,:3] = rot_0@c2w_cf_left_rot2_right[...,:3,:3]
+
+    #     c2w_lf_left_rot2_right = c2w_lf_left.clone()
+    #     c2w_lf_left_rot2_right[...,:3,:3] = rot_0 @ c2w_lf_left_rot2_right[...,:3,:3]
+        
+    #     c2w_ff_left_rot2_right = c2w_ff_left.clone()
+    #     c2w_ff_left_rot2_right[...,:3,:3] = rot_0 @ c2w_ff_left_rot2_right[...,:3,:3]
+
+    #     ''' 
+    #         Movement 2:  Center Left Cam to Center Right
+    #         Movement 3:  Center Right Rot Inside
+    #         Movement 4: Rotation Back
+    #     '''
+        
+    #     # right backward 3---------rotation 45 ------rotation back:  short +1
+    #     theta = math.pi / 4  # 
+    #     rot_1 = torch.tensor([
+    #         [math.cos(theta), -math.sin(theta), 0],
+    #         [math.sin(theta),  math.cos(theta), 0],
+    #         [0,                0,               1]
+    #     ], dtype=torch.float32).to(c2w_cf_left.device)
+        
+    #     c2w_cf_right_rot2_left = c2w_cf_right.clone()
+    #     c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
+        
+    #     c2w_lf_right_rot2_left = c2w_lf_right.clone()
+    #     c2w_lf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_lf_right_rot2_left[...,:3,:3]
+        
+    #     c2w_ff_right_rot2_left = c2w_ff_right.clone() 
+    #     c2w_ff_right_rot2_left[...,:3,:3] = rot_1 @ c2w_ff_right_rot2_left[...,:3,:3]
+        
+        
+    #     ''' Movement 5: from right to left '''
+    #     '''Movement 6: From Center left to Last Left'''
+    #     num_frames_short = 60
+    #     num_frames_long = 60
+        
+    #     t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
+    #     t_long = torch.linspace(0, 1 - 1 / (num_frames_long + 1), num_frames_long, dtype=torch.float32, device=self.device)
+    #     # center left rot
+    #     movement_0 = interpolate_extrinsics(c2w_cf_left,c2w_cf_left_rot2_right,t_short)
+    #     # center left rot back
+    #     movement_1 = interpolate_extrinsics(c2w_cf_left_rot2_right,c2w_cf_left,t_short)
+    #     # center left to right
+    #     movement_2 = interpolate_extrinsics(c2w_cf_left,c2w_cf_right,t_short)
+    #     # center right rot
+    #     movement_3 = interpolate_extrinsics(c2w_cf_right,c2w_cf_right_rot2_left,t_short)
+    #     # center right rot back
+    #     movement_4 = interpolate_extrinsics(c2w_cf_right_rot2_left,c2w_cf_right,t_short)
+    #     # center right to left
+    #     movement_5 = interpolate_extrinsics(c2w_cf_right,c2w_cf_left,t_short)
+    #     # center left to last left
+    #     movement_6 = interpolate_extrinsics(c2w_cf_left,c2w_lf_left,t_short)
+    #     # last left to rot
+    #     movement_7 = interpolate_extrinsics(c2w_lf_left,c2w_lf_left_rot2_right,t_short)
+    #     # last left rot back
+    #     movement_8 = interpolate_extrinsics(c2w_lf_left_rot2_right,c2w_lf_left,t_short)
+    #     # last left to last right
+    #     movement_9 = interpolate_extrinsics(c2w_lf_left,c2w_lf_right,t_short)
+        
+    #     # last right rot
+    #     movement_10 = interpolate_extrinsics(c2w_lf_right,c2w_lf_right_rot2_left,t_short)
+    #     movement_11 = interpolate_extrinsics(c2w_lf_right_rot2_left, c2w_lf_right,t_short)
+    #     movement_12 = interpolate_extrinsics(c2w_lf_right,c2w_lf_left ,t_short)
+    #     movement_13 = interpolate_extrinsics(c2w_lf_left,c2w_ff_left,t_short)
+    #     movement_14 = interpolate_extrinsics(c2w_ff_left,c2w_ff_left_rot2_right,t_short)
+    #     movement_15 = interpolate_extrinsics(c2w_ff_left_rot2_right,c2w_ff_left,t_short)
+    #     movement_16 = interpolate_extrinsics(c2w_ff_left,c2w_ff_right,t_short)
+    #     movement_17 = interpolate_extrinsics(c2w_ff_right,c2w_ff_right_rot2_left,t_short)
+    #     movement_18 = interpolate_extrinsics(c2w_ff_right_rot2_left,c2w_ff_right,t_short)
+        
+    #     c2w_interp = torch.cat([movement_0, movement_1, movement_2,
+    #                             movement_3, movement_4,movement_5,
+    #                             movement_6,movement_7,
+    #                             movement_8,movement_9,
+    #                             movement_10,movement_11,
+    #                             movement_12,movement_13,
+    #                             movement_14,movement_15,
+    #                             movement_16,movement_17,
+    #                             movement_18
+    #                             ], dim=1)
+
+    #     N_Chunks = 10
+    #     interval = int(c2w_interp.shape[1]//N_Chunks)
+        
+    #     rendered_rgb_list = []
+    #     rendered_depth_list = []
+
+    #     for idx in tqdm(range(N_Chunks)):
+            
+    #         current_c2w_interp = c2w_interp[:,idx*interval:(idx+1)*interval,:]
+            
+    #         current_fovxs_interp = output_batch_dict["output_fovxs"][:, -6:-5].repeat(1, current_c2w_interp.shape[1])   # [4,960] --> Center
+    #         current_fovys_interp =output_batch_dict["output_fovys"][:, -6:-5].repeat(1, current_c2w_interp.shape[1]) 
+
+    #         render_pkg_cv = self.renderer.render(
+    #             gaussians=fusion_gaussain,
+    #             c2w=current_c2w_interp,
+    #             fovx=current_fovxs_interp ,
+    #             fovy=current_fovys_interp,
+    #             rays_o=None,
+    #             rays_d=None
+    #         )
+    #         rendered_results = render_pkg_cv
+
+    #         rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
+    #         rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
+    #         rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
+    #         rendered_depth = rendered_depth.squeeze(2)
+    #         rendered_alpha = rendered_alpha.squeeze(2)
+            
+    #         rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+    #         rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+
+    #         rendered_rgb_list.append(rendered_color)
+    #         rendered_depth_list.append(rendered_depth)
+            
+
+    #     rendered_rgb_final = torch.cat(rendered_rgb_list,dim=1)
+    #     rendered_depth_final = torch.cat(rendered_depth_list,dim=1)
+        
+    #     preds = {"img":rendered_rgb_final,"depth":rendered_depth_final}
+        
+    #     return preds,bin_token_name

@@ -25,7 +25,6 @@ from .mertics import compute_psnr_ssim,kitti_colormap,convert_depth_to_disp
 import math
 import skimage.io
 
-
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
     Computes MAE and MSE between predicted and GT depth maps, with optional valid range filtering.
@@ -106,7 +105,6 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
 
 @MODELS.register_module()
 class OmniGaussian(BaseModule):
-
     def __init__(self,
                  backbone=None, # feature extraction
                  neck=None,      # feature aggregation
@@ -1184,8 +1182,6 @@ class OmniGaussian(BaseModule):
         
         return (rendered_rgb_by_omni_batch,rendered_depth_by_omni_batch), (rendered_rgb_by_volume_batch,rendered_depth_by_volume_batch),(rendered_rgb_by_pixel_batch,rendered_depth_by_pixel_batch),rgbs_gt,sparse_gt_depth_data 
     
-    
-    
     def prepare_data_complete(self,batch):
         # ================== batch data process ================== #
         device_id = self.device
@@ -1238,8 +1234,6 @@ class OmniGaussian(BaseModule):
         data_dict["bin_token"] = batch["bin_token"]
         
         return data_dict
-    
-    
     
     def validation_complete_with_bin_tokens(self,
                                             batch,
@@ -1430,11 +1424,164 @@ class OmniGaussian(BaseModule):
             left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list
 
 
+    def forward_kitti360_videos(self,batch):
         
+        data_dict = self.prepare_data_complete(batch=batch)
+        img = data_dict["imgs"] #(1,2,3,H,W)       
+        bs = img.shape[0] # batch size is 4
+        img_feats = self.extract_img_feat(img=img, status="test")
+        
+        # pixel-gs prediction
+        gaussians_pixel, gaussians_feat = self.pixel_gs(
+                rearrange(img_feats[0], "b v c h w -> (b v) c h w"),
+                data_dict["depths"], data_dict["confs"], data_dict["pluckers"],
+                data_dict["rays_o"], data_dict["rays_d"])
+        
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        gaussians_pixel_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_pixel[b, :, 0] >= x_start) & (gaussians_pixel[b, :, 0] <= x_end) & \
+                        (gaussians_pixel[b, :, 1] >= y_start) & (gaussians_pixel[b, :, 1] <= y_end) & \
+                        (gaussians_pixel[b, :, 2] >= z_start) & (gaussians_pixel[b, :, 2] <= z_end)
+            gaussians_pixel_mask_i = gaussians_pixel[b][mask_pixel_i]
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_pixel_mask.append(gaussians_pixel_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                gaussians_pixel_mask,
+                gaussians_feat_mask,
+                data_dict["img_metas"])
+        
+        gaussians_pixel = sanitize_gaussians_tensor(gaussians_pixel)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        gaussians_all = torch.cat([gaussians_pixel, gaussians_volume], dim=1) #(1,N,14)
+        bs = gaussians_all.shape[0]   
+        
+
+    
+        '''Output C2W'''
+        c2w_lf_left = data_dict['output_list'][2]["output_c2ws"][:,0,:,:]
+        c2w_lf_right = data_dict['output_list'][2]["output_c2ws"][:,1,:,:]
+        c2w_ff_left = data_dict['output_list'][0]["output_c2ws"][:,0,:,:]
+        c2w_ff_right = data_dict['output_list'][0]["output_c2ws"][:,1,:,:]
+        c2w_cf_left = data_dict['output_list'][1]["output_c2ws"][:,0,:,:]
+        c2w_cf_right = data_dict['output_list'][1]["output_c2ws"][:,1,:,:]
 
         
         
+        # left backward 3---------rotation 45 ------rotation back 
+        theta = -math.pi / 4  # 
+        rot_0 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
 
+        c2w_cf_left_rot2_right = c2w_cf_left.clone()
+        c2w_cf_left_rot2_right[...,:3,:3] = rot_0@c2w_cf_left_rot2_right[...,:3,:3]
+
+        c2w_lf_left_rot2_right = c2w_lf_left.clone()
+        c2w_lf_left_rot2_right[...,:3,:3] = rot_0 @ c2w_lf_left_rot2_right[...,:3,:3]
+        
+        c2w_ff_left_rot2_right = c2w_ff_left.clone()
+        c2w_ff_left_rot2_right[...,:3,:3] = rot_0 @ c2w_ff_left_rot2_right[...,:3,:3]
+
+        ''' 
+            Movement 2:  Center Left Cam to Center Right
+            Movement 3:  Center Right Rot Inside
+            Movement 4: Rotation Back
+        '''
+        
+        # right backward 3---------rotation 45 ------rotation back:  short +1
+        theta = math.pi / 4  # 
+        rot_1 = torch.tensor([
+            [math.cos(theta), -math.sin(theta), 0],
+            [math.sin(theta),  math.cos(theta), 0],
+            [0,                0,               1]
+        ], dtype=torch.float32).to(c2w_cf_left.device)
+        
+        c2w_cf_right_rot2_left = c2w_cf_right.clone()
+        c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
+        
+        c2w_lf_right_rot2_left = c2w_lf_right.clone()
+        c2w_lf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_lf_right_rot2_left[...,:3,:3]
+        
+        c2w_ff_right_rot2_left = c2w_ff_right.clone() 
+        c2w_ff_right_rot2_left[...,:3,:3] = rot_1 @ c2w_ff_right_rot2_left[...,:3,:3]
         
         
+        ''' Movement 5: from right to left '''
+        '''Movement 6: From Center left to Last Left'''
+        num_frames_short = 60
+        num_frames_long = 60
+        
+        t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
+        t_long = torch.linspace(0, 1 - 1 / (num_frames_long + 1), num_frames_long, dtype=torch.float32, device=self.device)
+        # center left rot
+        movement_0 = interpolate_extrinsics(c2w_cf_left,c2w_cf_left_rot2_right,t_short)
+        # center left rot back
+        movement_1 = interpolate_extrinsics(c2w_cf_left_rot2_right,c2w_cf_left,t_short)
+        # center left to right
+        movement_2 = interpolate_extrinsics(c2w_cf_left,c2w_cf_right,t_short)
+        # center right rot
+        movement_3 = interpolate_extrinsics(c2w_cf_right,c2w_cf_right_rot2_left,t_short)
+        # center right rot back
+        movement_4 = interpolate_extrinsics(c2w_cf_right_rot2_left,c2w_cf_right,t_short)
+        # center right to left
+        movement_5 = interpolate_extrinsics(c2w_cf_right,c2w_cf_left,t_short)
+        # center left to last left
+        movement_6 = interpolate_extrinsics(c2w_cf_left,c2w_lf_left,t_short)
+        # last left to rot
+        movement_7 = interpolate_extrinsics(c2w_lf_left,c2w_lf_left_rot2_right,t_short)
+        # last left rot back
+        movement_8 = interpolate_extrinsics(c2w_lf_left_rot2_right,c2w_lf_left,t_short)
+        # last left to last right
+        movement_9 = interpolate_extrinsics(c2w_lf_left,c2w_lf_right,t_short)
+        
+        # last right rot
+        movement_10 = interpolate_extrinsics(c2w_lf_right,c2w_lf_right_rot2_left,t_short)
+        movement_11 = interpolate_extrinsics(c2w_lf_right_rot2_left, c2w_lf_right,t_short)
+        movement_12 = interpolate_extrinsics(c2w_lf_right,c2w_lf_left ,t_short)
+        movement_13 = interpolate_extrinsics(c2w_lf_left,c2w_ff_left,t_short)
+        movement_14 = interpolate_extrinsics(c2w_ff_left,c2w_ff_left_rot2_right,t_short)
+        movement_15 = interpolate_extrinsics(c2w_ff_left_rot2_right,c2w_ff_left,t_short)
+        movement_16 = interpolate_extrinsics(c2w_ff_left,c2w_ff_right,t_short)
+        movement_17 = interpolate_extrinsics(c2w_ff_right,c2w_ff_right_rot2_left,t_short)
+        movement_18 = interpolate_extrinsics(c2w_ff_right_rot2_left,c2w_ff_right,t_short)
+        
+        c2w_interp = torch.cat([movement_0, movement_1, movement_2,
+                                movement_3, movement_4,movement_5,
+                                movement_6,movement_7,
+                                movement_8,movement_9,
+                                movement_10,movement_11,
+                                movement_12,movement_13,
+                                movement_14,movement_15,
+                                movement_16,movement_17,
+                                movement_18
+                                ], dim=1)        
+
+        num_frames_all = 60 * c2w_interp.shape[1]
+        fovxs_interp = data_dict['output_list'][0]["output_fovxs"][:, -2:-1].repeat(1, num_frames_all)
+        fovys_interp = data_dict['output_list'][0]["output_fovys"][:, -2:-1].repeat(1, num_frames_all)
+        
+        
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=c2w_interp,
+            fovx=fovxs_interp,
+            fovy=fovys_interp,
+            rays_o=None,
+            rays_d=None
+        )
+        
+        output_imgs = render_pkg_fuse["image"] # b v 3 h w
+        output_depths = render_pkg_fuse["depth"].squeeze(2) # b v h w
+        preds = {"img": output_imgs, "depth": output_depths}
+
+
+        return preds, data_dict["bin_token"]
 
