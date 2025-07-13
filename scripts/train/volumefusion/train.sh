@@ -77,8 +77,8 @@ cd ../../..
 cd codes
 configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_first_LiDAR_as_reference_no_offset.py"
 work_dir="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models"
-# resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
-resume_from="None"
+resume_from="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models/checkpoint-75000/"
+#resume_from="None"
 
 #configs 
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
