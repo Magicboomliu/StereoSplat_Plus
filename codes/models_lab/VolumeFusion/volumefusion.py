@@ -9,7 +9,6 @@ from mmengine.model import BaseModule
 from mmengine.registry import MODELS
 import warnings
 from einops import rearrange, einsum
-
 from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor
@@ -24,10 +23,10 @@ import matplotlib.pyplot as plt
 import math
 from .gaussian import GaussianRenderer
 from .losses import Custom_Depth_Loss
-
-
 from .utils.interpolation import interpolate_extrinsics
 from tqdm import tqdm
+from .gs_fuse import transform_g2_to_g1
+
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -141,7 +140,6 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
     return cleaned
 
-
 class VolumeFusion(BaseModule):
     def __init__(self,
                  backbone=None, # feature extraction
@@ -181,8 +179,6 @@ class VolumeFusion(BaseModule):
             for param in self.perceptual_loss.parameters():
                 param.requires_grad = False
         
-        
-
     def extract_img_feat(self, img, status="train"):
         """Extract features of images."""
         B, N, C, H, W = img.size()
@@ -274,8 +270,6 @@ class VolumeFusion(BaseModule):
     
         return input_batch_dict,output_batch_dict
 
-
-
     def prepare_data_complete(self,batch):
         device_id = self.device
         
@@ -344,7 +338,6 @@ class VolumeFusion(BaseModule):
 
         
         return input_batch_dict,output_batch_dict
-
 
     def forward(self,batch,mode='train',iter=0,cfg=None):
         # get inpout_batch_dict
@@ -721,7 +714,6 @@ class VolumeFusion(BaseModule):
     def validation_step(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
-        
 
         # loss and loss terms
         with torch.no_grad():
@@ -1002,8 +994,6 @@ class VolumeFusion(BaseModule):
     def validation_step_with_token_names(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
-        
-
         # loss and loss terms
         with torch.no_grad():
             loss, loss_terms,rendered_fusion_list,\
@@ -1500,7 +1490,6 @@ class VolumeFusion(BaseModule):
 
 
         output_info_list_all = output_batch_dict['output_list']
-    
         output_rendered_pkg_fuse_list = []
         # for the validation
         rendered_left_images_list = []
@@ -1627,7 +1616,6 @@ class VolumeFusion(BaseModule):
             
         return rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
             left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list
-
 
     def forward_kitti360_videos(self,batch,cfg):
         bin_token_name = batch['bin_token']
@@ -1802,9 +1790,336 @@ class VolumeFusion(BaseModule):
 
         return preds, input_batch_dict['bin_token_name']
 
+    # for inside-bin fusion
+    def process_inside_bin_fusion(self,batch):
+
+        device_id = self.device
+        
+        input_batch_dict_list = []
+        
+        
+        output_batch_dict = dict()
+
+        bin_token_name = batch['bin_token']
+        input_cam_batch_data_list = batch['inputs_pix']                                 
+        input_batch_data_list = batch['inputs']
+        
+        input_rgb_list = input_batch_data_list['rgb']
+        input_camera_intrinsics_list = input_cam_batch_data_list['ck']
+        input_camera_extrinsics_list = input_cam_batch_data_list['c2w']
+        input_camera_ego_extrinsics_list = input_cam_batch_data_list['c2w_ego']
+        input_psuedo_depth_list = input_cam_batch_data_list['depth_m']
+        input_sparse_depth_list = input_cam_batch_data_list['sparse_gt_depth']
+        
+        
+        for internal_input_frame_idx in range(len(input_sparse_depth_list)):
+            
+            input_sparse_depth = input_sparse_depth_list[internal_input_frame_idx]
+            input_rgb = input_rgb_list[internal_input_frame_idx]
+            input_camera_intrinsics = input_camera_intrinsics_list[internal_input_frame_idx]
+            input_camera_extrinsics = input_camera_extrinsics_list[internal_input_frame_idx]
+            input_camera_ego_extrinsics = input_camera_ego_extrinsics_list[internal_input_frame_idx]
+            input_psuedo_depth = input_psuedo_depth_list[internal_input_frame_idx]
+            input_sparse_depth = input_sparse_depth_list[internal_input_frame_idx]
+            
+            input_batch_dict = dict()
+            cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+            cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth.shape[0],1,1)
+        
+        
+            # input_dict
+            input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
+            input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
+            
+            # using the ego-c2w
+            input_batch_dict['extrinsics'] = input_camera_ego_extrinsics.to(device_id, dtype=self.dtype)
+            #input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+            
+            
+            input_batch_dict['nn_matrix'] =cameras_dist_index.to(device_id, dtype=self.dtype)
+            input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
+            input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
+            
+            #using the c2w 
+            input_batch_dict['extrinsics_true'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+            
+        
+            img_metas = []
+            bs, v, c, h, w = input_rgb.shape
+            for w2i in batch["inputs_vol"]["w2i_ego"][internal_input_frame_idx]:
+                img_metas.append({"lidar2img": w2i, "img_shape": [[h, w]] * v})
+            input_batch_dict["img_metas"] = img_metas
+                 
+            input_batch_dict_list.append(input_batch_dict)
+
+            # img_metas = []
+            # bs, v, c, h, w = input_rgb.shape
+            # for w2i in batch["inputs_vol"]["w2i"][internal_input_frame_idx]:
+            #     img_metas.append({"lidar2img": w2i, "img_shape": [[h, w]] * v})
+            # input_batch_dict["img_metas"] = img_metas
+                 
+            # input_batch_dict_list.append(input_batch_dict)
+       
+
+        output_list = []
+        
+        for ind in range(len(batch["outputs"]["rgb"])):
+            # for render and loss and eval
+            output_dict = dict()
+            output_dict["output_imgs"] = batch["outputs"]["rgb"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths"] = batch["outputs"]["depth"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_depths_m"] = batch["outputs"]["depth_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_confs_m"] = batch["outputs"]["conf_m"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_positions"] = (batch["outputs"]["rays_o"][ind] + batch["outputs"]["rays_d"][ind] * \
+                                batch["outputs"]["depth_m"][ind].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+            output_dict["output_rays_o"] = batch["outputs"]["rays_o"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_rays_d"] = batch["outputs"]["rays_d"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_c2ws"] = batch["outputs"]["c2w"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovxs"] = batch["outputs"]["fovx"][ind].to(device_id, dtype=self.dtype)
+            output_dict["output_fovys"] = batch["outputs"]["fovy"][ind].to(device_id, dtype=self.dtype)
+            output_dict['output_sparse_gt_depth'] = batch['outputs']['sparse_gt_depth'][ind].to(device_id, dtype=self.dtype)
+            output_list.append(output_dict)
+            
+            
+        output_batch_dict['output_list'] = output_list
+        output_batch_dict['bin_token'] = bin_token_name
+        
+        return input_batch_dict_list,output_batch_dict
+
+        
+    
+    def validataion_inside_fusion(self,batch,saved_dir,
+                                  saved_label,
+                                  cfg=None):
+        
+        input_batch_dict_list,output_batch_dict = self.process_inside_bin_fusion(batch=batch)
+        
+        
+        output_info_list_all = output_batch_dict['output_list']
+        
+        gaussians_all_list = []
+        
+        for internal_frame_index in range(len(input_batch_dict_list)):
+            input_batch_dict = input_batch_dict_list[internal_frame_index]
+        
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]
+            
+            input_pseudo_depth = input_batch_dict['pseudo_depths']
+            input_sparse_gt_depth = input_batch_dict['sparse_depths']
+            img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                    
+            # perform the cost volume-based 
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+        
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+            
+            
+
+            gaussians_volume = self.volume_gs(
+                    [img_feats[0]],
+                    gaussians_cv_mask,
+                    gaussians_feat_mask,
+                    input_batch_dict["img_metas"])
+            
+            
+            # Make Sure the estimate gaussains are valid
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+            
+            
+            gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+            bs = gaussians_all.shape[0] # batch size is 2
+            gaussians_all_list.append(gaussians_all)
+
+        
+        
+        output_info_list_all = output_batch_dict['output_list']
+        output_rendered_pkg_fuse_list = []
+        # for the validation
+        rendered_left_images_list = []
+        rendered_right_images_list = []
+        gt_left_images_list = []
+        gt_right_images_list = []
+        
+        rendered_left_depth_list = []
+        rendered_right_depth_list = []
+        
+        gt_left_depth_list = []
+        gt_right_depth_list = []
+        
+        
+        left_psnr_list = []
+        left_ssim_list = []
+        right_psnr_list = []
+        right_ssim_list = []
+        
+        left_depth_mae_list = []
+        left_depth_mse_list = []
+        
+        right_depth_mae_list = []
+        right_depth_mse_list = []
+        
+        if saved_label:
+            saved_bin_token_name =output_batch_dict['bin_token'][0][:-4]
+            current_saved_bin_folder = os.path.join(saved_dir,saved_bin_token_name)
+            os.makedirs(current_saved_bin_folder,exist_ok=True)
+        
+        left_cam_to_lidar_matrix = output_info_list_all[0]['output_c2ws'][0][0]
+        
+        # gaussians_all = gaussians_all_list[1]
+        
+ 
+        g0,g2_trans= transform_g2_to_g1(gaussians_all_list[0],
+                                        gaussians_all_list[2],
+                                        output_info_list_all[2]["output_c2ws"][0][0]@torch.linalg.inv(left_cam_to_lidar_matrix) ,
+                                     )
+
+        _,g1_trans= transform_g2_to_g1(gaussians_all_list[0],
+                                        gaussians_all_list[1],
+                                        output_info_list_all[1]["output_c2ws"][0][0]@torch.linalg.inv(left_cam_to_lidar_matrix) ,
+                                     )
+        
+        # gaussians_all =g2_trans
+        gaussians_all = torch.cat([g0,g1_trans,g2_trans],dim=1)
+        
+        
+        
+
+        for internal_view_index, output_dict_info_temp in enumerate(output_info_list_all):
+            render_c2w = output_dict_info_temp["output_c2ws"] # render last and first camera 2 word: [B,6*3,4,4]
+            render_fovxs = output_dict_info_temp["output_fovxs"] # [B,6*3]
+            render_fovys = output_dict_info_temp["output_fovys"] # [B,6*3]
+            
+            gt_RGB = output_dict_info_temp["output_imgs"]
+            gt_sparse_depth = output_dict_info_temp['output_sparse_gt_depth']
+            
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )     
+            output_rendered_pkg_fuse_list.append(render_pkg_fuse)
+            
+            rendered_RGB = render_pkg_fuse['image'] #(B,V,3,H,W)
+            rendered_depth = render_pkg_fuse['depth'].squeeze(2)
+            
+            rendered_left_rgb = rendered_RGB[:,0,:,:,:]
+            gt_left_rgb = gt_RGB[:,0,:,:,:]
+            
+            rendered_right_rgb = rendered_RGB[:,1,:,:,:]
+            gt_right_rgb = gt_RGB[:,1,:,:,:]
+            
+            rendered_left_depth = rendered_depth[:,0,:,:]
+            gt_left_depth = gt_sparse_depth[:,0,:,:]
+            
+
+            rendered_right_depth = rendered_depth[:,1,:,:]
+            gt_right_depth = gt_sparse_depth[:,1,:,:]
+            
+            
+            left_psnr, left_ssim = compute_psnr_ssim(pred=rendered_left_rgb,
+                                                     target=gt_left_rgb)
+            
+            right_psnr, right_ssim = compute_psnr_ssim(pred=rendered_right_rgb,
+                                                       target=gt_right_rgb)
+            
+            left_mae, left_mse = compute_depth_mae_mse(depth_pred=rendered_left_depth,
+                                                       depth_gt=gt_left_depth)
+            
+            right_mae, right_mse = compute_depth_mae_mse(depth_pred=rendered_right_depth,
+                                                         depth_gt=gt_right_depth)
+
+            left_psnr_list.append(left_psnr)
+            left_ssim_list.append(left_ssim)
+            
+            right_psnr_list.append(right_psnr)
+            right_ssim_list.append(right_ssim)
+            
+            left_depth_mae_list.append(left_mae)
+            left_depth_mse_list.append(left_mse)
+            
+            right_depth_mae_list.append(right_mae)
+            right_depth_mse_list.append(right_mse)
+            
+            rendered_left_images_list.append(rendered_left_rgb)
+            rendered_right_images_list.append(rendered_right_rgb)
+            
+            gt_left_images_list.append(gt_left_rgb)
+            gt_right_images_list.append(gt_right_rgb)
+            
+            rendered_left_depth_list.append(rendered_left_depth)
+            rendered_right_depth_list.append(rendered_right_depth)
+            
+            gt_left_depth_list.append(gt_left_depth)
+            gt_right_depth_list.append(gt_right_depth)
+
+
+            rendered_left_images_vis = torch.cat([rendered_left_rgb,gt_left_rgb],dim=-2)
+            rendered_right_images_vis = torch.cat([rendered_right_rgb,gt_right_rgb],dim=-2)
+            rendered_view = torch.cat([rendered_left_images_vis,rendered_right_images_vis],dim=-1)
+
+            skimage.io.imsave(os.path.join(current_saved_bin_folder,"rendered_views_{}.png".format(internal_view_index)),
+                                (rendered_view.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+            
+            rendered_left_depth_vis = torch.cat([rendered_left_depth,gt_left_depth],dim=-2)
+            rendered_right_depth_vis = torch.cat([rendered_right_depth,gt_right_depth],dim=-2)
+            rendered_depth_vis = torch.cat([rendered_left_depth_vis,rendered_right_depth_vis],dim=-1)
+            rendered_depth_vis = rendered_depth_vis.squeeze(0).cpu().numpy()
+            rendered_depth_vis = convert_depth_to_disp(depth=rendered_depth_vis)
+            skimage.io.imsave(os.path.join(current_saved_bin_folder,"last_depth_{}.png".format(internal_view_index)),
+                                rendered_depth_vis)
+
+
+        results_dict = dict()
+        results_dict['left_psnr_first'] = left_psnr_list[0].data.item()
+        results_dict['left_psnr_center'] = left_psnr_list[1].data.item()
+        results_dict['left_psnr_last'] = left_psnr_list[2].data.item()
+        results_dict['left_psnr_avg'] = get_mean(left_psnr_list).data.item()
+
+        results_dict['right_psnr_first'] = left_psnr_list[0].data.item()
+        results_dict['right_psnr_center'] = left_psnr_list[1].data.item()
+        results_dict['right_psnr_last'] = left_psnr_list[2].data.item()
+        results_dict['right_psnr_avg'] = get_mean(right_psnr_list).data.item()
+        
+        results_dict['rendered_depth_left_mae'] = get_mean(left_depth_mae_list).data.item()
+        results_dict['rendered_depth_right_mae'] = get_mean(right_depth_mae_list).data.item()
+        
+        
+        saved_into_json(data_dict=results_dict,path=os.path.join(current_saved_bin_folder,
+                                                                 "results.json"
+                                                                 ))
+
+def get_mean(list):
+    return sum(list)*1.0/len(list)
 
 
 
+def saved_into_json(data_dict,path):
+    import json
+    with open(path, "w") as f:
+        json.dump(data_dict, f, indent=4)
 
 if __name__=="__main__":
     pass

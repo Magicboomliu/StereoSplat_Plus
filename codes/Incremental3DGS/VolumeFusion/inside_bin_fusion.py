@@ -239,7 +239,11 @@ def main(args):
             batch = preprocess_the_batch_for_incremental_fuse(batch=batch)
 
             
-            
+            my_model.validataion_inside_fusion(batch,
+                                               saved_dir=args.output_folder,
+                                               saved_label=args.output_vis,
+                                               cfg=cfg)
+            quit()
 
 
 
@@ -254,12 +258,12 @@ def preprocess_the_batch_for_incremental_fuse(batch):
     dict_keys(['bin_token', 'bin_filenames', 'outputs', 'inputs', 'inputs_pix', 'inputs_vol'])
     '''
     # process the inputs rgb
-    inputs_rgb_info = batch['inputs']
+
     batch['inputs']['rgb'] = swap_first_three(batch['inputs']['rgb'])
     batch['inputs']['rgb_path'] = swap_first_three(batch['inputs']['rgb_path'])
     
     # process the input_pix
-    input_camera_info = batch['inputs_pix']
+
     # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth'])
     batch['inputs_pix']['ck'] = swap_first_three(batch['inputs_pix']['ck'])
     batch['inputs_pix']['c2w'] = swap_first_three(batch['inputs_pix']['c2w'])
