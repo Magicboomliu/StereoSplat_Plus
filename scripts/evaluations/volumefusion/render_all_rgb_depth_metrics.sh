@@ -9,7 +9,7 @@ val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/va
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR"
-pretrained_model_path="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models/checkpoint-57000/"
+pretrained_model_path="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models/checkpoint-114000/"
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml volumeufison/rendered_all_rgbs_and_depths_inside_bin.py \
