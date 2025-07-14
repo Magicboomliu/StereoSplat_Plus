@@ -1886,6 +1886,51 @@ class VolumeFusion(BaseModule):
         
         return input_batch_dict_list,output_batch_dict
 
+
+
+
+    def filter_points_visible_in_either_view(self,
+                                             points, 
+                                             w2i_left, 
+                                             w2i_right, 
+                                             H, 
+                                             W):
+        """
+        输入:
+            points: [N, 3] float
+            w2i_left, w2i_right: [4, 4] float
+            H, W: 图像尺寸
+        返回:
+            filtered_points: [N_visible, 3]
+            mask: [N]，bool类型，表示保留的点
+        """
+        N = points.shape[0]
+        device = points.device
+
+        # 齐次变换
+        points_h = torch.cat([points, torch.ones((N,1), device=device)], dim=-1)  # [N,4]
+
+        def project_and_check(points_h, w2i):
+            cam = (points_h @ w2i.T)  # [N, 4] @ [4,4]ᵗ → [N, 4]
+            x, y, z = cam[:, 0], cam[:, 1], cam[:, 2]
+
+            # 防止除0
+            z = z + 1e-6
+            u = x / z
+            v = y / z
+
+            valid = (u >= 0) & (u < W) & (v >= 0) & (v < H) & (z > 0)
+            return valid
+
+        valid_left = project_and_check(points_h, w2i_left)
+        valid_right = project_and_check(points_h, w2i_right)
+
+        # 至少落在一张图上
+        visible_mask = valid_left | valid_right
+
+        return visible_mask
+
+
         
     
     def validataion_inside_fusion(self,batch,saved_dir,
@@ -1898,6 +1943,10 @@ class VolumeFusion(BaseModule):
         output_info_list_all = output_batch_dict['output_list']
         
         gaussians_all_list = []
+        
+        # debug here
+        gaussain_cv_list = []
+        gaussain_volume_list = []
         
         for internal_frame_index in range(len(input_batch_dict_list)):
             input_batch_dict = input_batch_dict_list[internal_frame_index]
@@ -1939,16 +1988,35 @@ class VolumeFusion(BaseModule):
                     gaussians_feat_mask,
                     input_batch_dict["img_metas"])
             
+
+     
             
             # Make Sure the estimate gaussains are valid
             gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
             gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+
+
+            current_w2i = input_batch_dict['img_metas'][0]['lidar2img']
+            left_current_w2i = current_w2i[0]
+            right_current_w2i = current_w2i[1]
+            current_img_shape = input_batch_dict['img_metas'][0]['img_shape'][0]
+            gaussians_volume_mask = self.filter_points_visible_in_either_view(points=gaussians_volume[...,:3].squeeze(0),
+                                                      w2i_left=left_current_w2i,
+                                                      w2i_right=right_current_w2i,
+                                                      H=current_img_shape[0],
+                                                      W=current_img_shape[1])
+            
+            gaussians_volume = gaussians_volume[0][gaussians_volume_mask]
+            gaussians_volume = gaussians_volume.unsqueeze(0)
+            
             
             
             gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
             bs = gaussians_all.shape[0] # batch size is 2
+            
             gaussians_all_list.append(gaussians_all)
-
+            gaussain_cv_list.append(gaussians_cv)
+            gaussain_volume_list.append(gaussians_volume)
         
         
         output_info_list_all = output_batch_dict['output_list']
@@ -1998,11 +2066,9 @@ class VolumeFusion(BaseModule):
                                      )
         
         # gaussians_all =g2_trans
-        gaussians_all = torch.cat([g0,g1_trans,g2_trans],dim=1)
+        gaussians_all = g2_trans
         
         
-        
-
         for internal_view_index, output_dict_info_temp in enumerate(output_info_list_all):
             render_c2w = output_dict_info_temp["output_c2ws"] # render last and first camera 2 word: [B,6*3,4,4]
             render_fovxs = output_dict_info_temp["output_fovxs"] # [B,6*3]
