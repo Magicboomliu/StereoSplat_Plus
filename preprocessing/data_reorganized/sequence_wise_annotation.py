@@ -8,6 +8,7 @@ from typing import Any, Union
 import pycocotools.mask
 import torch
 import json
+import open3d as o3d
 
 def read_annotation(annotation_filename):
 
@@ -17,8 +18,6 @@ def read_annotation(annotation_filename):
     extrinsic_matrix = torch.as_tensor(annotation["extrinsic_matrix"])
     
     return intrinsic_matrix,extrinsic_matrix
-
-
 
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
@@ -59,11 +58,156 @@ def save_dict_to_json(data_dict, filename):
         json.dump(data_dict, f, indent=4)
 
 
+
+import pickle
+
+
+def create_camera_frustum_mesh(scale=0.2, color=[1.0, 0.1, 0.0]):
+    vertices = np.array([
+        [0, 0, 0],       # Camera origin
+        [1, 1, 2],
+        [-1, 1, 2],
+        [-1, -1, 2],
+        [1, -1, 2],
+    ]) * scale
+
+    lines = [
+        [0, 1], [0, 2], [0, 3], [0, 4],
+        [1, 2], [2, 3], [3, 4], [4, 1]
+    ]
+
+    line_set = o3d.geometry.LineSet()
+    line_set.points = o3d.utility.Vector3dVector(vertices)
+    line_set.lines = o3d.utility.Vector2iVector(lines)
+    line_set.colors = o3d.utility.Vector3dVector([color for _ in lines])
+    return line_set
+
+def compute_cumulative_lengths(positions):
+    dists = np.linalg.norm(positions[1:] - positions[:-1], axis=1)
+    return np.concatenate([[0], np.cumsum(dists)])
+
+def create_bin_obb(p1, p2, width=2.0, height=2.0):
+    center = (p1 + p2) / 2
+    direction = p2 - p1
+    length = np.linalg.norm(direction)
+    if length < 1e-5:
+        return None
+    z = direction / length
+    up = np.array([0, 0, 1]) if abs(z[2]) < 0.9 else np.array([0, 1, 0])
+    x = np.cross(up, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    R = np.stack([x, y, z], axis=1)
+    extent = np.array([width, height, length])
+    obb = o3d.geometry.OrientedBoundingBox(center=center, R=R, extent=extent)
+    obb.color = [0.0, 1.0, 0.0]
+    return obb
+
+def create_start_marker(p1, p2, width=2.0, height=2.0, thickness=0.01):
+    """
+    创建实体矩形块作为 bin 起点标记（全色实心）
+    """
+    direction = p2 - p1
+    length = np.linalg.norm(direction)
+    if length < 1e-5:
+        return None
+
+    z = direction / length
+    up = np.array([0, 0, 1]) if abs(z[2]) < 0.9 else np.array([0, 1, 0])
+    x = np.cross(up, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    R = np.stack([x, y, z], axis=1)
+
+    # 创建 box：初始在原点，中心是 box 的角点
+    box = o3d.geometry.TriangleMesh.create_box(width=width, height=height, depth=thickness)
+    box.paint_uniform_color([1.0, 0.0, 0.0])  # 绿色
+
+    # 平移 box 到中心（从 corner 平移到中心）
+    center_offset = np.array([width / 2, height / 2, thickness / 2])
+    box.translate(-center_offset)
+
+    # 变换方向并移动到 p1
+    box.rotate(R, center=(0, 0, 0))
+    box.translate(p1)
+
+    return box
+
+def draw_all_cameras_with_bins(c2w_matrices, scale=0.1, axis_size=100, step=10.0, overlap=3.0, bin_width=2.0, bin_height=2.0,
+                               vis=True):
+    geometries = []
+
+    # 左相机轨迹中心用于 bin 划分
+    c2w_matrices_left = c2w_matrices[0::2]
+    centers = c2w_matrices_left[:, :3, 3]
+    center_mean = centers.mean(axis=0)
+
+    # 添加全局坐标轴
+    axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_size)
+    axis.translate(center_mean)
+    geometries.append(axis)
+
+    # 所有相机视锥体（左右交替）
+    for i in range(c2w_matrices.shape[0]):
+        cam_mesh = create_camera_frustum_mesh(scale=scale)
+        cam_mesh.transform(c2w_matrices[i])
+        geometries.append(cam_mesh)
+
+    # 累积路径长度，用于 bin 计算
+    cum_dists = compute_cumulative_lengths(centers)
+    total_len = cum_dists[-1]
+    bin_start = 0.0
+    bin_len = step + overlap
+
+    red_marker_frame_idxs = []  # 新增：记录所有红色 marker 对应的 frame index
+    
+    while bin_start < total_len:
+        bin_end = bin_start + bin_len
+        idx = np.where((cum_dists >= bin_start) & (cum_dists <= bin_end))[0]
+        if len(idx) > 1:
+            p1, p2 = centers[idx[0]], centers[idx[-1]]
+            obb = create_bin_obb(p1, p2, width=bin_width, height=bin_height)
+            marker = create_start_marker(p1, p2, width=bin_width, height=bin_height)
+            if obb:
+                geometries.append(obb)
+            if marker:
+                geometries.append(marker)
+                red_marker_frame_idxs.append(idx[0])  # ✅ 添加红色 marker 的起始帧 idx
+        bin_start += step
+
+    # 可视化所有几何体
+    if vis:
+        o3d.visualization.draw_geometries(geometries)
+
+    return red_marker_frame_idxs
+
+def read_text_lines(filepath):
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+    lines = [l.rstrip() for l in lines]
+    return lines
+
+
+def save_pickle(filename,data):
+    """
+    保存任意 Python 对象为 .pkl 文件
+
+    Args:
+        data: 要保存的数据（可以是 dict, list, numpy array 等）
+        filename (str): 输出文件路径，应以 .pkl 结尾
+    """
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+
+
 if __name__=="__main__":
     
     root_path = "/data1/StereoDatasets/KITTI/KITTI360/"
     annotation_list_path = "/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/avaliable_lists/2013_05_28_drive_0000_sync_list.txt"
-    annotaions_filepath_list = read_text_lines(annotation_list_path)
+    
+    output_folder = "/home/zliu/Project2025/FeedStereoGS/Step2FusionCodes/filenames/semi_global_maps/2013_05_28_drive_0000_sync"
+    os.makedirs(output_folder,exist_ok=True)
+    annotaions_filepath_list = sorted(read_text_lines(annotation_list_path))
     
     
     left_cam_2_world_list = []
@@ -152,13 +296,57 @@ if __name__=="__main__":
         right_cam_2_world_list.append(right_cam_2_world.tolist())
         
         
+    c2w_matrices_left = np.array(left_cam_2_world_list)
+    c2w_matrices_right = np.array(right_cam_2_world_list)
+
+
+    N = c2w_matrices_left.shape[0]
+    merged = np.empty((2 * N, 4, 4), dtype=c2w_matrices_left.dtype)
+    # 交替填入 A 和 B
+    merged[0::2] =  c2w_matrices_left # 偶数索引放 A[0], A[1], ...
+    merged[1::2] = c2w_matrices_right  # 奇数索引放 B[0], B[1], ...
     
-    left_cam_2_world_all = np.array(left_cam_2_world_list)
-    right_cam_2_world_all = np.array(right_cam_2_world_list)
+
+    input_idx_list = draw_all_cameras_with_bins(c2w_matrices=merged,
+                                scale=0.1,axis_size=10,step=10,
+                                overlap=5,bin_width=4,bin_height=4,
+                                vis=False)
+    
+    input_frame_list = []
+    key_frame_nums_inside_one_semi_global_map = 40
+
+    for idx, input_id in enumerate(input_idx_list):
+        input_frame_list.append(annotaions_filepath_list[input_id])
+    
+
+    current_key_frame_numbers_stack =[]
+    semi_global_frames_stack = []
+    semi_global_map_id = 0
     
     
-    np.save("left_cam2world.npy",left_cam_2_world_all)
-    np.save("right_cam2world.npy",right_cam_2_world_all)
+    counter = 0
+    for idx,fname in enumerate(annotaions_filepath_list):
+        
+        semi_global_frames_stack.append(fname)
+        
+        if fname in input_frame_list:
+            current_key_frame_numbers_stack.append(fname)
+
+        
+        if len(current_key_frame_numbers_stack)%key_frame_nums_inside_one_semi_global_map==0 and len(current_key_frame_numbers_stack)>0:
+            counter = counter +1
+            saved_dict_info = dict(
+                key_frames_list = current_key_frame_numbers_stack,
+                all_frames_list = semi_global_frames_stack
+            )
+            save_pickle("{}/semi_global_{}.pkl".format(output_folder,semi_global_map_id),
+                        saved_dict_info)
+            
+            current_key_frame_numbers_stack = []
+            semi_global_frames_stack = []
+            semi_global_map_id+=1
+    
+    print("Done!")
     
     
     
