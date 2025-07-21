@@ -30,12 +30,12 @@ from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
 from data.KITTI360_For_Val.KITTI360_CenterCam_Ref.transforms.loading import load_info,load_conditions
 
+
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
         lines = f.readlines()
     lines = [l.rstrip() for l in lines]
     return lines
-
 
 class KITTI360DatasetComplete(Dataset):    
     def __init__(

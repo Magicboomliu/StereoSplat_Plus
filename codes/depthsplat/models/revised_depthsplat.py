@@ -14,9 +14,7 @@ import os
 import math
 from PIL import Image
 import torchvision.transforms as T
-
 import numpy as np
-
 from torch import Tensor, nn
 # Decoder Here
 from safetensors.torch import load_file
@@ -159,6 +157,7 @@ class ModelWarpper(nn.Module):
     def dtype(self):
         return next(self.parameters()).dtype
     
+    # this is for training
     def prepare_input_batch_data(self,batch):
         
         device_id = self.device
@@ -215,17 +214,13 @@ class ModelWarpper(nn.Module):
     
         return input_batch_dict,output_batch_dict
     
-    
+    # this is for the validation
     def prepare_data_complete(self,batch):
         device_id = self.device
         
         input_batch_dict = dict()
         output_batch_dict = dict()
         
-        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
-        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
-                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
-                                        #'sparse_gt_depth'])
         bin_token_name = batch['bin_token']
         input_cam_batch_data = batch['inputs_pix']                                 
         input_batch_data = batch['inputs']
@@ -277,9 +272,7 @@ class ModelWarpper(nn.Module):
         
         return input_batch_dict,output_batch_dict
 
-
-    
-    
+    # this is for the training and validation online
     def forward(self,batch, mode="train", iter=0, cfg=None):
         
         input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
@@ -541,6 +534,7 @@ class ModelWarpper(nn.Module):
         else:
             raise NotImplementedError
     
+    # this is for the valdaition online
     def validation_step(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
@@ -809,220 +803,6 @@ class ModelWarpper(nn.Module):
 
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
         
-    # rendered video for KITTI-360
-    def forward_video_kitti360(self, batch, val_result_savedir,cfg=None):
-        bin_token_name = batch['bin_token']
-        
-
-        # perform the Feed-Forward 3DGS Estimator
-        input_batch_dict,output_batch_dict = self.prepare_input_batch_data(batch=batch)
-        return_depth = cfg.return_depth
-        iter_end = cfg.max_train_steps 
-        depth_max_value = cfg.max_depth # 100
-        depth_min_value = cfg.min_depth # 0.3    
-        
-        # inputs information
-        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
-        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
-        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
-        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
-        bs = input_images.shape[0]
-        input_pseudo_depth = input_batch_dict['pseudo_depths']
-        input_sparse_gt_depth = input_batch_dict['sparse_depths']
-
-        mask = input_sparse_gt_depth > 0
-        mask = mask.float()
-        input_nn_matrix = input_nn_matrix.long()
-
-
-        num_of_cameras = input_images.shape[1]
-        min_depth=1.0 / depth_max_value  # inverse depth range
-        max_depth=1.0 / depth_min_value
-        
-        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-        
-        height, width = input_images.shape[3:]
-        
-        intrinsics = intrinsics.clone()
-        
-        results_dict = self.depth_estimator(
-            images=input_images,
-            attn_splits_list=[2],
-            intrinsics=intrinsics,
-            min_depth=min_depth,  # inverse depth range
-            max_depth=max_depth,
-            num_depth_candidates=192, # here I set it to 192
-            extrinsics=input_extrinsics,
-            nn_matrix=input_nn_matrix
-        )
-        
-        predicted_input_depth = results_dict['depth_preds'][0]
-
-        if cfg.train_depth_only:
-            pass
-        
-        
-        else:
-            # estimated the gs 
-            # change the head here
-            gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
-                                           extrinsics=input_extrinsics,
-                                           intrinsics = intrinsics,
-                                           results_dict=results_dict,
-                                           return_depth=return_depth)
-        
-        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
-        bs = gaussians_cv.shape[0] # batch size is 2
-        
-        
-        # rendered for new views
-        c2w_lf_left = output_batch_dict["output_c2ws"][:, 1]
-        c2w_lf_right = output_batch_dict["output_c2ws"][:, 3]
-        c2w_ff_left = output_batch_dict["output_c2ws"][:, 4]
-        c2w_ff_right = output_batch_dict["output_c2ws"][:, 5]
-        c2w_cf_left = output_batch_dict["output_c2ws"][:, 0] #(1,2,4,4)
-        c2w_cf_right = output_batch_dict["output_c2ws"][:, 2] #(1,2,4,4)
-        
-        ''' 
-            Movement 0:  Center Left Rotation 45 Degree
-            Movement 1:  Center Rotation Back
-        '''
-    
-        # left backward 3---------rotation 45 ------rotation back 
-        theta = -math.pi / 4  # 
-        rot_0 = torch.tensor([
-            [math.cos(theta), -math.sin(theta), 0],
-            [math.sin(theta),  math.cos(theta), 0],
-            [0,                0,               1]
-        ], dtype=torch.float32).to(c2w_cf_left.device)
-
-        c2w_cf_left_rot2_right = c2w_cf_left.clone()
-        c2w_cf_left_rot2_right[...,:3,:3] = rot_0@c2w_cf_left_rot2_right[...,:3,:3]
-
-        c2w_lf_left_rot2_right = c2w_lf_left.clone()
-        c2w_lf_left_rot2_right[...,:3,:3] = rot_0 @ c2w_lf_left_rot2_right[...,:3,:3]
-        
-        c2w_ff_left_rot2_right = c2w_ff_left.clone()
-        c2w_ff_left_rot2_right[...,:3,:3] = rot_0 @ c2w_ff_left_rot2_right[...,:3,:3]
-
-        ''' 
-            Movement 2:  Center Left Cam to Center Right
-            Movement 3:  Center Right Rot Inside
-            Movement 4: Rotation Back
-        '''
-        
-        # right backward 3---------rotation 45 ------rotation back:  short +1
-        theta = math.pi / 4  # 
-        rot_1 = torch.tensor([
-            [math.cos(theta), -math.sin(theta), 0],
-            [math.sin(theta),  math.cos(theta), 0],
-            [0,                0,               1]
-        ], dtype=torch.float32).to(c2w_cf_left.device)
-        
-        c2w_cf_right_rot2_left = c2w_cf_right.clone()
-        c2w_cf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_cf_right_rot2_left[...,:3,:3]
-        
-        c2w_lf_right_rot2_left = c2w_lf_right.clone()
-        c2w_lf_right_rot2_left[...,:3,:3] = rot_1 @ c2w_lf_right_rot2_left[...,:3,:3]
-        
-        c2w_ff_right_rot2_left = c2w_ff_right.clone() 
-        c2w_ff_right_rot2_left[...,:3,:3] = rot_1 @ c2w_ff_right_rot2_left[...,:3,:3]
-        
-        
-        ''' Movement 5: from right to left '''
-        '''Movement 6: From Center left to Last Left'''
-        num_frames_short = 60
-        num_frames_long = 60
-        
-        t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
-        t_long = torch.linspace(0, 1 - 1 / (num_frames_long + 1), num_frames_long, dtype=torch.float32, device=self.device)
-        # center left rot
-        movement_0 = interpolate_extrinsics(c2w_cf_left,c2w_cf_left_rot2_right,t_short)
-        # center left rot back
-        movement_1 = interpolate_extrinsics(c2w_cf_left_rot2_right,c2w_cf_left,t_short)
-        # center left to right
-        movement_2 = interpolate_extrinsics(c2w_cf_left,c2w_cf_right,t_short)
-        # center right rot
-        movement_3 = interpolate_extrinsics(c2w_cf_right,c2w_cf_right_rot2_left,t_short)
-        # center right rot back
-        movement_4 = interpolate_extrinsics(c2w_cf_right_rot2_left,c2w_cf_right,t_short)
-        # center right to left
-        movement_5 = interpolate_extrinsics(c2w_cf_right,c2w_cf_left,t_short)
-        # center left to last left
-        movement_6 = interpolate_extrinsics(c2w_cf_left,c2w_lf_left,t_short)
-        # last left to rot
-        movement_7 = interpolate_extrinsics(c2w_lf_left,c2w_lf_left_rot2_right,t_short)
-        # last left rot back
-        movement_8 = interpolate_extrinsics(c2w_lf_left_rot2_right,c2w_lf_left,t_short)
-        # last left to last right
-        movement_9 = interpolate_extrinsics(c2w_lf_left,c2w_lf_right,t_short)
-        
-        # last right rot
-        movement_10 = interpolate_extrinsics(c2w_lf_right,c2w_lf_right_rot2_left,t_short)
-        movement_11 = interpolate_extrinsics(c2w_lf_right_rot2_left, c2w_lf_right,t_short)
-        movement_12 = interpolate_extrinsics(c2w_lf_right,c2w_lf_left ,t_short)
-        movement_13 = interpolate_extrinsics(c2w_lf_left,c2w_ff_left,t_short)
-        movement_14 = interpolate_extrinsics(c2w_ff_left,c2w_ff_left_rot2_right,t_short)
-        movement_15 = interpolate_extrinsics(c2w_ff_left_rot2_right,c2w_ff_left,t_short)
-        movement_16 = interpolate_extrinsics(c2w_ff_left,c2w_ff_right,t_short)
-        movement_17 = interpolate_extrinsics(c2w_ff_right,c2w_ff_right_rot2_left,t_short)
-        movement_18 = interpolate_extrinsics(c2w_ff_right_rot2_left,c2w_ff_right,t_short)
-        
-        c2w_interp = torch.cat([movement_0, movement_1, movement_2,
-                                movement_3, movement_4,movement_5,
-                                movement_6,movement_7,
-                                movement_8,movement_9,
-                                movement_10,movement_11,
-                                movement_12,movement_13,
-                                movement_14,movement_15,
-                                movement_16,movement_17,
-                                movement_18
-                                ], dim=1)
-
-        N_Chunks = 10
-        interval = int(c2w_interp.shape[1]//N_Chunks)
-        
-        rendered_rgb_list = []
-        rendered_depth_list = []
-
-        for idx in tqdm(range(N_Chunks)):
-            
-            current_c2w_interp = c2w_interp[:,idx*interval:(idx+1)*interval,:]
-            
-            current_fovxs_interp = output_batch_dict["output_fovxs"][:, -6:-5].repeat(1, current_c2w_interp.shape[1])   # [4,960] --> Center
-            current_fovys_interp =output_batch_dict["output_fovys"][:, -6:-5].repeat(1, current_c2w_interp.shape[1]) 
-
-            render_pkg_cv = self.renderer.render(
-                gaussians=gaussians_cv,
-                c2w=current_c2w_interp,
-                fovx=current_fovxs_interp ,
-                fovy=current_fovys_interp,
-                rays_o=None,
-                rays_d=None
-            )
-            rendered_results = render_pkg_cv
-
-            rendered_color = rendered_results['image'] # torch.Size([1, V, 3, 224, 832])
-            rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
-            rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
-            rendered_depth = rendered_depth.squeeze(2)
-            rendered_alpha = rendered_alpha.squeeze(2)
-            
-            rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
-            rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
-
-            rendered_rgb_list.append(rendered_color)
-            rendered_depth_list.append(rendered_depth)
-            
-
-        rendered_rgb_final = torch.cat(rendered_rgb_list,dim=1)
-        rendered_depth_final = torch.cat(rendered_depth_list,dim=1)
-        
-        preds = {"img":rendered_rgb_final,"depth":rendered_depth_final}
-        
-        return preds,bin_token_name
-    
     def validation_step_with_token_names(self, batch, val_result_savedir,cfg=None):
         
         bin_token_name = batch['bin_token'][0][:-4]
@@ -1259,7 +1039,7 @@ class ModelWarpper(nn.Module):
 
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict,rendered_images,rendered_depth,gt_images,gt_depths
 
-
+    # this is for the validation offlines
     def validation_complete_with_bin_tokens(self,
                                             batch,
                                             val_result_savedir,
@@ -1470,13 +1250,10 @@ class ModelWarpper(nn.Module):
             
         return rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
             left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list
-
-
         
     def forward_kitti360_videos(self,batch,cfg):
         bin_token_name = batch['bin_token']
         
-
         # perform the Feed-Forward 3DGS Estimator
         input_batch_dict,output_batch_dict = self.prepare_data_complete(batch=batch)
         return_depth = cfg.return_depth
@@ -1661,7 +1438,6 @@ class ModelWarpper(nn.Module):
 
         return preds, input_batch_dict['bin_token_name']
 
-
     # for inside-bin fusion
     def process_inside_bin_fusion(self,batch):
 
@@ -1744,7 +1520,6 @@ class ModelWarpper(nn.Module):
         
         
         return inputs_list,output_batch_dict
-
 
     def validataion_inside_fusion(self,batch,saved_dir,
                                   saved_label,
@@ -1980,9 +1755,9 @@ class ModelWarpper(nn.Module):
         results_dict['left_psnr_last'] = left_psnr_list[2].data.item()
         results_dict['left_psnr_avg'] = get_mean(left_psnr_list).data.item()
 
-        results_dict['right_psnr_first'] = left_psnr_list[0].data.item()
-        results_dict['right_psnr_center'] = left_psnr_list[1].data.item()
-        results_dict['right_psnr_last'] = left_psnr_list[2].data.item()
+        results_dict['right_psnr_first'] = right_psnr_list[0].data.item()
+        results_dict['right_psnr_center'] = right_psnr_list[1].data.item()
+        results_dict['right_psnr_last'] = right_psnr_list[2].data.item()
         results_dict['right_psnr_avg'] = get_mean(right_psnr_list).data.item()
         
         results_dict['rendered_depth_left_mae'] = get_mean(left_depth_mae_list).data.item()
