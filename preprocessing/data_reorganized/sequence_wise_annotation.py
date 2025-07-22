@@ -205,7 +205,7 @@ if __name__=="__main__":
     root_path = "/data1/StereoDatasets/KITTI/KITTI360/"
     annotation_list_path = "/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/avaliable_lists/2013_05_28_drive_0000_sync_list.txt"
     
-    output_folder = "/home/zliu/Project2025/FeedStereoGS/Step2FusionCodes/filenames/semi_global_maps/2013_05_28_drive_0000_sync"
+    output_folder = "/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/semi_global_maps/2013_05_28_drive_0000_sync"
     os.makedirs(output_folder,exist_ok=True)
     annotaions_filepath_list = sorted(read_text_lines(annotation_list_path))
     
@@ -318,6 +318,13 @@ if __name__=="__main__":
     for idx, input_id in enumerate(input_idx_list):
         input_frame_list.append(annotaions_filepath_list[input_id])
     
+    saved_dict_info_global_info = dict(
+        key_frames_list = input_frame_list,
+        all_frames_list = annotaions_filepath_list
+        
+    )
+    save_pickle("{}/global.pkl".format(output_folder),
+                saved_dict_info_global_info)
 
     current_key_frame_numbers_stack =[]
     semi_global_frames_stack = []
