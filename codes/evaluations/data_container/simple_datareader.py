@@ -27,8 +27,6 @@ def Get_First_Key_Frame_LiDAR_To_World(datapath,simple_annotation_path):
     lidar_to_world_pose  =left_cam_to_world_pose @ np.linalg.inv(left_cam_to_lidar_pose)
     return lidar_to_world_pose
     
-
-
 def load_the_depthanytingV2_results(path,scale=50):
     # Read the image in unchanged mode (preserves uint16 format)
     img = np.array(cv2.imread(path, cv2.IMREAD_UNCHANGED)).astype(np.float32)
@@ -211,19 +209,12 @@ def get_timestep_infos(datapath,
                        frist_ref=None,
                        extra_list=None):
     
-    
-    
-
-
-    
     imgs, cks = [], []
     
     cam_to_lidar_pose_list = []
     lidar_to_world_pose_list = []
     
-    
     data_dict = dict()
-    
     data_info = load_json(annotation_path)
     
     left_image_data = load_image_data(os.path.join(datapath,data_info['left_image_path']))
@@ -308,10 +299,9 @@ def get_timestep_infos(datapath,
         input_fovxs.append(fovx)
         input_fovys.append(fovy)
 
-        
     input_fovxs = torch.as_tensor(input_fovxs, dtype=torch.float32) #(6)
     input_fovys = torch.as_tensor(input_fovys, dtype=torch.float32) #(6)
-    
+        
     if depth_info_params.use_pseudo_depth:
         depths_ms = torch.from_numpy(np.stack(psuedo_depth_list, axis=0)).float()  # [v h w] ---->[6,H,W]
     else:
@@ -344,7 +334,9 @@ def get_timestep_infos(datapath,
     
     cam_to_lidar = torch.from_numpy(np.stack(cam_to_lidar_pose_list, axis=0)).float()
     lidar_to_cam = torch.linalg.inv(cam_to_lidar).float()
+    lidar_to_cam = lidar_to_cam.transpose(1,2)
     
+
     input_w2is = []
     for w2c, ck in zip(lidar_to_cam, input_cks):
         viewpad = torch.eye(4)
@@ -352,19 +344,15 @@ def get_timestep_infos(datapath,
         w2i = (viewpad @ w2c.T)
         input_w2is.append(w2i)
     input_w2is = torch.stack(input_w2is) #(2,4,4), here is All Center
+    
 
     # current LiDAR to true world
-    lidar_to_world = torch.from_numpy(np.stack(lidar_to_world_pose_list,axis=0)).float()
-    
-        
+    lidar_to_world = torch.from_numpy(np.stack(lidar_to_world_pose_list,axis=0)).float()        
     world_to_ref_wolrd_pose = torch.from_numpy(world_to_ref_wolrd_pose).unsqueeze(0).repeat(lidar_to_world.shape[0],1,1)
-
     # shift to the Ref Frame LiDAR coordinate
     lidar_to_world = world_to_ref_wolrd_pose.float() @ lidar_to_world.float()
-    
     # for rendering c2w
     output_cam2world = lidar_to_world @ cam_to_lidar
-
 
     data_dict['input'] = dict()
     data_dict['input']['imgs'] = imgs.float()
@@ -384,7 +372,7 @@ def get_timestep_infos(datapath,
     data_dict['output']["sparse_gts"] = sparse_gts.float()
     data_dict['output']['imgs'] = imgs.float()
     data_dict['output']['cks'] = cks.float()
-    data_dict['output']["fovxs"] = input_fovys.float()
+    data_dict['output']["fovxs"] = input_fovxs.float()
     data_dict['output']['fovys'] = input_fovys.float()
     data_dict['output']['c2w'] = output_cam2world.float()
     
