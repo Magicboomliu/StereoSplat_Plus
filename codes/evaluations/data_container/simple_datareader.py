@@ -13,7 +13,7 @@ import copy
 import matplotlib.pyplot as plt
 import os
 import json
-
+import pycocotools.mask
 
 def Get_First_Key_Frame_LiDAR_To_World(datapath,simple_annotation_path):
     
@@ -184,6 +184,27 @@ def preprocess_psuedo_depth(depth_data,reso,resize_flag):
         dptm = np.array(dptm)
     
     return dptm
+
+
+def preprocess_the_segmentation_mask(seg_mask,reso,resize_flag):
+    
+    seg_list = []
+    
+    for seg in seg_mask:
+        resized_seg = crop_size(h=seg.shape[0],
+                            w=seg.shape[1],
+                            img=seg,type='npy')
+        
+        resized_seg = resized_seg.unsqueeze(0).unsqueeze(0)
+        
+        resized_seg = F.interpolate(resized_seg,
+                                    size=[reso[0],reso[1]],
+                                    mode='nearest')
+        seg_list.append(resized_seg)
+    
+    return torch.cat((seg_list),dim=1)  
+
+
     
 def preprocess_the_sparse_depth(sparse_gt_lidar_data,reso,
                                 resize_flag,
@@ -201,6 +222,11 @@ def preprocess_the_sparse_depth(sparse_gt_lidar_data,reso,
                             width=reso[1])
     
     return sparse_gt_lidar_data
+
+
+# def get_segmentation_mask(datapath,annotation_path,
+#                           )
+
 
 def get_timestep_infos(datapath,
                         annotation_path,
@@ -354,6 +380,59 @@ def get_timestep_infos(datapath,
     # for rendering c2w
     output_cam2world = lidar_to_world @ cam_to_lidar
 
+    
+    # extra inputs
+    if len(extra_list)!=0:
+        
+        # Left
+        current_annotation_path_left = os.path.join(datapath,annotation_path).replace("annotations_simple","annotations")
+        current_loaded_json_data_left = read_annotation(current_annotation_path_left)
+        if 'segmentation' in extra_list:
+            if 'masks' in current_loaded_json_data_left.keys():
+                seg_mask_left = current_loaded_json_data_left['masks']   #[Num_of_Instances,H,W]
+
+            else:
+                seg_mask_left = torch.zeros((1,376,1408))
+
+
+            
+            if seg_mask_left is not None:
+                if resize_flag:
+                    seg_mask_left = preprocess_the_segmentation_mask(seg_mask=seg_mask_left,
+                                                                     reso=reso,
+                                                                     resize_flag=resize_flag)
+
+        # Right
+        current_annotation_path_right = os.path.join(datapath,annotation_path).replace("annotations_simple","annotations")
+        current_annotation_path_right = current_annotation_path_right.replace("image_00","image_01")
+
+        current_loaded_json_data_right = read_annotation(current_annotation_path_right)
+        if 'segmentation' in extra_list:
+            if 'masks' in current_loaded_json_data_right.keys():
+                seg_mask_right = current_loaded_json_data_right['masks']   #[Num_of_Instances,H,W]
+            else:
+                seg_mask_right = torch.zeros((1,376,1408))
+            
+            if seg_mask_right is not None:
+                if resize_flag:
+                    seg_mask_right = preprocess_the_segmentation_mask(seg_mask=seg_mask_right,
+                                                                     reso=reso,
+                                                                     resize_flag=resize_flag)
+
+        
+        seg_mask = [seg_mask_left,seg_mask_right]
+        
+
+
+
+        if 'bbox3d' in extra_list:
+            if 'boxes_3d' in current_loaded_json_data_left.keys():
+                bboxes_3d = current_loaded_json_data_left['boxes_3d'] #(nums_of_instance,8,3) --> Camera Coordinate.
+            else:
+                bboxes_3d = torch.zeros(1,8,3)
+
+            
+    
     data_dict['input'] = dict()
     data_dict['input']['imgs'] = imgs.float()
     data_dict['input']['cks'] = cks.float()
@@ -366,6 +445,14 @@ def get_timestep_infos(datapath,
     data_dict['input']['lidar_to_world'] = lidar_to_world.float() # for the post-processing for fusion
 
 
+    if len(extra_list)!=0:
+        if 'segmentation' in extra_list:
+            data_dict['input']['segmentation'] = seg_mask
+        
+        if 'bbox3d' in extra_list:
+            data_dict['input']['boxes_3d'] = bboxes_3d
+
+
     
     data_dict['output'] = dict()
     data_dict['output']['psuedo_depth'] = depths_ms.float()
@@ -376,13 +463,18 @@ def get_timestep_infos(datapath,
     data_dict['output']['fovys'] = input_fovys.float()
     data_dict['output']['c2w'] = output_cam2world.float()
     
+    if len(extra_list)!=0:
+        if 'segmentation' in extra_list:
+            data_dict['output']['segmentation'] = seg_mask
+        
+        if 'bbox3d' in extra_list:
+            data_dict['output']['boxes_3d'] = bboxes_3d
+    
     
     return data_dict
 
     
     
-    
-
 def get_inputs_info(datapath,
                     reso,
                     simple_annotation_path_list,
@@ -409,6 +501,60 @@ def get_inputs_info(datapath,
     return return_list
     
     
-    
-    
-    
+def read_annotation(annotation_filename,class_names=['car']):
+
+    with open(annotation_filename) as file:
+        annotation = json.load(file)
+
+    intrinsic_matrix = torch.as_tensor(annotation["intrinsic_matrix"])
+    extrinsic_matrix = torch.as_tensor(annotation["extrinsic_matrix"])
+
+    instance_ids = {
+        class_name: list(masks.keys())
+        for class_name, masks in annotation["masks"].items()
+        if class_name in class_names
+    }
+
+    if instance_ids:
+
+        masks = torch.cat([
+            torch.as_tensor(np.stack([
+                pycocotools.mask.decode(annotation["masks"][class_name][instance_id])
+                for instance_id in instance_ids
+            ]), dtype=torch.float)
+            for class_name, instance_ids in instance_ids.items()
+        ], dim=0)
+
+        labels = torch.cat([
+            torch.as_tensor([class_names.index(class_name)] * len(instance_ids), dtype=torch.long)
+            for class_name, instance_ids in instance_ids.items()
+        ], dim=0)
+
+        boxes_3d = torch.cat([
+            torch.as_tensor([
+                annotation["boxes_3d"][class_name].get(instance_id, [[np.nan] * 3] * 8)
+                for instance_id in instance_ids
+            ], dtype=torch.float)
+            for class_name, instance_ids in instance_ids.items()
+        ], dim=0)
+
+        instance_ids = torch.cat([
+            torch.as_tensor(list(map(int, instance_ids)), dtype=torch.long)
+            for instance_ids in instance_ids.values()
+        ], dim=0)
+
+        return dict(
+            masks=masks,
+            labels=labels,
+            boxes_3d=boxes_3d,
+            instance_ids=instance_ids,
+            intrinsic_matrix=intrinsic_matrix,
+            extrinsic_matrix=extrinsic_matrix,
+        )
+
+    else:
+
+        return dict(
+            intrinsic_matrix=intrinsic_matrix,
+            extrinsic_matrix=extrinsic_matrix,
+        )

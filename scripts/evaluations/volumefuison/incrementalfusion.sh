@@ -8,7 +8,8 @@ output_folder="/data1/zliu/feedforward_outputs_fusion/VolumeFusion/No_Operation/
 pretrained_model_path="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models/checkpoint-150000/"
 semi_global_map="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/semi_global_maps/2013_05_28_drive_0000_sync"
 # ablation_type="simple_fusion"
-# ablation_type="no_fusion"
+# ablation_type="GT"
+#ablation_type="no_fusion"
 ablation_type='no_fusion_as_one_version'
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64

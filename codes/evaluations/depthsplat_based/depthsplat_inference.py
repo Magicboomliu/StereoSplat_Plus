@@ -25,7 +25,6 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
-from models_lab.VolumeFusion.volumefusion import VolumeFusion
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 from evaluations.data_container.simple_datareader import get_inputs_info,Get_First_Key_Frame_LiDAR_To_World
@@ -37,6 +36,16 @@ from model.utils.image import resize_image,HWC3
 from torchmetrics.functional.image import peak_signal_noise_ratio as psnr
 from torchmetrics.functional.image import structural_similarity_index_measure as ssim
 
+from depthsplat.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.models.encoder.heads.custom_gs_head import Custom_Gaussain_Head
+from depthsplat.models.revised_depthsplat import ModelWarpper
+
+import matplotlib.pyplot as plt
+import skimage.io
+from scipy.spatial.transform import Rotation as Rscipy
+from model.utils.image import resize_image,HWC3
+from torchmetrics.functional.image import peak_signal_noise_ratio as psnr
+from torchmetrics.functional.image import structural_similarity_index_measure as ssim
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -74,67 +83,7 @@ class Basic_Meter(object):
                 "mse":self.mse/self.counter
             }
 
-def convert_depth_to_disp(factor=328.318735,depth=None):
-    
-    mask = depth>0
-    mask = mask.astype(np.float32)
 
-    disparity = factor / (depth +1e-3)
-    disparity = disparity * mask
-    disparity = np.clip(disparity,a_max=220,a_min=0)
-    
-    disparity = kitti_colormap(disparity)
-    return disparity
-
-def kitti_colormap(disparity, maxval=-1):
-	"""
-	A utility function to reproduce KITTI fake colormap
-	Arguments:
-	  - disparity: numpy float32 array of dimension HxW
-	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
-	
-	Returns a numpy uint8 array of shape HxWx3.
-	"""
-	if maxval < 0:
-		maxval = np.max(disparity)
-
-	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
-	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
-	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
-
-	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
-	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
-	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
-	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
-	index = np.argmax(diffs, axis=-1)-1
-
-	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
-
-
-	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
-	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
-	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
-
-	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
-
-def get_diff_elements(A, B):
-    """
-    返回 B 中存在但 A 中没有的元素
-
-    参数:
-        A (list): 较小的子列表
-        B (list): 包含 A 的完整列表
-
-    返回:
-        list: B 中不在 A 中的元素
-    """
-    return [item for item in B if item not in A]
-
-def load_pkl(filepath):
-
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    return data
 
 class FusionConfigurationDataset(Dataset):
     def __init__(self, data_list):
@@ -148,6 +97,9 @@ class FusionConfigurationDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx]
+
+
+'''This is to evaluate whether the '''
 
 
 def main(args):
@@ -203,20 +155,49 @@ def main(args):
                                             args.ablation_type)
     os.makedirs(output_saved_folder_path,exist_ok=True)
 
-    # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusion(backbone=cfg.model.backbone,
-                            neck=cfg.model.neck,
-                            costvolume_gs=cfg.model.costvolume_gs,
-                            volume_gs=cfg.model.volume_gs,
-                            losses_params=cfg.model.losses_params,
-                            camera_args=cfg.camera_args,
-                            dataset_params=cfg.dataset_params,
-                            use_checkpoint=cfg.use_checkpoint)
 
 
-    my_model= accelerator.prepare(
+   
+    '''     Model Configuration   '''
+    encoder_cfg = cfg.model.encoder
+    # depth unimatch model
+    depth_estimator_unimatch = MultiViewUniMatch(
+            num_scales=encoder_cfg.num_scales, # default is 1
+            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
+            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
+            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
+            unet_channels=encoder_cfg.depth_unet_channels, # 128
+            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
+        )
+    
+    # 3dgs head: define the the gaussain head
+    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
+    # color branch
+    gaussain_color_branch_config = {
+            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
+            "color_large_unet": cfg.model.encoder.color_large_unet,
+            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
+            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
+            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
+            "num_surfaces":cfg.model.encoder.num_surfaces}
+    
+    # gaussain head estimation
+    gaussain_head = Custom_Gaussain_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+                                             upsample_factor=cfg.model.encoder.upsample_factor,
+                                             num_scales=cfg.model.encoder.num_scales,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head,
+                            unimatch_weight = cfg.unimatch_weights_path,
+                            camera_args=cfg.camera_args
+                            )
+
+    # move to the accelerate
+    my_model = accelerator.prepare(
         my_model
     )
+
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -233,7 +214,12 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
     
-    volumefusion_renderer = my_model.renderer
+    
+    # Build the Dataset
+
+    my_model.eval()
+    
+    depthsplat_renderer = my_model.renderer
     
     for idx, semi_global_info_path in enumerate(semi_global_map_list):
         
@@ -266,9 +252,11 @@ def main(args):
         
         saved_rendered_results_json_path = os.path.join(output_saved_folder_path,"/".join(key_input_frames_idx[0].split("/")[:2]).replace("annotations","rendered_quality_json"),"rendered_quality_semi_map_{}.json".format(idx))
         os.makedirs(os.path.dirname(saved_rendered_results_json_path),exist_ok=True)
-
+        
         
         print("Step 1:  building semi-global map dataloader for fusion...")
+        extra_list = ['bbox3d','segmentation']
+        
         for input_frame_name in tqdm(key_input_frames_idx):
             
             input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
@@ -278,7 +266,7 @@ def main(args):
                         first_ref=first_key_frame_lidar_to_world_pose,
                         simple_annotation_path_list=[input_annotation_name],
                         depth_info_params =val_params['depth_info_dict'],
-                        extra_list=[])
+                        extra_list=extra_list)
             
             input_key_frame_info = input_infos_list[0]
             
@@ -288,29 +276,50 @@ def main(args):
         configuration_fuse_dataloader = DataLoader(configuration_fuse_dataset, batch_size=1, shuffle=False)
         configuration_fuse_dataloader = accelerator.prepare(
                                         configuration_fuse_dataloader)
-        
-        # For the Evaluation Metrics
-        
+
         renderd_left_image_metrics = Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
         rendered_right_image_metrics = Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
         
-        
         rendered_index = 0
         print("Step 2: begin incremenatl gaussain fusion.....")
-    
-        if args.ablation_type=='simple_fusion':
+        if args.ablation_type=="simple_fusion" or args.ablation_type=="simple_fusion_no_car":
+            
             global_gaussains_list = []
             
             with torch.no_grad():
-                my_model.eval()
                 for batch in tqdm(configuration_fuse_dataloader):    
+                    
                     ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
+                    
+                    if args.ablation_type=="simple_fusion_no_car":
+                        # Filter the instances
+                        input_segmentation_mask = batch['input']['segmentation']
+                        input_seg_mask_data_left = input_segmentation_mask[0].squeeze(0).to(accelerator.device)
+                        input_seg_mask_data_right = input_segmentation_mask[1].squeeze(0).to(accelerator.device)
+                        cur_h,cur_w = input_seg_mask_data_left.shape[-2:]
+        
+                        input_seg_mask_car_left_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)
+                        input_seg_mask_car_right_all = input_seg_mask_data_right.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)                    
+                        input_seg_mask_car_all = torch.cat((input_seg_mask_car_left_all,input_seg_mask_car_right_all),dim=1)
+                        
+                        kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                        kepted_mask = kepted_mask.bool()
+                        gaussians_filtered = ego_lidar_gaussain.clone()
+                        # 将不满足 mask 的 opacity 设为 0（opacity 是第 10 维，即索引为 9）
+                        gaussians_filtered[input_seg_mask_car_all.expand_as(ego_lidar_gaussain)[..., 7]] = 0.0  # 只改 opacity
+                        ego_lidar_gaussain = gaussians_filtered
+
+                    
+                    # relative pose
                     ego_to_world_pose = batch['input']['lidar_to_world'][0][0]
                     ego_lidar_gaussain_shifted = transform_gs_to_given_pose(g2=ego_lidar_gaussain,
-                                            c2w=ego_to_world_pose)                
-                    global_gaussains_list.append(ego_lidar_gaussain_shifted)
+                                            c2w=ego_to_world_pose) 
                     
-            global_gaussains = torch.cat(global_gaussains_list,dim=1)
+                    global_gaussains_list.append(ego_lidar_gaussain_shifted)
+
+                
+                global_gaussains = torch.cat(global_gaussains_list,dim=1)
+
 
             print("Step 3:  Building the Inference Dataset...")
             all_key_frame_info_list = []
@@ -419,8 +428,10 @@ def main(args):
                     rendered_depths_all_list.append(rendered_depth_for_vis)
                     
                 rendered_index = rendered_index + 1
-                
-        elif args.ablation_type=='no_fusion':
+
+ 
+ 
+        elif args.ablation_type=='no_fusion' or args.ablation_type=='no_fusion_no_car':
             print("building the inference dataset........")
             all_key_frame_info_list = []
             for input_frame_name in tqdm(all_frames_idx):
@@ -432,7 +443,7 @@ def main(args):
                             first_ref=first_key_frame_lidar_to_world_pose,
                             simple_annotation_path_list=[input_annotation_name],
                             depth_info_params =val_params['depth_info_dict'],
-                            extra_list=[])
+                            extra_list=extra_list)
                 
                 input_key_frame_info = input_infos_list[0]
                 
@@ -466,6 +477,26 @@ def main(args):
                 if current_annotation_path in key_input_frames_idx:
                     with torch.no_grad():
                         ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
+                        
+                        if args.ablation_type=='no_fusion_no_car':
+                            # Filter the instances
+                            input_segmentation_mask = batch['input']['segmentation']
+                            input_seg_mask_data_left = input_segmentation_mask[0].squeeze(0).to(accelerator.device)
+                            input_seg_mask_data_right = input_segmentation_mask[1].squeeze(0).to(accelerator.device)
+                            cur_h,cur_w = input_seg_mask_data_left.shape[-2:]
+            
+                            input_seg_mask_car_left_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)
+                            input_seg_mask_car_right_all = input_seg_mask_data_right.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)                    
+                            input_seg_mask_car_all = torch.cat((input_seg_mask_car_left_all,input_seg_mask_car_right_all),dim=1)
+                            
+                            kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                            kepted_mask = kepted_mask.bool()
+                            gaussians_filtered = ego_lidar_gaussain.clone()
+                            # 将不满足 mask 的 opacity 设为 0（opacity 是第 10 维，即索引为 9）
+                            gaussians_filtered[input_seg_mask_car_all.expand_as(ego_lidar_gaussain)[..., 7]] = 0.0  # 只改 opacity
+                            ego_lidar_gaussain = gaussians_filtered
+                            
+                        
                         ego_to_world_pose = batch['input']['lidar_to_world'][0][0]
                         ego_lidar_gaussain_shifted = transform_gs_to_given_pose(g2=ego_lidar_gaussain,
                                                 c2w=ego_to_world_pose)
@@ -548,13 +579,35 @@ def main(args):
                 
                 
                 rendered_index = rendered_index + 1
+ 
 
-        elif args.ablation_type=='no_fusion_as_one_version':            
+        
+
+        elif args.ablation_type=='no_fusion_as_one_version' or args.ablation_type=='no_fusion_as_one_version_no_car':            
             with torch.no_grad():
                 my_model.eval()
                 incremental_frame_index = 0
                 for batch in tqdm(configuration_fuse_dataloader):    
                     ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
+                    
+                    if args.ablation_type=='no_fusion_as_one_version_no_car':
+                        # Filter the instances
+                        input_segmentation_mask = batch['input']['segmentation']
+                        input_seg_mask_data_left = input_segmentation_mask[0].squeeze(0).to(accelerator.device)
+                        input_seg_mask_data_right = input_segmentation_mask[1].squeeze(0).to(accelerator.device)
+                        cur_h,cur_w = input_seg_mask_data_left.shape[-2:]
+        
+                        input_seg_mask_car_left_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)
+                        input_seg_mask_car_right_all = input_seg_mask_data_right.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)                    
+                        input_seg_mask_car_all = torch.cat((input_seg_mask_car_left_all,input_seg_mask_car_right_all),dim=1)
+                        
+                        kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                        kepted_mask = kepted_mask.bool()
+                        gaussians_filtered = ego_lidar_gaussain.clone()
+                        # 将不满足 mask 的 opacity 设为 0（opacity 是第 10 维，即索引为 9）
+                        gaussians_filtered[input_seg_mask_car_all.expand_as(ego_lidar_gaussain)[..., 7]] = 0.0  # 只改 opacity
+                        ego_lidar_gaussain = gaussians_filtered
+                    
                     ego_to_world_pose = batch['input']['lidar_to_world'][0][0]
                     ego_lidar_gaussain_shifted = transform_gs_to_given_pose(g2=ego_lidar_gaussain,
                                             c2w=ego_to_world_pose)
@@ -684,71 +737,6 @@ def main(args):
                     
                 rendered_index = rendered_index + 1
 
-        elif args.ablation_type=="GT":
-            print("building the inference dataset........")
-            all_key_frame_info_list = []
-            for input_frame_name in tqdm(all_frames_idx):
-                input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
-            
-                # current_input_infos
-                input_infos_list = get_inputs_info(datapath=val_params['datapath'],
-                            reso = val_params['resolution'],
-                            first_ref=first_key_frame_lidar_to_world_pose,
-                            simple_annotation_path_list=[input_annotation_name],
-                            depth_info_params =val_params['depth_info_dict'],
-                            extra_list=[])
-                
-                input_key_frame_info = input_infos_list[0]
-                
-                all_key_frame_info_list.append(input_key_frame_info)
-
-            configuration_fuse_dataset_for_eval = FusionConfigurationDataset(all_key_frame_info_list)
-            configuration_fuse_dataloader_for_eval = DataLoader(configuration_fuse_dataset_for_eval, batch_size=1, shuffle=False)
-            configuration_fuse_dataloader_for_eval = accelerator.prepare(
-                                            configuration_fuse_dataloader_for_eval)
-
-            # Rendered Images and the Evaluations
-            rendered_index = 0
-            volumefusion_renderer = my_model.renderer
-            for batch in tqdm(configuration_fuse_dataloader_for_eval):
-                current_annotation_path = all_frames_idx[rendered_index]
-                
-                saved_rendered_image_name = current_annotation_path.replace("annotations","rendered_images").replace(".json",".png")
-                saved_rendered_image_name = os.path.join(output_saved_folder_path,saved_rendered_image_name)
-                os.makedirs(os.path.dirname(saved_rendered_image_name),exist_ok=True)
-
-                saved_rendered_depth_name = current_annotation_path.replace("annotations","rendered_depth").replace(".json",".png")
-                saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
-                os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
-
-
-                rendered_image = batch['output']['imgs'].to(accelerator.device)
-                rendered_depth = batch['output']["sparse_gts"].to(accelerator.device).unsqueeze(2)
-
-                if args.output_vis:
-                    
-                    # saved rendered images
-                    rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
-                    rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
-                    rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy()
-                    
-                    skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
-
-                    # saved rendered depths
-                    rendered_depth_left = rendered_depth[0][0][0]
-                    rendered_depth_right = rendered_depth[0][1][0]
-                    rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
-                    rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
-                    rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
-                    skimage.io.imsave(saved_rendered_depth_name,rendered_depth_for_vis)
-                    
-                    rendered_images_all_list.append((rendered_image_for_vis*255).astype(np.uint8))
-                    rendered_depths_all_list.append(rendered_depth_for_vis)
-                    
-                rendered_index = rendered_index + 1
-            
-            
-        
         
         if args.output_vis:
             images_to_video(image_list=rendered_images_all_list,
@@ -768,38 +756,21 @@ def main(args):
         )
         
         saved_into_json(saved_quality_results_dict_this_semi_global_map,path=saved_rendered_results_json_path)
-
-        
         quit()
-        
-def load_dict_from_pickle(filepath):
+    
+
+
+def get_diff_elements(A, B):
+    return [item for item in B if item not in A]
+
+def load_pkl(filepath):
+
     with open(filepath, 'rb') as f:
-        return pickle.load(f)
-
-def save_dict_to_pickle(dictionary, filepath):
-    """
-    将字典保存为 pickle 文件
-
-    参数:
-        dictionary (dict): 要保存的字典
-        filepath (str): 保存的文件路径，例如 'data/my_dict.pkl'
-    """
-    with open(filepath, 'wb') as f:
-        pickle.dump(dictionary, f)
-
-def get_mean(list):
-    return sum(list)*1.0/len(list)
-
-import matplotlib.pyplot as plt
-import skimage.io
-from scipy.spatial.transform import Rotation as Rscipy
+        data = pickle.load(f)
+    return data
 
 def transform_positions(positions, c2w):
-    """
-    将 G2 的 mean3D 位置变换到 G1 世界坐标系。
-    positions: (N, 3)
-    c2w: (4, 4)
-    """
+
     N = positions.shape[0]
     homo_positions = torch.cat([positions, torch.ones(N, 1, device=positions.device)], dim=-1)  # (N, 4)
     transformed = (c2w @ homo_positions.T).T[:, :3]  # (N, 3)
@@ -871,14 +842,6 @@ def convert_depth_to_disp(factor=328.318735,depth=None):
     return disparity
 
 def kitti_colormap(disparity, maxval=-1):
-	"""
-	A utility function to reproduce KITTI fake colormap
-	Arguments:
-	  - disparity: numpy float32 array of dimension HxW
-	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
-	
-	Returns a numpy uint8 array of shape HxWx3.
-	"""
 	if maxval < 0:
 		maxval = np.max(disparity)
 
@@ -902,9 +865,6 @@ def kitti_colormap(disparity, maxval=-1):
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 def clean_and_clip(array):
-    """
-    将 array 中的 NaN 和 Inf 替换为 0，然后 clip 到 [0, 100]
-    """
     array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
     array = np.clip(array, 0, 100)
     return array
@@ -914,17 +874,7 @@ def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
     gaussians = gaussians.float()
     c2w = c2w.float()
     intrinsics = intrinsics.float()
-    
-    """
-    使用 PyTorch 删除落入两个相机视锥内的高斯点
-    参数:
-        gaussians: (N, 14) or (N, 3) tensor，前3列为高斯中心点
-        c2w: (2, 4, 4) tensor，相机姿态
-        intrinsics: (2, 3, 3) tensor，相机内参
-        image_size: (H, W)，图像大小
-    返回:
-        (M, 14) or (M, 3) tensor，保留不在任一视锥内的高斯点
-    """
+
     device = gaussians.device
     points = gaussians[:, :3]  # (N, 3)
     N = points.shape[0]
@@ -1020,6 +970,16 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
 
     return mae, mse
 
+def load_dict_from_pickle(filepath):
+    with open(filepath, 'rb') as f:
+        return pickle.load(f)
+
+def save_dict_to_pickle(dictionary, filepath):
+    with open(filepath, 'wb') as f:
+        pickle.dump(dictionary, f)
+
+def get_mean(list):
+    return sum(list)*1.0/len(list)
 
 
 if __name__ == '__main__':

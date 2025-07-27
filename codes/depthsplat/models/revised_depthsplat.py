@@ -807,8 +807,6 @@ class ModelWarpper(nn.Module):
         
         bin_token_name = batch['bin_token'][0][:-4]
     
-
-        
         # loss and loss terms
         with torch.no_grad():
             loss, loss_terms,rendered_color,\
@@ -1769,6 +1767,116 @@ class ModelWarpper(nn.Module):
                                                                  ))
         
 
+    def filewise_inference_data_prepared(self,batch):
+        device_id = self.device
+        
+        input_batch_dict = dict()
+        output_batch_dict = dict()
+        
+        inputs_data = batch['input']
+        input_rgb =  inputs_data['imgs'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        
+        input_camera_intrinsics = inputs_data['cks'] #(B,V,3,3) 
+        input_camera_extrinsics = inputs_data['c2w'] #(B,V,4,4)
+
+        input_psuedo_depth = inputs_data['psuedo_depth'] #(B,V,H,W)
+        input_sparse_depth = inputs_data["sparse_gts"] #(B,V,H,W)
+
+        cameras_dist_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)  # [2, 2] [V,K]
+        cameras_dist_index= cameras_dist_index.unsqueeze(0).repeat(input_sparse_depth.shape[0],1,1)
+        
+        
+        # input_dict
+        input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
+        input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['nn_matrix'] =cameras_dist_index.to(device_id, dtype=self.dtype)
+        input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
+        
+        
+        if 'segmentation' in batch['input'].keys():
+            input_seg_mask_data = inputs_data['segmentation']
+            input_seg_mask_data_left = input_seg_mask_data[0].squeeze(0).to(device_id, dtype=self.dtype)
+            input_seg_mask_data_right = input_seg_mask_data[1].squeeze(0).to(device_id, dtype=self.dtype)
+            input_batch_dict['segmentation'] = [input_seg_mask_data_left,input_seg_mask_data_right]
+
+        if 'boxes_3d' in batch['input'].keys():
+            input_bbox3d_data = inputs_data['boxes_3d']    
+            input_batch_dict['boxes_3d'] = input_bbox3d_data.to(device_id, dtype=self.dtype)
+
+
+        # output dict
+        output_batch_dict["output_imgs"] = batch["output"]["imgs"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_c2ws"] = batch["input"]["c2w"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovxs"] = batch["output"]["fovxs"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovys"] = batch["output"]["fovys"].to(device_id, dtype=self.dtype)
+        output_batch_dict['output_sparse_depth'] = batch['output']['sparse_gts'].to(device_id, dtype=self.dtype)
+        
+        return input_batch_dict,output_batch_dict
+
+    
+    def filewise_inference_only(self,
+                                batch,
+                                cfg=None):
+        
+        input_batch_dict,output_batch_dict = self.filewise_inference_data_prepared(batch=batch)
+
+        return_depth = cfg.return_depth
+        iter_end = cfg.max_train_steps 
+        depth_max_value = cfg.max_depth # 100
+        depth_min_value = cfg.min_depth # 0.3    
+        
+        # inputs information
+        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
+        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
+        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
+        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
+        bs = input_images.shape[0]
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+
+        mask = input_sparse_gt_depth > 0
+        mask = mask.float()
+        input_nn_matrix = input_nn_matrix.long()
+
+
+        num_of_cameras = input_images.shape[1]
+        min_depth=1.0 / depth_max_value  # inverse depth range
+        max_depth=1.0 / depth_min_value
+        
+        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        height, width = input_images.shape[3:]
+        intrinsics = intrinsics.clone()
+
+        
+        results_dict = self.depth_estimator(
+            images=input_images,
+            attn_splits_list=[2],
+            intrinsics=intrinsics,
+            min_depth=min_depth,  #inverse depth range
+            max_depth=max_depth,
+            num_depth_candidates=192, #here I set it to 192
+            extrinsics=input_extrinsics,
+            nn_matrix=input_nn_matrix
+        ) 
+
+        predicted_input_depth = results_dict['depth_preds'][0]
+        gaussians_cv, features,pred_depths = self.gaussains_estimation_head(imgs=input_images,
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth,
+                                           cfg=cfg)
+        
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        bs = gaussians_cv.shape[0] # batch size is 2
+        
+        
+        return gaussians_cv
+    
+    
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:

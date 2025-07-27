@@ -1599,10 +1599,7 @@ class VolumeFusion(BaseModule):
         
         left_cam_to_lidar_matrix = output_info_list_all[0]['output_c2ws'][0][0]
         
-        # gaussians_all = gaussians_all_list[1]
 
-
- 
         g0,g2_trans= transform_g2_to_g1(gaussians_all_list[0],
                                         gaussians_all_list[2],
                                         output_info_list_all[2]["output_c2ws"][0][0]@torch.linalg.inv(left_cam_to_lidar_matrix) ,
@@ -1613,33 +1610,6 @@ class VolumeFusion(BaseModule):
                                         output_info_list_all[1]["output_c2ws"][0][0]@torch.linalg.inv(left_cam_to_lidar_matrix) ,
                                      )
 
-        # cur_bs,cur_view,cur_h,cur_w = pred_depths_list[0].shape        
-        # pred_depths_for_concat0 = pred_depths_list[0].reshape(cur_bs,cur_view*cur_h*cur_w,1)
-        # pred_depths_for_concat1 = pred_depths_list[1].reshape(cur_bs,cur_view*cur_h*cur_w,1)
-        # pred_depths_for_concat2 = pred_depths_list[2].reshape(cur_bs,cur_view*cur_h*cur_w,1)
-        # g0_aug = torch.cat((g0,pred_depths_for_concat0),dim=-1)
-        # g1_aug = torch.cat((g1_trans,pred_depths_for_concat1),dim=-1)
-        # g2_aug = torch.cat((g2_trans,pred_depths_for_concat2),dim=-1)
-        # fused_gaussain0 = fuse_gaussians_by_voxel_with_depth_scatter_batched(
-        #                 gaussians1_b=g0_aug,
-        #                 gaussians2_b=g1_aug,
-        #                 point_cloud_range=cfg.point_cloud_range,
-        #                 voxel_size=0.5
-        #             )
-        # fused_gaussain1 = fuse_gaussians_by_voxel_with_depth_scatter_batched(
-        #                 gaussians1_b=fused_gaussain0,
-        #                 gaussians2_b=g2_aug,
-        #                 point_cloud_range=cfg.point_cloud_range,
-        #                 voxel_size=0.5
-        #             )
-        
-        
-       
-        
-        # fused_padded = fuse_gaussians_by_voxel_with_depth_scatter_batched(gaussians1_b=g0,
-        #                                                    gaussians2_b=g2_trans)
-
-        # gaussians_all =g2_trans
         gaussians_all =  g2_trans
         
         
