@@ -431,7 +431,7 @@ def main(args):
 
  
  
-        elif args.ablation_type=='no_fusion' or args.ablation_type=='no_fusion_no_car':
+        elif args.ablation_type=='no_fusion' or args.ablation_type=='no_fusion_no_car' or args.ablation_type=='no_fusion_no_car' :
             print("building the inference dataset........")
             all_key_frame_info_list = []
             for input_frame_name in tqdm(all_frames_idx):
@@ -478,7 +478,7 @@ def main(args):
                     with torch.no_grad():
                         ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
                         
-                        if args.ablation_type=='no_fusion_no_car':
+                        if args.ablation_type=='no_fusion_no_car' or args.ablation_type=='no_fusion_only_car':
                             # Filter the instances
                             input_segmentation_mask = batch['input']['segmentation']
                             input_seg_mask_data_left = input_segmentation_mask[0].squeeze(0).to(accelerator.device)
@@ -489,7 +489,11 @@ def main(args):
                             input_seg_mask_car_right_all = input_seg_mask_data_right.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)                    
                             input_seg_mask_car_all = torch.cat((input_seg_mask_car_left_all,input_seg_mask_car_right_all),dim=1)
                             
-                            kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                            if args.ablation_type=='no_fusion_no_car':
+                                kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                            elif args.ablation_type=='no_fusion_only_car':
+                                kepted_mask = input_seg_mask_car_all.float()
+                            kepted_mask = input_seg_mask_car_all.float()
                             kepted_mask = kepted_mask.bool()
                             gaussians_filtered = ego_lidar_gaussain.clone()
                             # 将不满足 mask 的 opacity 设为 0（opacity 是第 10 维，即索引为 9）
@@ -583,25 +587,41 @@ def main(args):
 
         
 
-        elif args.ablation_type=='no_fusion_as_one_version' or args.ablation_type=='no_fusion_as_one_version_no_car':            
+        elif args.ablation_type=='no_fusion_as_one_version' or args.ablation_type=='no_fusion_as_one_version_no_car' or args.ablation_type=='no_fusion_as_one_version_only_car':            
             with torch.no_grad():
                 my_model.eval()
                 incremental_frame_index = 0
                 for batch in tqdm(configuration_fuse_dataloader):    
                     ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
                     
-                    if args.ablation_type=='no_fusion_as_one_version_no_car':
+                    if args.ablation_type=='no_fusion_as_one_version_no_car' or args.ablation_type=='no_fusion_as_one_version_only_car':
+                        
+
+                        
                         # Filter the instances
                         input_segmentation_mask = batch['input']['segmentation']
                         input_seg_mask_data_left = input_segmentation_mask[0].squeeze(0).to(accelerator.device)
                         input_seg_mask_data_right = input_segmentation_mask[1].squeeze(0).to(accelerator.device)
                         cur_h,cur_w = input_seg_mask_data_left.shape[-2:]
+                        
+                        saved_input_seg_mask_left_vis_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool()[0][0]
+                        saved_input_seg_mask_right_vis_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool()[0][0]
+                        saved_input_seg_mask_all = torch.cat((saved_input_seg_mask_left_vis_all,saved_input_seg_mask_right_vis_all),dim=1)
+                        saved_input_seg_mask_all = saved_input_seg_mask_all.cpu().numpy()
+                        # skimage.io.imsave("seg_{}.png".format(incremental_frame_index),saved_input_seg_mask_all)
+                        
+
         
                         input_seg_mask_car_left_all = input_seg_mask_data_left.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)
                         input_seg_mask_car_right_all = input_seg_mask_data_right.any(dim=1, keepdim=True).bool().permute(0,2,3,1).view(1,cur_h*cur_w,-1)                    
                         input_seg_mask_car_all = torch.cat((input_seg_mask_car_left_all,input_seg_mask_car_right_all),dim=1)
                         
-                        kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                        if args.ablation_type=='no_fusion_as_one_version_no_car':
+                            kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                        elif args.ablation_type=='no_fusion_as_one_version_only_car':
+                            kepted_mask = torch.ones_like(input_seg_mask_car_all.float()) - input_seg_mask_car_all.float()
+                            input_seg_mask_car_all = kepted_mask.bool()
+                            
                         kepted_mask = kepted_mask.bool()
                         gaussians_filtered = ego_lidar_gaussain.clone()
                         # 将不满足 mask 的 opacity 设为 0（opacity 是第 10 维，即索引为 9）
@@ -924,6 +944,7 @@ def images_to_video(image_list, output_path, fps=30):
 
     writer.release()
     print(f"✅ Video saved to: {output_path}")
+
 
 def compute_psnr_ssim(pred, target):
 

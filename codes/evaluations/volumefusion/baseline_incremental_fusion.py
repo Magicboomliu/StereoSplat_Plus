@@ -303,13 +303,24 @@ def main(args):
             
             with torch.no_grad():
                 my_model.eval()
+                
+                key_frame_index = 0
+                
                 for batch in tqdm(configuration_fuse_dataloader):    
                     ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
                     ego_to_world_pose = batch['input']['lidar_to_world'][0][0]
                     ego_lidar_gaussain_shifted = transform_gs_to_given_pose(g2=ego_lidar_gaussain,
-                                            c2w=ego_to_world_pose)                
-                    global_gaussains_list.append(ego_lidar_gaussain_shifted)
+                                            c2w=ego_to_world_pose)
                     
+                    
+                    # if key_frame_index<10:
+                    #     torch.save(ego_lidar_gaussain_shifted, "key_frame_gs_{}.pt".format(key_frame_index)) 
+                    
+                    key_frame_index = key_frame_index + 1
+                
+                                   
+                    global_gaussains_list.append(ego_lidar_gaussain_shifted)
+     
             global_gaussains = torch.cat(global_gaussains_list,dim=1)
 
             print("Step 3:  Building the Inference Dataset...")
@@ -460,8 +471,7 @@ def main(args):
                 saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
                 os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
 
-    
-                
+            
                 # if key_frame: updata current GS
                 if current_annotation_path in key_input_frames_idx:
                     with torch.no_grad():
@@ -553,6 +563,9 @@ def main(args):
             with torch.no_grad():
                 my_model.eval()
                 incremental_frame_index = 0
+                
+                each_key_frame_gs_list = []
+                
                 for batch in tqdm(configuration_fuse_dataloader):    
                     ego_lidar_gaussain = my_model.filewise_inference_only(batch,cfg=cfg)
                     ego_to_world_pose = batch['input']['lidar_to_world'][0][0]
@@ -563,19 +576,37 @@ def main(args):
                     current_keyframe_output_c2w = batch["output"]["c2w"].to(accelerator.device) #(B,V,4,4)
                     current_keyframe_output_ck = batch['input']['cks'].to(accelerator.device)   #(B,V,3,3)
 
-                    
+
                     if incremental_frame_index>0:
                         # remove the GS inside the global gaussains
                         global_gaussains = remove_gaussians_in_frustum(gaussians=global_gaussains[0],
                                                     c2w=current_keyframe_output_c2w[0],
                                                     intrinsics=current_keyframe_output_ck[0],
                                                     image_size=current_image_size)
+                        # # # # FIXME
+
+                        # kepted_3dgs_each = remove_gaussians_in_frustum(gaussians=each_key_frame_gs_list[incremental_frame_index-1][0],
+                        #                             c2w=current_keyframe_output_c2w[0],
+                        #                             intrinsics=current_keyframe_output_ck[0],
+                        #                             image_size=[300,1200])
+                        
+                        
+                        # if incremental_frame_index<11:
+                            
+                        #     torch.save(kepted_3dgs_each,"key_frame_gs_{}.pt".format(incremental_frame_index-1))
+                        # else:
+                        #     quit()
+                        
+                        
+                        
                         global_gaussains = global_gaussains.unsqueeze(0)
                         # fusion
                         global_gaussains = torch.cat((global_gaussains,ego_lidar_gaussain_shifted),dim=1)
                     
                     else:
                         global_gaussains = ego_lidar_gaussain_shifted
+                        
+                    each_key_frame_gs_list.append(ego_lidar_gaussain_shifted)
                         
                     incremental_frame_index = incremental_frame_index + 1
                     
@@ -909,47 +940,108 @@ def clean_and_clip(array):
     array = np.clip(array, 0, 100)
     return array
 
-def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
+# def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
     
+#     gaussians = gaussians.float()
+#     c2w = c2w.float()
+#     intrinsics = intrinsics.float()
+    
+#     """
+#     使用 PyTorch 删除落入两个相机视锥内的高斯点
+#     参数:
+#         gaussians: (N, 14) or (N, 3) tensor，前3列为高斯中心点
+#         c2w: (2, 4, 4) tensor，相机姿态
+#         intrinsics: (2, 3, 3) tensor，相机内参
+#         image_size: (H, W)，图像大小
+#     返回:
+#         (M, 14) or (M, 3) tensor，保留不在任一视锥内的高斯点
+#     """
+#     device = gaussians.device
+#     points = gaussians[:, :3]  # (N, 3)
+#     N = points.shape[0]
+#     H, W = image_size
+#     keep_mask = torch.ones(N, dtype=torch.bool, device=device)
+
+#     for i in range(2):
+#         w2c = torch.linalg.inv(c2w[i])            # (4, 4)
+#         K = intrinsics[i]                         # (3, 3)
+
+#         # 齐次坐标变换
+#         homo_points = torch.cat([points, torch.ones((N, 1), device=device)], dim=1)  # (N, 4)
+#         cam_points = (w2c @ homo_points.T).T[:, :3]  # (N, 3)
+
+#         # 相机前方
+#         in_front = cam_points[:, 2] > 0.2
+
+#         # 像素投影
+#         proj = (K @ cam_points.T).T  # (N, 3)
+#         proj_x = proj[:, 0] / proj[:, 2]
+#         proj_y = proj[:, 1] / proj[:, 2]
+
+#         in_image = (proj_x >= 1) & (proj_x < W) & (proj_y >= 1) & (proj_y < H)
+#         visible = in_front & in_image
+#         keep_mask &= ~visible  # 可见点设为 False
+
+#     return gaussians[keep_mask]
+
+
+def add_pitch_to_c2w(c2w, degrees=-5.0):
+    pitch_rad = torch.deg2rad(torch.tensor(degrees))
+    rot_x = torch.tensor([
+        [1, 0, 0],
+        [0, torch.cos(pitch_rad), -torch.sin(pitch_rad)],
+        [0, torch.sin(pitch_rad), torch.cos(pitch_rad)],
+    ], dtype=c2w.dtype, device=c2w.device)
+
+    # 添加 pitch 旋转（前乘）
+    c2w_rotated = c2w.clone()
+    c2w_rotated[:3, :3] = rot_x @ c2w[:3, :3]
+    return c2w_rotated
+
+def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
+    """
+    角度 + 距离双重判断，移除两个相机视锥内的高斯点
+    """
     gaussians = gaussians.float()
     c2w = c2w.float()
     intrinsics = intrinsics.float()
-    
-    """
-    使用 PyTorch 删除落入两个相机视锥内的高斯点
-    参数:
-        gaussians: (N, 14) or (N, 3) tensor，前3列为高斯中心点
-        c2w: (2, 4, 4) tensor，相机姿态
-        intrinsics: (2, 3, 3) tensor，相机内参
-        image_size: (H, W)，图像大小
-    返回:
-        (M, 14) or (M, 3) tensor，保留不在任一视锥内的高斯点
-    """
+
     device = gaussians.device
-    points = gaussians[:, :3]  # (N, 3)
+    points = gaussians[:, :3]
     N = points.shape[0]
     H, W = image_size
     keep_mask = torch.ones(N, dtype=torch.bool, device=device)
 
     for i in range(2):
-        w2c = torch.linalg.inv(c2w[i])            # (4, 4)
-        K = intrinsics[i]                         # (3, 3)
+        fx = intrinsics[i, 0, 0].float()
+        fy = intrinsics[i, 1, 1].float()
 
-        # 齐次坐标变换
-        homo_points = torch.cat([points, torch.ones((N, 1), device=device)], dim=1)  # (N, 4)
-        cam_points = (w2c @ homo_points.T).T[:, :3]  # (N, 3)
+        fov_x = 2 * torch.atan(W / (2 * fx))
+        fov_y = 2 * torch.atan(H / (2 * fy))
 
-        # 相机前方
-        in_front = cam_points[:, 2] > 0
+        w2c = torch.linalg.inv(c2w[i])
+        homo_points = torch.cat([points, torch.ones((N, 1), device=device)], dim=1)
+        cam_points = (w2c @ homo_points.T).T[:, :3]
 
-        # 像素投影
-        proj = (K @ cam_points.T).T  # (N, 3)
-        proj_x = proj[:, 0] / proj[:, 2]
-        proj_y = proj[:, 1] / proj[:, 2]
+        x, y, z = cam_points[:, 0], cam_points[:, 1], cam_points[:, 2]
+        
 
-        in_image = (proj_x >= 0) & (proj_x < W) & (proj_y >= 0) & (proj_y < H)
-        visible = in_front & in_image
-        keep_mask &= ~visible  # 可见点设为 False
+        # valid 
+        in_front = z > 4.8
+        
+        # in_front_big = z<30
+        
+        
+
+        x_angle = torch.atan2(x, z)
+        y_angle = torch.atan2(y, z)
+        in_fov = (x_angle.abs() <= fov_x / 2) & (y_angle.abs() <= fov_y / 2)
+
+        # visible = in_front & in_fov
+        visible = in_front & in_fov
+        keep_mask &= ~visible
+        # keep_mask = keep_mask & in_front_big
+        keep_mask = keep_mask 
 
     return gaussians[keep_mask]
 
