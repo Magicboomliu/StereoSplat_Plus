@@ -5,11 +5,48 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as Rscipy
 import torch.optim as optim
-
-
 import numpy as np
 import matplotlib.pyplot as plt
+import lpips
 
+
+@torch.no_grad()
+def lpips_vgg_batch(pred_1v3hw: torch.Tensor,
+                    gt_1v3hw: torch.Tensor,
+                    net: lpips.LPIPS | None = None) -> torch.Tensor:
+    """
+    Compute LPIPS (VGG16) for each view, batched.
+    Args:
+        pred_1v3hw: [1, V, 3, H, W], values in [0, 1]
+        gt_1v3hw:   [1, V, 3, H, W], values in [0, 1]
+        net: optional pre-created lpips.LPIPS(net='vgg')
+    Returns:
+        lpips_per_view: [V] tensor (float32)
+    """
+    assert pred_1v3hw.shape == gt_1v3hw.shape, "Pred / GT must have same shape"
+    assert pred_1v3hw.ndim == 5 and pred_1v3hw.shape[2] == 3
+
+    B, V, C, H, W = pred_1v3hw.shape
+    assert B == 1, "Batch dim must be 1"
+
+    device = pred_1v3hw.device
+
+
+
+    # [1, V, 3, H, W] -> [V, 3, H, W]
+    pred = pred_1v3hw.squeeze(0)
+    gt   = gt_1v3hw.squeeze(0)
+
+    # 归一化到 [-1, 1]
+    pred = pred * 2.0 - 1.0
+    gt   = gt   * 2.0 - 1.0
+
+    # LPIPS 批量计算 -> [V, 1, 1, 1]
+    scores = net(pred, gt).view(-1)
+    
+    scores = scores.mean()
+    
+    return scores.float()
 
 
 class IncrementalGaussianFusion(nn.Module):
@@ -22,6 +59,7 @@ class IncrementalGaussianFusion(nn.Module):
     3. 窗口优化：基于渲染损失的局部优化
     4. 全局优化：基于历史关键帧的全局优化
     """
+
     
     def __init__(self, 
                  renderer=None,
@@ -51,6 +89,8 @@ class IncrementalGaussianFusion(nn.Module):
         self.window_optimization_iterations = window_optimization_iterations
         self.global_optimization_iterations = global_optimization_iterations
         self.lambda_depth = lambda_depth
+        
+        self.lpips_net = lpips.LPIPS(net='vgg').cuda().eval()
         
     def incremental_fusion_pipeline(self,
                                   global_gaussians_prev: torch.Tensor,
@@ -120,6 +160,9 @@ class IncrementalGaussianFusion(nn.Module):
             new_keyframe_image_size, supervision_frames
         )
         
+        
+        print(g_overlapped_optimized.shape)
+        quit()
 
         
         
@@ -344,32 +387,30 @@ class IncrementalGaussianFusion(nn.Module):
         # 创建可训练的高斯点参数 #[N,14]
         gaussians_optimizable = gaussians.clone().detach().requires_grad_(True)
         
+        
         # 优化器
         optimizer = optim.Adam([gaussians_optimizable], lr=0.001)
         
-        
-
-        # 优化循环
         for iteration in range(self.window_optimization_iterations):
             optimizer.zero_grad()
-            
-            total_loss = 0.0
-            
-            # 对每个监督帧计算损失
+            total_loss_val = 0.0
+
             for frame_data in supervision_frames:
-                # 同时使用左右相机的信息计算损失
                 loss = self.compute_rendering_loss_multi_camera(
-                    gaussians_optimizable, frame_data, camera_poses[0], intrinsics, image_size
+                    gaussians_optimizable,
+                    frame_data,
+                    camera_poses[0].detach(),
+                    intrinsics.detach(),
+                    image_size
                 )
-                total_loss += loss
-            
-            # 反向传播
-            total_loss.backward()
+                loss.backward()  # 立刻释放该帧的 graph
+                total_loss_val += loss.item()
+
             optimizer.step()
-            
+
             if iteration % 10 == 0:
-                print(f"Window optimization iteration {iteration}, loss: {total_loss.item():.6f}")
-        
+                print(f"iter {iteration}, loss: {total_loss_val:.6f}")
+            
         print("Window optimization completed")
         return gaussians_optimizable.detach()
     
@@ -432,6 +473,8 @@ class IncrementalGaussianFusion(nn.Module):
         # torch.Size([1, 2])
         # torch.Size([1, 2])
         
+        
+        
         rendered_results =self.renderer.render(
             gaussians=gaussians.unsqueeze(0),
             c2w=rendered_c2w.unsqueeze(0),
@@ -450,62 +493,25 @@ class IncrementalGaussianFusion(nn.Module):
         output_rgb_for_supervision = frame_data['output']['imgs'].unsqueeze(0).to(rendered_image.device)
         output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).to(rendered_image.device)
         
-        # Loss Function Here
         
+        # Loss Function Here
+        rgb_l1_loss_value = F.l1_loss(rendered_image, output_rgb_for_supervision)
+        
+        # lpips_loss_value = lpips_vgg_batch(rendered_image, output_rgb_for_supervision,
+        #                                    net=self.lpips_net)
+        
+        # rgb_loss = rgb_l1_loss_value + lpips_loss_value*0.05
+        
+        rgb_loss = rgb_l1_loss_value
+        
+        depth_l1_loss_value = F.l1_loss(rendered_depth, output_depth_for_supervision)
+        
+        total_loss = rgb_loss + self.lambda_depth * depth_l1_loss_value
+        
+        
+        return total_loss 
         
 
-        quit()
-        
-        
-        # compute the loss here
-        
-        # 从frame_data中获取GT数据（如果可用）
-        if 'imgs' in frame_data and 'psuedo_depth' in frame_data:
-            gt_image = frame_data['imgs'][i]           # [3, H, W] 或 [V, 3, H, W]
-            gt_psuedo_depth = frame_data['psuedo_depth'][i]  # [1, H, W] 或 [V, 1, H, W]
-            
-            # 确保维度匹配
-            if rendered_image.dim() == 5:  # [1, V, 3, H, W]
-                rendered_image = rendered_image[0]     # [V, 3, H, W]
-                rendered_depth = rendered_depth[0]     # [V, 1, H, W]
-            
-            # 计算图像损失（L1损失）
-            image_loss = F.l1_loss(rendered_image, gt_image)
-            
-            # 计算深度损失（L1损失，使用psuedo_depth作为GT）
-            if gt_psuedo_depth is not None:
-                # 创建有效深度掩码（psuedo_depth值大于0）
-                valid_depth_mask = gt_psuedo_depth > 0.1
-                if valid_depth_mask.sum() > 0:
-                    # 使用psuedo_depth作为GT深度
-                    depth_loss = F.l1_loss(
-                        rendered_depth[valid_depth_mask], 
-                        gt_psuedo_depth[valid_depth_mask]
-                    )
-                else:
-                    depth_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
-            else:
-                depth_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
-            
-            # 总损失 = 图像损失 + λ * 深度损失
-            camera_loss = image_loss + self.lambda_depth * depth_loss
-            
-        else:
-            # 如果没有GT数据，使用正则化损失
-            camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
-        
-        total_loss = total_loss + camera_loss
-        
-    # except Exception as e:
-    #     print(f"Warning: Rendering failed for camera {i}: {e}")
-    #     # 如果渲染失败，使用占位符损失
-    #     camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
-    #     total_loss = total_loss + camera_loss
-        
-    #     return total_loss
-    
-    
-    
     
     
     def global_optimization(self, gaussians: torch.Tensor) -> torch.Tensor:
@@ -639,6 +645,7 @@ class IncrementalGaussianFusion(nn.Module):
             w1*y2 - x1*z2 + y1*w2 + z1*x2,
             w1*z2 + x1*y2 - y1*x2 + z1*w2
         ], dim=1)
+
 
 
 def create_incremental_fusion_pipeline(renderer=None,
