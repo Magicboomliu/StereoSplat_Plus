@@ -238,30 +238,33 @@ def main(args):
             # 创建增量式融合流水线
             fusion_pipeline = create_incremental_fusion_pipeline(
                 renderer=my_model.renderer,  # 传入渲染器
+                history_batch_data=[],  # 初始化空的历史数据列表
                 voxel_size=0.05,
                 opacity_threshold=0.01,
                 depth_threshold=0.1,
                 window_optimization_iterations=50,
-                global_optimization_iterations=10,
+                global_optimization_iterations=30,
                 lambda_depth=0.01
             )
             
             fusion_pipeline = fusion_pipeline.to(accelerator.device)
             
-    
-            
-
             my_model.eval()
             
             # 初始化：第一个关键帧生成初始全局高斯
             print("Initializing with first keyframe...")
             first_batch = next(iter(configuration_fuse_dataloader))
+            
+            # save into the input history
+            fusion_pipeline.store_batch_data_to_history(first_batch)
+            
             initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
             initial_pose = first_batch['input']['lidar_to_world'][0][0]
 
                     
             # 将第一个关键帧的高斯点变换到世界坐标系
             global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
+            
             
             print(f"Initial global gaussians: {global_gaussains.shape}")
             
@@ -272,7 +275,6 @@ def main(args):
             for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
                 print(f"Processing keyframe {key_frame_index}...")
                 
-       
                 
                 # 获取当前关键帧的3DGS
                 current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
@@ -293,9 +295,11 @@ def main(args):
                     key_frame_index, val_params, 
                     first_key_frame_lidar_to_world_pose
                 )
- 
                 
-
+                
+                # add the current batch data into the history
+                fusion_pipeline.store_batch_data_to_history(batch)
+ 
                 
                 # 使用新的融合模块进行增量式融合
                 global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
@@ -309,6 +313,7 @@ def main(args):
                 )
                 
                 print(global_gaussains.shape)
+                quit()
                 
                 # print(f"Global gaussians after fusion: {global_gaussains.shape}")
                 

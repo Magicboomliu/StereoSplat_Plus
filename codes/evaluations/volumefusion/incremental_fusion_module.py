@@ -1,3 +1,4 @@
+from scipy.integrate import qmc_quad
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,10 +6,9 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as Rscipy
 import torch.optim as optim
-import numpy as np
+import random
 import matplotlib.pyplot as plt
 import lpips
-
 
 @torch.no_grad()
 def lpips_vgg_batch(pred_1v3hw: torch.Tensor,
@@ -63,17 +63,19 @@ class IncrementalGaussianFusion(nn.Module):
     
     def __init__(self, 
                  renderer=None,
+                 history_batch_data=None,
                  voxel_size: float = 0.05,
                  opacity_threshold: float = 0.01,
                  depth_threshold: float = 0.1,
                  window_optimization_iterations: int = 50,
-                 global_optimization_iterations: int = 10,
+                 global_optimization_iterations: int = 20,
                  lambda_depth: float = 1.0):
         """
         初始化增量式高斯融合模块
         
         Args:
             renderer: 渲染器实例，用于计算渲染损失
+            history_batch_data: 历史批次数据，用于全局优化
             voxel_size: 体素大小（米）
             opacity_threshold: 透明度阈值
             depth_threshold: 深度阈值
@@ -83,6 +85,7 @@ class IncrementalGaussianFusion(nn.Module):
         """
         super().__init__()
         self.renderer = renderer
+        self.history_batch_data = history_batch_data
         self.voxel_size = voxel_size
         self.opacity_threshold = opacity_threshold
         self.depth_threshold = depth_threshold
@@ -92,6 +95,18 @@ class IncrementalGaussianFusion(nn.Module):
         
         self.lpips_net = lpips.LPIPS(net='vgg').cuda().eval()
         
+    
+    def store_batch_data_to_history(self, batch_data: Dict):
+        self.history_batch_data.append(batch_data)
+        
+    def random_select_batch_data_from_history(self, num_frames: int):
+        if len(self.history_batch_data) < num_frames:
+            return self.history_batch_data
+        else:
+            return random.sample(self.history_batch_data, num_frames)
+    
+    
+    
     def incremental_fusion_pipeline(self,
                                   global_gaussians_prev: torch.Tensor,
                                   new_keyframe_gaussians: torch.Tensor,
@@ -133,6 +148,20 @@ class IncrementalGaussianFusion(nn.Module):
             new_keyframe_gaussians, transform_pose
         )
         
+        # 将当前关键帧数据添加到历史数据中（用于全局优化）
+        if self.history_batch_data is None:
+            self.history_batch_data = []
+        
+
+        
+        # 限制历史数据的大小，避免内存过度增长
+        max_history_frames = 20  # 减少到20帧以节省内存
+        if len(self.history_batch_data) >= max_history_frames:
+            # 移除最旧的数据
+            self.history_batch_data.pop(0)
+        
+        print(f"Added current frame to history. Total history frames: {len(self.history_batch_data)}")
+
 
         # Step 2: 基于FOV分离重叠和遗留的高斯点
         print("Step 2: Separating overlapping and legacy gaussians based on FOV...")
@@ -161,23 +190,19 @@ class IncrementalGaussianFusion(nn.Module):
         )
         
         
-        print(g_overlapped_optimized.shape)
-        quit()
-
-        
         
         # Step 5: 融合优化后的重叠高斯点和遗留高斯点
         print("Step 5: Concatenating optimized overlapped and legacy gaussians...")
         g_update_global = torch.cat([g_overlapped_optimized, g_legacy], dim=0)
         
         
-        
+
         
         # Step 6: 全局优化
         print(f"Step 6: Global optimization ({self.global_optimization_iterations} iterations)...")
-        g_final_global = self.global_optimization(g_update_global)
+        g_final_global = self.global_optimization(g_update_global,
+                                                  window_size=new_keyframe_image_size)
         
-        print(f"Final global gaussians: {g_final_global.shape[0]}")
         
         return g_final_global.unsqueeze(0)  # [1, N, 14]
     
@@ -387,7 +412,6 @@ class IncrementalGaussianFusion(nn.Module):
         # 创建可训练的高斯点参数 #[N,14]
         gaussians_optimizable = gaussians.clone().detach().requires_grad_(True)
         
-        
         # 优化器
         optimizer = optim.Adam([gaussians_optimizable], lr=0.001)
         
@@ -473,13 +497,19 @@ class IncrementalGaussianFusion(nn.Module):
         # torch.Size([1, 2])
         # torch.Size([1, 2])
         
+        if len(rendered_c2w.shape)<4:
+            rendered_c2w = rendered_c2w.unsqueeze(0)
+        if len(fovxs.shape)<2:
+            fovxs = fovxs.unsqueeze(0)
+        if len(fovys.shape)<2:
+            fovys = fovys.unsqueeze(0)
         
         
         rendered_results =self.renderer.render(
             gaussians=gaussians.unsqueeze(0),
-            c2w=rendered_c2w.unsqueeze(0),
-            fovx=fovxs.unsqueeze(0),
-            fovy=fovys.unsqueeze(0),
+            c2w=rendered_c2w,
+            fovx=fovxs,
+            fovy=fovys,
             rays_o=None,
             rays_d=None
         )
@@ -490,9 +520,15 @@ class IncrementalGaussianFusion(nn.Module):
         rendered_depth = rendered_results['depth']      # [1, V, 1, H, W]
         
         # GT images and the depth information.
-        output_rgb_for_supervision = frame_data['output']['imgs'].unsqueeze(0).to(rendered_image.device)
-        output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).to(rendered_image.device)
+        if len(frame_data['output']['imgs'].shape)<5:    
+            output_rgb_for_supervision = frame_data['output']['imgs'].unsqueeze(0).to(rendered_image.device)
+        else:
+            output_rgb_for_supervision = frame_data['output']['imgs'].to(rendered_image.device)
         
+        if len(frame_data['output']['psuedo_depth'])<4:
+            output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).unsqueeze(0).to(rendered_image.device)
+        else:
+            output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).to(rendered_image.device)
         
         # Loss Function Here
         rgb_l1_loss_value = F.l1_loss(rendered_image, output_rgb_for_supervision)
@@ -513,8 +549,8 @@ class IncrementalGaussianFusion(nn.Module):
         
 
     
-    
-    def global_optimization(self, gaussians: torch.Tensor) -> torch.Tensor:
+    def global_optimization(self, gaussians: torch.Tensor,
+                            window_size: Tuple[int, int]) -> torch.Tensor:
         """
         基于历史关键帧的全局优化
         
@@ -527,7 +563,12 @@ class IncrementalGaussianFusion(nn.Module):
         if gaussians.shape[0] == 0:
             return gaussians
         
+        if self.history_batch_data is None or len(self.history_batch_data) == 0:
+            print("Warning: No history batch data available, returning original gaussians")
+            return gaussians
+        
         print(f"Starting global optimization with {gaussians.shape[0]} gaussians")
+        print(f"Using {len(self.history_batch_data)} historical frames for optimization")
         
         # 创建可训练的高斯点参数
         gaussians_optimizable = gaussians.clone().detach().requires_grad_(True)
@@ -539,16 +580,38 @@ class IncrementalGaussianFusion(nn.Module):
         for iteration in range(self.global_optimization_iterations):
             optimizer.zero_grad()
             
-            # 这里可以实现全局一致性损失
-            # 例如：时间一致性、几何一致性等
-            global_loss = self.compute_global_consistency_loss(gaussians_optimizable)
+            total_loss = 0.0
+            
+            # 随机选择历史帧进行优化
+            num_samples = min(3, len(self.history_batch_data))  # 每次迭代选择3个历史帧
+            selected_indices = random.sample(range(len(self.history_batch_data)), num_samples)
+            
+            for idx in selected_indices:
+                frame_data = self.history_batch_data[idx]
+                
+                
+                
+                # 计算当前历史帧的渲染损失
+                frame_loss = self.compute_rendering_loss_multi_camera(
+                    gaussians_optimizable, frame_data, 
+                    frame_data["output"]["c2w"][0], 
+                    frame_data["input"]["cks"], 
+                    window_size,
+                )
+                
+                frame_loss.backward()
+                total_loss += frame_loss
+                
+            # 如果没有成功计算任何损失，使用正则化损失
+            if total_loss == 0.0:
+                total_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
             
             # 反向传播
-            global_loss.backward()
+            
             optimizer.step()
             
-            if iteration % 2 == 0:
-                print(f"Global optimization iteration {iteration}, loss: {global_loss.item():.6f}")
+            if iteration % 5 == 0:
+                print(f"Global optimization iteration {iteration}, loss: {total_loss.item():.6f}")
         
         print("Global optimization completed")
         return gaussians_optimizable.detach()
@@ -649,17 +712,19 @@ class IncrementalGaussianFusion(nn.Module):
 
 
 def create_incremental_fusion_pipeline(renderer=None,
+                                     history_batch_data=None,
                                      voxel_size: float = 0.05,
                                      opacity_threshold: float = 0.01,
                                      depth_threshold: float = 0.1,
                                      window_optimization_iterations: int = 50,
-                                     global_optimization_iterations: int = 10,
+                                     global_optimization_iterations: int = 20,
                                      lambda_depth: float = 1.0) -> IncrementalGaussianFusion:
     """
     创建增量式高斯融合流水线
     
     Args:
         renderer: 渲染器实例，用于计算渲染损失
+        history_batch_data: 历史批次数据，用于全局优化
         voxel_size: 体素大小（米）
         opacity_threshold: 透明度阈值
         depth_threshold: 深度阈值
@@ -672,6 +737,7 @@ def create_incremental_fusion_pipeline(renderer=None,
     """
     return IncrementalGaussianFusion(
         renderer=renderer,
+        history_batch_data=history_batch_data,
         voxel_size=voxel_size,
         opacity_threshold=opacity_threshold,
         depth_threshold=depth_threshold,
