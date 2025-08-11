@@ -223,8 +223,10 @@ def main(args):
         
         rendered_index = 0
         print("Step 2: begin incremental gaussian fusion.....")
-    
+        
+
         if args.ablation_type=='incremental_fusion':
+            
             # 导入新的增量式融合模块
             from incremental_fusion_module import create_incremental_fusion_pipeline
             
@@ -237,166 +239,171 @@ def main(args):
                 global_optimization_iterations=10,
                 lambda_depth=1.0
             )
+            
             fusion_pipeline = fusion_pipeline.to(accelerator.device)
             
-            with torch.no_grad():
-                my_model.eval()
-                
-                # 初始化：第一个关键帧生成初始全局高斯
-                print("Initializing with first keyframe...")
-                first_batch = next(iter(configuration_fuse_dataloader))
-                initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
-                initial_pose = first_batch['input']['lidar_to_world'][0][0]
-                
-                # 将第一个关键帧的高斯点变换到世界坐标系
-                global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
-                
-                print(f"Initial global gaussians: {global_gaussains.shape}")
-                
-                # 增量式处理后续关键帧
-                key_frame_index = 1
-                for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
-                    print(f"Processing keyframe {key_frame_index}...")
-                    
-                    # 获取当前关键帧的3DGS
-                    current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
-                    current_pose = batch['input']['lidar_to_world'][0][0]
-                    
-                    # 获取相机参数用于融合
-                    current_c2w = batch["output"]["c2w"].to(accelerator.device)
-                    current_intrinsics = batch['input']['cks'].to(accelerator.device)
-                    current_image_size = batch['input']['imgs'].shape[-2:]
-                    
-                    print(f"Current gaussians: {current_gaussians.shape}")
-                    print(f"Global gaussians before fusion: {global_gaussains.shape}")
-                    
-                    # 准备监督帧（下一个关键帧之前的所有帧）
-                    supervision_frames = prepare_supervision_frames(
-                        all_frames_idx, key_frame_index, val_params, first_key_frame_lidar_to_world_pose
-                    )
-                    
-                    # 使用新的融合模块进行增量式融合
-                    global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
-                        global_gaussians_prev=global_gaussains,
-                        new_keyframe_gaussians=current_gaussians,
-                        new_keyframe_pose=current_pose,
-                        new_keyframe_intrinsics=current_intrinsics[0],
-                        new_keyframe_image_size=current_image_size,
-                        supervision_frames=supervision_frames
-                    )
-                    
-                    print(f"Global gaussians after fusion: {global_gaussains.shape}")
-                    
-                    key_frame_index += 1
-                    
-                    # 可选：保存中间结果用于调试
-                    if key_frame_index <= 5:  # 只保存前几个关键帧的结果
-                        torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
-                
-                print(f"Final global gaussians: {global_gaussains.shape}")
-                
-                # 后续的渲染和评估逻辑保持不变
-                print("Step 3: Building the Inference Dataset...")
-                
-                # 构建评估数据集
-                all_key_frame_info_list = []
-                for input_frame_name in tqdm(all_frames_idx):
-                    input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
-                
-                    # current_input_infos
-                    input_infos_list = get_inputs_info(datapath=val_params['datapath'],
-                                reso = val_params['resolution'],
-                                first_ref=first_key_frame_lidar_to_world_pose,
-                                simple_annotation_path_list=[input_annotation_name],
-                                depth_info_params =val_params['depth_info_dict'],
-                                extra_list=[])
-                    
-                    input_key_frame_info = input_infos_list[0]
-                    all_key_frame_info_list.append(input_key_frame_info)
+    
+            
 
-                configuration_fuse_dataset_for_eval = FusionConfigurationDataset(all_key_frame_info_list)
-                configuration_fuse_dataloader_for_eval = DataLoader(configuration_fuse_dataset_for_eval, batch_size=1, shuffle=False)
-                configuration_fuse_dataloader_for_eval = accelerator.prepare(configuration_fuse_dataloader_for_eval)
+            my_model.eval()
+            
+            # 初始化：第一个关键帧生成初始全局高斯
+            print("Initializing with first keyframe...")
+            first_batch = next(iter(configuration_fuse_dataloader))
+            initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
+            initial_pose = first_batch['input']['lidar_to_world'][0][0]
 
-                # 渲染图像和评估
-                rendered_index = 0
-                volumefusion_renderer = my_model.renderer
-                for batch in tqdm(configuration_fuse_dataloader_for_eval):
-                    
-                    current_annotation_path = all_frames_idx[rendered_index]
-                    
-                    saved_rendered_image_name = current_annotation_path.replace("annotations","rendered_images").replace(".json",".png")
-                    saved_rendered_image_name = os.path.join(output_saved_folder_path,saved_rendered_image_name)
-                    os.makedirs(os.path.dirname(saved_rendered_image_name),exist_ok=True)
+            
+            
+            # 将第一个关键帧的高斯点变换到世界坐标系
+            global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
+            
+            print(f"Initial global gaussians: {global_gaussains.shape}")
+            
+            # 增量式处理后续关键帧
+            key_frame_index = 1
+            for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
+                print(f"Processing keyframe {key_frame_index}...")
+                
+                # 获取当前关键帧的3DGS
+                current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
+                current_pose = batch['input']['lidar_to_world'][0][0]
+                
+                # 获取相机参数用于融合
+                current_c2w = batch["output"]["c2w"].to(accelerator.device)
+                current_intrinsics = batch['input']['cks'].to(accelerator.device)
+                current_image_size = batch['input']['imgs'].shape[-2:]
+                
+                print(f"Current gaussians: {current_gaussians.shape}")
+                print(f"Global gaussians before fusion: {global_gaussains.shape}")
+                
+                # 准备监督帧（下一个关键帧之前的所有帧）
+                supervision_frames = prepare_supervision_frames(
+                    all_frames_idx, key_frame_index, val_params, first_key_frame_lidar_to_world_pose
+                )
+                
+                # 使用新的融合模块进行增量式融合
+                global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
+                    global_gaussians_prev=global_gaussains,
+                    new_keyframe_gaussians=current_gaussians,
+                    new_keyframe_pose=current_pose,
+                    new_keyframe_intrinsics=current_intrinsics[0],
+                    new_keyframe_image_size=current_image_size,
+                    supervision_frames=supervision_frames
+                )
+                
+                print(f"Global gaussians after fusion: {global_gaussains.shape}")
+                
+                key_frame_index += 1
+                
+                # 可选：保存中间结果用于调试
+                if key_frame_index <= 5:  # 只保存前几个关键帧的结果
+                    torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
+            
+            print(f"Final global gaussians: {global_gaussains.shape}")
+            
+            # 后续的渲染和评估逻辑保持不变
+            print("Step 3: Building the Inference Dataset...")
+            
+            # 构建评估数据集
+            all_key_frame_info_list = []
+            for input_frame_name in tqdm(all_frames_idx):
+                input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
+            
+                # current_input_infos
+                input_infos_list = get_inputs_info(datapath=val_params['datapath'],
+                            reso = val_params['resolution'],
+                            first_ref=first_key_frame_lidar_to_world_pose,
+                            simple_annotation_path_list=[input_annotation_name],
+                            depth_info_params =val_params['depth_info_dict'],
+                            extra_list=[])
+                
+                input_key_frame_info = input_infos_list[0]
+                all_key_frame_info_list.append(input_key_frame_info)
 
-                    saved_rendered_depth_name = current_annotation_path.replace("annotations","rendered_depth").replace(".json",".png")
-                    saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
-                    os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
-                    
-                    rendered_c2w = batch["output"]["c2w"].to(accelerator.device)
-                    fovxs = batch["output"]["fovxs"].to(accelerator.device)
-                    fovys = batch["output"]["fovys"].to(accelerator.device)
-                    
-                    rendered_results =volumefusion_renderer.render(
-                        gaussians=global_gaussains,
-                        c2w=rendered_c2w,
-                        fovx=fovxs,
-                        fovy=fovys,
-                        rays_o=None,
-                        rays_d=None
-                    )
-                    
-                    rendered_image = rendered_results['image'] #(B,V,3,H,W)
-                    rendered_depth = rendered_results['depth'] #(B,V,1,H,W)
+            configuration_fuse_dataset_for_eval = FusionConfigurationDataset(all_key_frame_info_list)
+            configuration_fuse_dataloader_for_eval = DataLoader(configuration_fuse_dataset_for_eval, batch_size=1, shuffle=False)
+            configuration_fuse_dataloader_for_eval = accelerator.prepare(configuration_fuse_dataloader_for_eval)
 
-                    gt_images = batch['output']['imgs'].to(accelerator.device)
-                    gt_sparse_depth = batch['output']["sparse_gts"].to(accelerator.device).unsqueeze(2)
-                        
-                    current_left_psnr, current_left_ssim = compute_psnr_ssim(pred=rendered_image[:,0,:,:,:],
-                                                                             target=gt_images[:,0,:,:,:]
-                                                                             )
-                    current_right_psnr, current_right_ssim = compute_psnr_ssim(pred=rendered_image[:,1,:,:,:],
-                                                                             target=gt_images[:,1,:,:,:]
-                                                                             )
-                    
-                    current_left_mae, current_left_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,0,:,:,:],
-                                                                               depth_gt=gt_sparse_depth[:,0,:,:,:])
+            # 渲染图像和评估
+            rendered_index = 0
+            volumefusion_renderer = my_model.renderer
+            for batch in tqdm(configuration_fuse_dataloader_for_eval):
+                
+                current_annotation_path = all_frames_idx[rendered_index]
+                
+                saved_rendered_image_name = current_annotation_path.replace("annotations","rendered_images").replace(".json",".png")
+                saved_rendered_image_name = os.path.join(output_saved_folder_path,saved_rendered_image_name)
+                os.makedirs(os.path.dirname(saved_rendered_image_name),exist_ok=True)
 
-                    current_right_mae, current_right_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,1,:,:,:],
-                                                                               depth_gt=gt_sparse_depth[:,1,:,:,:])
-                    
-                    renderd_left_image_metrics.update(psnr=current_left_psnr.data.item(),
-                                                      ssim=current_left_ssim.data.item(),
-                                                      mae=current_left_mae.data.item(),
-                                                      mse=current_left_mse.data.item())
-                    
-                    rendered_right_image_metrics.update(psnr=current_right_psnr.data.item(),
-                                                      ssim=current_right_ssim.data.item(),
-                                                      mae=current_right_mae.data.item(),
-                                                      mse=current_right_mse.data.item()
-                    )
-                    
+                saved_rendered_depth_name = current_annotation_path.replace("annotations","rendered_depth").replace(".json",".png")
+                saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
+                os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
+                
+                rendered_c2w = batch["output"]["c2w"].to(accelerator.device)
+                fovxs = batch["output"]["fovxs"].to(accelerator.device)
+                fovys = batch["output"]["fovys"].to(accelerator.device)
+                
+                rendered_results =volumefusion_renderer.render(
+                    gaussians=global_gaussains,
+                    c2w=rendered_c2w,
+                    fovx=fovxs,
+                    fovy=fovys,
+                    rays_o=None,
+                    rays_d=None
+                )
+                
+                rendered_image = rendered_results['image'] #(B,V,3,H,W)
+                rendered_depth = rendered_results['depth'] #(B,V,1,H,W)
 
-                    if args.output_vis:
-                        
-                        # saved rendered images
-                        rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
-                        rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
-                        rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy() 
-                        skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
+                gt_images = batch['output']['imgs'].to(accelerator.device)
+                gt_sparse_depth = batch['output']["sparse_gts"].to(accelerator.device).unsqueeze(2)
+                    
+                current_left_psnr, current_left_ssim = compute_psnr_ssim(pred=rendered_image[:,0,:,:,:],
+                                                                            target=gt_images[:,0,:,:,:]
+                                                                            )
+                current_right_psnr, current_right_ssim = compute_psnr_ssim(pred=rendered_image[:,1,:,:,:],
+                                                                            target=gt_images[:,1,:,:,:]
+                                                                            )
+                
+                current_left_mae, current_left_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,0,:,:,:],
+                                                                            depth_gt=gt_sparse_depth[:,0,:,:,:])
 
-                        # saved rendered depths
-                        rendered_depth_left = rendered_depth[0][0][0]
-                        rendered_depth_right = rendered_depth[0][1][0]
-                        rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
-                        rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
-                        rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
-                        skimage.io.imsave(saved_rendered_depth_name,rendered_depth_for_vis)
-                        
-                        rendered_images_all_list.append((rendered_image_for_vis*255).astype(np.uint8))
-                        rendered_depths_all_list.append(rendered_depth_for_vis)
-                        
-                    rendered_index = rendered_index + 1
+                current_right_mae, current_right_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,1,:,:,:],
+                                                                            depth_gt=gt_sparse_depth[:,1,:,:,:])
+                
+                renderd_left_image_metrics.update(psnr=current_left_psnr.data.item(),
+                                                    ssim=current_left_ssim.data.item(),
+                                                    mae=current_left_mae.data.item(),
+                                                    mse=current_left_mse.data.item())
+                
+                rendered_right_image_metrics.update(psnr=current_right_psnr.data.item(),
+                                                    ssim=current_right_ssim.data.item(),
+                                                    mae=current_right_mae.data.item(),
+                                                    mse=current_right_mse.data.item()
+                )
+                
+
+                if args.output_vis:
+                    
+                    # saved rendered images
+                    rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
+                    rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
+                    rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy() 
+                    skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
+
+                    # saved rendered depths
+                    rendered_depth_left = rendered_depth[0][0][0]
+                    rendered_depth_right = rendered_depth[0][1][0]
+                    rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
+                    rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
+                    rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
+                    skimage.io.imsave(saved_rendered_depth_name,rendered_depth_for_vis)
+                    
+                    rendered_images_all_list.append((rendered_image_for_vis*255).astype(np.uint8))
+                    rendered_depths_all_list.append(rendered_depth_for_vis)
+                    
+                rendered_index = rendered_index + 1
 
         elif args.ablation_type=='simple_fusion':
             global_gaussains_list = []
