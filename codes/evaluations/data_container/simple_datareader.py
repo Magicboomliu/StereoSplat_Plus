@@ -339,6 +339,7 @@ def get_timestep_infos(datapath,
     else:
         sparse_gts = None
     
+    # to the first cam LIDAR coordinate
     if frist_ref is not None:
         world_to_ref_wolrd_pose  = np.linalg.inv(frist_ref) # world to ref LiDAR
     else:

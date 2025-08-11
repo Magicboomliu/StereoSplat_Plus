@@ -176,6 +176,9 @@ def main(args):
         print("Processing the Semi-Global-Map ID {}/{}".format(idx,len(semi_global_map_list)))
         key_input_frames_idx, all_frames_idx = semi_global_info['key_frames_list'], semi_global_info['all_frames_list']
 
+        
+
+        
         # get the first key input frame's LiDAR as the world orgin: where is 4x4
         first_key_frame_lidar_to_world_pose = Get_First_Key_Frame_LiDAR_To_World(val_params['datapath'],
                                                                                  key_input_frames_idx[0].replace("annotations","annotations_simple"))
@@ -253,8 +256,7 @@ def main(args):
             initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
             initial_pose = first_batch['input']['lidar_to_world'][0][0]
 
-            
-            
+                    
             # 将第一个关键帧的高斯点变换到世界坐标系
             global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
             
@@ -262,12 +264,17 @@ def main(args):
             
             # 增量式处理后续关键帧
             key_frame_index = 1
+
+                        
             for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
                 print(f"Processing keyframe {key_frame_index}...")
                 
+       
+                
                 # 获取当前关键帧的3DGS
                 current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
-                current_pose = batch['input']['lidar_to_world'][0][0]
+                current_pose = batch['input']['lidar_to_world'][0][0] # current LIDAR to World LIDAR 
+                
                 
                 # 获取相机参数用于融合
                 current_c2w = batch["output"]["c2w"].to(accelerator.device)
@@ -279,20 +286,28 @@ def main(args):
                 
                 # 准备监督帧（下一个关键帧之前的所有帧）
                 supervision_frames = prepare_supervision_frames(
-                    all_frames_idx, key_frame_index, val_params, first_key_frame_lidar_to_world_pose
+                    key_input_frames_idx, all_frames_idx, 
+                    key_frame_index, val_params, 
+                    first_key_frame_lidar_to_world_pose
                 )
+ 
+                
+
                 
                 # 使用新的融合模块进行增量式融合
                 global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
                     global_gaussians_prev=global_gaussains,
                     new_keyframe_gaussians=current_gaussians,
-                    new_keyframe_pose=current_pose,
+                    new_keyframe_pose=current_c2w,  # 使用相机姿态用于FOV判断
                     new_keyframe_intrinsics=current_intrinsics[0],
                     new_keyframe_image_size=current_image_size,
-                    supervision_frames=supervision_frames
+                    supervision_frames=supervision_frames,
+                    lidar_to_world_pose=current_pose  # 添加LIDAR姿态用于坐标变换
                 )
                 
-                print(f"Global gaussians after fusion: {global_gaussains.shape}")
+                print(global_gaussains.shape)
+                
+                # print(f"Global gaussians after fusion: {global_gaussains.shape}")
                 
                 key_frame_index += 1
                 
@@ -1173,13 +1188,18 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     return mae, mse
 
 
-def prepare_supervision_frames(all_frames_idx, current_keyframe_index, val_params, first_key_frame_lidar_to_world_pose):
+def prepare_supervision_frames(key_input_frames_idx, 
+                               all_frames_idx, 
+                               current_keyframe_index, 
+                               val_params, 
+                               first_key_frame_lidar_to_world_pose):
     """
-    准备监督帧：获取下一个关键帧之前的所有帧作为监督数据
+    准备监督帧：获取当前关键帧和下一个关键帧之间的所有帧作为监督数据
     
     Args:
+        key_input_frames_idx: 关键帧列表
         all_frames_idx: 所有帧的索引列表
-        current_keyframe_index: 当前关键帧的索引
+        current_keyframe_index: 当前关键帧在关键帧列表中的索引
         val_params: 验证参数
         first_key_frame_lidar_to_world_pose: 第一个关键帧的LiDAR到世界坐标变换
         
@@ -1188,33 +1208,62 @@ def prepare_supervision_frames(all_frames_idx, current_keyframe_index, val_param
     """
     supervision_frames = []
     
-    # 找到下一个关键帧的索引
-    if current_keyframe_index < len(all_frames_idx):
-        next_keyframe_idx = current_keyframe_index + 1
-        # 获取当前关键帧和下一个关键帧之间的所有帧
-        supervision_frame_indices = all_frames_idx[current_keyframe_index:next_keyframe_idx]
-        
-        for frame_idx in supervision_frame_indices:
-            try:
-                # 构建帧的完整路径
-                frame_annotation_name = frame_idx.replace("annotations", "annotations_simple")
+    # 检查索引范围
+    if current_keyframe_index >= len(key_input_frames_idx):
+        print(f"Warning: current_keyframe_index {current_keyframe_index} >= len(key_input_frames_idx) {len(key_input_frames_idx)}")
+        return supervision_frames
+    
+    # 获取当前关键帧的路径
+    current_keyframe_path = key_input_frames_idx[current_keyframe_index]
+    
+    # 找到当前关键帧在 all_frames_idx 中的位置
+    try:
+        current_frame_idx_in_all = all_frames_idx.index(current_keyframe_path)
+    except ValueError:
+        print(f"Warning: Current keyframe {current_keyframe_path} not found in all_frames_idx")
+        return supervision_frames
+    
+    # 确定监督帧的范围
+    if current_keyframe_index + 1 < len(key_input_frames_idx):
+        # 还有下一个关键帧
+        next_keyframe_path = key_input_frames_idx[current_keyframe_index + 1]
+        try:
+            next_frame_idx_in_all = all_frames_idx.index(next_keyframe_path)
+            # 获取当前关键帧和下一个关键帧之间的所有帧作为监督数据
+            supervision_frame_indices = all_frames_idx[current_frame_idx_in_all + 1:next_frame_idx_in_all]
+        except ValueError:
+            print(f"Warning: Next keyframe {next_keyframe_path} not found in all_frames_idx")
+            # 如果找不到下一个关键帧，获取当前关键帧之后的所有帧
+            supervision_frame_indices = all_frames_idx[current_frame_idx_in_all + 1:]
+    else:
+        # 这是最后一个关键帧，获取之后的所有帧
+        supervision_frame_indices = all_frames_idx[current_frame_idx_in_all + 1:]
+    
+    print(f"Current keyframe: {current_keyframe_path}")
+    print(f"Supervision frame range: {len(supervision_frame_indices)} frames")
+    
+    # 处理每个监督帧
+    for frame_idx in supervision_frame_indices:
+        try:
+            # 构建帧的完整路径
+            frame_annotation_name = frame_idx.replace("annotations", "annotations_simple")
+            
+            # 获取帧信息
+            frame_infos = get_inputs_info(
+                datapath=val_params['datapath'],
+                reso=val_params['resolution'],
+                first_ref=first_key_frame_lidar_to_world_pose,
+                simple_annotation_path_list=[frame_annotation_name],
+                depth_info_params=val_params['depth_info_dict'],
+                extra_list=[]
+            )
+            
+            if frame_infos:
+                supervision_frames.append(frame_infos[0])
                 
-                # 获取帧信息
-                frame_infos = get_inputs_info(
-                    datapath=val_params['datapath'],
-                    reso=val_params['resolution'],
-                    first_ref=first_key_frame_lidar_to_world_pose,
-                    simple_annotation_path_list=[frame_annotation_name],
-                    depth_info_params=val_params['depth_info_dict'],
-                    extra_list=[]
-                )
-                
-                if frame_infos:
-                    supervision_frames.append(frame_infos[0])
-                    
-            except Exception as e:
-                print(f"Warning: Failed to load supervision frame {frame_idx}: {e}")
-                continue
+        except Exception as e:
+            print(f"Warning: Failed to load supervision frame {frame_idx}: {e}")
+            continue
     
     print(f"Prepared {len(supervision_frames)} supervision frames")
     return supervision_frames

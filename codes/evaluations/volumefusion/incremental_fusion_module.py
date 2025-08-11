@@ -50,43 +50,60 @@ class IncrementalGaussianFusion(nn.Module):
                                   new_keyframe_pose: torch.Tensor,
                                   new_keyframe_intrinsics: torch.Tensor,
                                   new_keyframe_image_size: Tuple[int, int],
-                                  supervision_frames: List[Dict] = None) -> torch.Tensor:
+                                  supervision_frames: List[Dict] = None,
+                                  lidar_to_world_pose: torch.Tensor = None) -> torch.Tensor:
         """
         完整的增量式高斯融合流水线
         
         Args:
             global_gaussians_prev: 前一步的全局高斯点 [1, N, 14]
             new_keyframe_gaussians: 新关键帧的高斯点 [1, M, 14]
-            new_keyframe_pose: 新关键帧的相机姿态 [4, 4]
-            new_keyframe_intrinsics: 新关键帧的相机内参 [3, 3]
+            new_keyframe_pose: 新关键帧的相机姿态 [2, 4, 4] (left/right camera)
+            new_keyframe_intrinsics: 新关键帧的相机内参 [2, 3, 3] (left/right camera)
             new_keyframe_image_size: 新关键帧的图像尺寸 (H, W)
             supervision_frames: 监督帧列表（用于窗口优化）
+            lidar_to_world_pose: LIDAR到世界坐标系的变换矩阵 [4, 4]，用于坐标变换
             
         Returns:
             updated_global_gaussians: 更新后的全局高斯点 [1, N+M, 14]
         """
         print("Starting incremental gaussian fusion pipeline...")
         
+        # 确保数据类型一致性
+        dtype = global_gaussians_prev.dtype
+        device = global_gaussians_prev.device
+        
+        # 统一所有输入张量的数据类型
+        new_keyframe_gaussians = new_keyframe_gaussians.to(dtype=dtype, device=device)
+        new_keyframe_pose = new_keyframe_pose.to(dtype=dtype, device=device)
+        new_keyframe_intrinsics = new_keyframe_intrinsics.to(dtype=dtype, device=device)
+        
         # Step 1: 将新关键帧的高斯点变换到世界坐标系
+        # 使用LIDAR姿态进行坐标变换，如果没有提供则使用相机姿态
+        transform_pose = lidar_to_world_pose if lidar_to_world_pose is not None else new_keyframe_pose[0]  # 使用左相机姿态作为备选
         new_gaussians_world = self.transform_gaussians_to_world(
-            new_keyframe_gaussians, new_keyframe_pose
+            new_keyframe_gaussians, transform_pose
         )
         
+
+
         # Step 2: 基于FOV分离重叠和遗留的高斯点
         print("Step 2: Separating overlapping and legacy gaussians based on FOV...")
         g_overlapped, g_legacy = self.separate_gaussians_by_fov(
             global_gaussians_prev[0],  # [N, 14]
-            new_keyframe_pose.unsqueeze(0),  # [1, 4, 4]
-            new_keyframe_intrinsics.unsqueeze(0),  # [1, 3, 3]
+            new_keyframe_pose[0],  # [2, 4, 4] - 左右相机姿态
+            new_keyframe_intrinsics,  # [2, 3, 3] - 左右相机内参
             new_keyframe_image_size
         )
         
         print(f"Overlapped gaussians: {g_overlapped.shape[0]}, Legacy gaussians: {g_legacy.shape[0]}")
+        quit()
+        
         
         # Step 3: 启发式剪枝
         print("Step 3: Heuristic pruning of overlapped gaussians...")
         g_overlapped_pruned = self.heuristic_prev_prune(
-            g_overlapped, new_gaussians_world[0], new_keyframe_pose
+            g_overlapped, new_gaussians_world[0], new_keyframe_pose[0]  # 使用左相机姿态
         )
         
         print(f"Gaussians after pruning: {g_overlapped_pruned.shape[0]}")
@@ -94,7 +111,7 @@ class IncrementalGaussianFusion(nn.Module):
         # Step 4: 窗口优化
         print(f"Step 4: Window loss-based optimization ({self.window_optimization_iterations} iterations)...")
         g_overlapped_optimized = self.window_loss_based_optimization(
-            g_overlapped_pruned, new_keyframe_pose, new_keyframe_intrinsics, 
+            g_overlapped_pruned, new_keyframe_pose[0], new_keyframe_intrinsics[0],  # 使用左相机姿态和内参
             new_keyframe_image_size, supervision_frames
         )
         
@@ -110,62 +127,58 @@ class IncrementalGaussianFusion(nn.Module):
         
         return g_final_global.unsqueeze(0)  # [1, N, 14]
     
-    def separate_gaussians_by_fov(self,
-                                 global_gaussians: torch.Tensor,
-                                 camera_pose: torch.Tensor,
-                                 intrinsics: torch.Tensor,
-                                 image_size: Tuple[int, int]) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    def separate_gaussians_by_fov(self,global_gaussians, camera_poses, intrinsics, image_size):
         """
-        基于FOV分离重叠和遗留的高斯点
-        
-        Args:
-            global_gaussians: 全局高斯点 [N, 14]
-            camera_pose: 相机姿态 [B, 4, 4]
-            intrinsics: 相机内参 [B, 3, 3]
-            image_size: 图像尺寸 (H, W)
-            
-        Returns:
-            g_overlapped: 在FOV内的高斯点 [M, 14]
-            g_legacy: 在FOV外的高斯点 [K, 14]
+        基于两个相机的 FOV 分离在 FOV 内和 FOV 外的高斯点 (纯 tensor 流版本)
+        支持 intrinsics: [2, 3, 3]
+        支持 camera_poses: [2, 4, 4]
         """
+        # 转成 float tensor，统一 device/dtype
         device = global_gaussians.device
+        dtype = global_gaussians.dtype
+        global_gaussians = global_gaussians.to(dtype=dtype, device=device)
+        camera_poses = camera_poses.to(dtype=dtype, device=device)
+        intrinsics = intrinsics.to(dtype=dtype, device=device)
+
         points = global_gaussians[:, :3]  # [N, 3]
         N = points.shape[0]
         H, W = image_size
+        H = torch.tensor(H, dtype=dtype, device=device)
+        W = torch.tensor(W, dtype=dtype, device=device)
+
         in_fov_mask = torch.zeros(N, dtype=torch.bool, device=device)
-        
-        for i in range(camera_pose.shape[0]):
-            fx = intrinsics[i, 0, 0].float()
-            fy = intrinsics[i, 1, 1].float()
-            
-            # 计算视场角
-            fov_x = 2 * torch.atan(W / (2 * fx))
-            fov_y = 2 * torch.atan(H / (2 * fy))
-            
-            # 世界坐标到相机坐标变换
-            w2c = torch.linalg.inv(camera_pose[i])
-            homo_points = torch.cat([points, torch.ones((N, 1), device=device)], dim=1)
+
+        for i in range(2):  # 遍历左右相机
+            fx = intrinsics[i, 0, 0]  # scalar tensor
+            fy = intrinsics[i, 1, 1]
+
+            # 计算 FOV (保持 tensor)
+            fov_x = 2 * torch.atan(W / (2.0 * fx))
+            fov_y = 2 * torch.atan(H / (2.0 * fy))
+
+            # 世界到相机
+            w2c = torch.linalg.inv(camera_poses[i])
+            homo_points = torch.cat([points, torch.ones((N, 1), device=device, dtype=dtype)], dim=1)
             cam_points = (w2c @ homo_points.T).T[:, :3]
-            
+
             x, y, z = cam_points[:, 0], cam_points[:, 1], cam_points[:, 2]
-            
-            # 距离判断：在相机前方
+
+            # 在相机前方
             in_front = z > 0.1
-            
-            # 视场角判断：在FOV内
+
+            # 视场角判断
             x_angle = torch.atan2(x, z)
             y_angle = torch.atan2(y, z)
             in_fov = (x_angle.abs() <= fov_x / 2) & (y_angle.abs() <= fov_y / 2)
-            
-            # 在FOV内的点
+
+            # 累积在 FOV 内的点
             in_fov_mask |= (in_front & in_fov)
-        
-        # 分离重叠和遗留的高斯点
+
         g_overlapped = global_gaussians[in_fov_mask]
         g_legacy = global_gaussians[~in_fov_mask]
-        
         return g_overlapped, g_legacy
-    
+        
     def heuristic_prev_prune(self,
                             g_overlapped: torch.Tensor,
                             g_new: torch.Tensor,
@@ -182,6 +195,12 @@ class IncrementalGaussianFusion(nn.Module):
             g_pruned: 剪枝后的高斯点 [K, 14]
         """
         print("Applying heuristic pruning...")
+        
+        # 确保数据类型一致
+        dtype = g_overlapped.dtype
+        device = g_overlapped.device
+        g_new = g_new.to(dtype=dtype, device=device)
+        new_keyframe_pose = new_keyframe_pose.to(dtype=dtype, device=device)
         
         # 1. 去除透明度很低的高斯点
         opacity_mask = g_overlapped[:, 6:7] > self.opacity_threshold
@@ -232,6 +251,11 @@ class IncrementalGaussianFusion(nn.Module):
         Returns:
             g_pruned: 剪枝后的高斯点 [K, 14]
         """
+        # 确保数据类型一致
+        dtype = g_overlapped.dtype
+        device = g_overlapped.device
+        g_new = g_new.to(dtype=dtype, device=device)
+        
         # 将新高斯点变换到世界坐标系（如果还没有变换）
         g_new_world = g_new  # 假设已经是世界坐标系
         
@@ -269,11 +293,11 @@ class IncrementalGaussianFusion(nn.Module):
         
         # 返回保留的高斯点
         if kept_indices:
-            kept_indices = torch.tensor(kept_indices, device=g_overlapped.device)
+            kept_indices = torch.tensor(kept_indices, device=device, dtype=torch.long)
             all_gaussians = torch.cat([g_overlapped, g_new_world], dim=0)
             return all_gaussians[kept_indices]
         else:
-            return torch.empty((0, 14), device=g_overlapped.device)
+            return torch.empty((0, 14), device=device, dtype=dtype)
     
     def window_loss_based_optimization(self,
                                      gaussians: torch.Tensor,
@@ -303,6 +327,12 @@ class IncrementalGaussianFusion(nn.Module):
         if not supervision_frames:
             print("No supervision frames provided, returning original gaussians")
             return gaussians
+        
+        # 确保数据类型一致
+        dtype = gaussians.dtype
+        device = gaussians.device
+        camera_pose = camera_pose.to(dtype=dtype, device=device)
+        intrinsics = intrinsics.to(dtype=dtype, device=device)
         
         # 创建可训练的高斯点参数
         gaussians_optimizable = gaussians.clone().detach().requires_grad_(True)
@@ -446,18 +476,28 @@ class IncrementalGaussianFusion(nn.Module):
     
     def transform_positions(self, positions: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:
         """变换高斯点的位置"""
+        # 确保数据类型一致
+        dtype = positions.dtype
+        device = positions.device
+        c2w = c2w.to(dtype=dtype, device=device)
+        
         N = positions.shape[0]
-        homo_positions = torch.cat([positions, torch.ones(N, 1, device=positions.device)], dim=-1)
+        homo_positions = torch.cat([positions, torch.ones(N, 1, device=device, dtype=dtype)], dim=-1)
         transformed = (c2w @ homo_positions.T).T[:, :3]
         return transformed
     
     def transform_quaternions(self, quat_old: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:
         """变换高斯点的旋转四元数"""
+        # 确保数据类型一致
+        dtype = quat_old.dtype
+        device = quat_old.device
+        c2w = c2w.to(dtype=dtype, device=device)
+        
         R = c2w[:3, :3]
         R_c2w = Rscipy.from_matrix(R.cpu().numpy())
         q_c2w = R_c2w.as_quat()
         q_c2w = torch.tensor([q_c2w[3], q_c2w[0], q_c2w[1], q_c2w[2]], 
-                            device=quat_old.device)
+                            device=device, dtype=dtype)
         q_c2w = q_c2w.unsqueeze(0).repeat(quat_old.shape[0], 1)
         return self.quaternion_multiply(q_c2w, quat_old)
     

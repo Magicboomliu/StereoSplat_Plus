@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/media/zliu/data12/Debugs//VolumeFusion/IncrementalFusion/OptimizeFusion/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_fusion/VolumeFusion/OptimizeFusion/visualization"
 validation_vis_progress=True
 
 # learning rate setiing
@@ -31,10 +31,10 @@ seed=42
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 background_color=[0.0, 0.0, 0.0]
-datapath = "/media/zliu/data12/dataset/KITTI/VSRD_Format/"
-semi_global_folder_path="/media/zliu/data12/FeedStereoGS/filenames/kitti360/semi_global_maps/2013_05_28_drive_0000_sync"
+datapath = "/data1/StereoDatasets/KITTI/KITTI360"
+semi_global_folder_path="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/semi_global_maps/2013_05_28_drive_0000_sync"
 sequence='2013_05_28_drive_0000_sync'
-unimatch_weights_path="/media/zliu/data12/Debugs/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 camera_model='OpenCV' 
 used_3D_offset=False
 resolution = [224, 1088]
