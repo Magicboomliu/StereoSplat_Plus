@@ -19,6 +19,7 @@ class IncrementalGaussianFusion(nn.Module):
     """
     
     def __init__(self, 
+                 renderer=None,
                  voxel_size: float = 0.05,
                  opacity_threshold: float = 0.01,
                  depth_threshold: float = 0.1,
@@ -29,6 +30,7 @@ class IncrementalGaussianFusion(nn.Module):
         初始化增量式高斯融合模块
         
         Args:
+            renderer: 渲染器实例，用于计算渲染损失
             voxel_size: 体素大小（米）
             opacity_threshold: 透明度阈值
             depth_threshold: 深度阈值
@@ -37,6 +39,7 @@ class IncrementalGaussianFusion(nn.Module):
             lambda_depth: 深度损失权重
         """
         super().__init__()
+        self.renderer = renderer
         self.voxel_size = voxel_size
         self.opacity_threshold = opacity_threshold
         self.depth_threshold = depth_threshold
@@ -108,13 +111,19 @@ class IncrementalGaussianFusion(nn.Module):
         # Step 4: 窗口优化
         print(f"Step 4: Window loss-based optimization ({self.window_optimization_iterations} iterations)...")
         g_overlapped_optimized = self.window_loss_based_optimization(
-            g_overlapped_pruned, new_keyframe_pose, new_keyframe_intrinsics,  # 使用左右相机姿态和内参
+            g_overlapped_pruned, new_keyframe_pose, new_keyframe_intrinsics,  # 使用完整的左右相机姿态和内参
             new_keyframe_image_size, supervision_frames
         )
+        
+
+        
         
         # Step 5: 融合优化后的重叠高斯点和遗留高斯点
         print("Step 5: Concatenating optimized overlapped and legacy gaussians...")
         g_update_global = torch.cat([g_overlapped_optimized, g_legacy], dim=0)
+        
+        
+        
         
         # Step 6: 全局优化
         print(f"Step 6: Global optimization ({self.global_optimization_iterations} iterations)...")
@@ -328,12 +337,14 @@ class IncrementalGaussianFusion(nn.Module):
         camera_poses = camera_poses.to(dtype=dtype, device=device)
         intrinsics = intrinsics.to(dtype=dtype, device=device)
         
-        # 创建可训练的高斯点参数
+        # 创建可训练的高斯点参数 #[N,14]
         gaussians_optimizable = gaussians.clone().detach().requires_grad_(True)
         
         # 优化器
         optimizer = optim.Adam([gaussians_optimizable], lr=0.001)
         
+        
+
         # 优化循环
         for iteration in range(self.window_optimization_iterations):
             optimizer.zero_grad()
@@ -344,7 +355,7 @@ class IncrementalGaussianFusion(nn.Module):
             for frame_data in supervision_frames:
                 # 同时使用左右相机的信息计算损失
                 loss = self.compute_rendering_loss_multi_camera(
-                    gaussians_optimizable, frame_data, camera_poses, intrinsics, image_size
+                    gaussians_optimizable, frame_data, camera_poses[0], intrinsics, image_size
                 )
                 total_loss += loss
             
@@ -385,33 +396,153 @@ class IncrementalGaussianFusion(nn.Module):
         """
         计算多相机渲染损失（支持左右相机）
         
+        优先使用 psuedo_depth 作为深度损失计算的参考，如果没有则回退到 sparse_gts
+        
         Args:
             gaussians: 高斯点 [N, 14]
-            frame_data: 帧数据
-            camera_poses: 相机姿态 [2, 4, 4] (left/right camera)
+            frame_data: 帧数据，包含 imgs, psuedo_depth, sparse_gts 等
+            camera_poses: 相机姿态 [1,2, 4, 4] (left/right camera)
             intrinsics: 相机内参 [2, 3, 3] (left/right camera)
             image_size: 图像尺寸 (H, W)
             
         Returns:
-            loss: 多相机渲染损失
+            loss: 多相机渲染损失 (图像损失 + λ * 深度损失)
         """
-        # TODO: 实现完整的多相机渲染损失计算
-        # 对左右相机分别计算损失，然后合并
+        if gaussians.shape[0] == 0:
+            return torch.tensor(0.0, device=gaussians.device, requires_grad=True)
+    
+        # 检查是否有渲染器
+        if not hasattr(self, 'renderer') or self.renderer is None:
+            print("Warning: No renderer available, returning placeholder loss")
+            return torch.tensor(0.001, device=gaussians.device, requires_grad=True)
         
         total_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
+        
+        # compute loss here
+        rendered_c2w = frame_data["output"]["c2w"].to(gaussians.device)
+        fovxs = frame_data["output"]["fovxs"].to(gaussians.device)
+        fovys = frame_data["output"]["fovys"].to(gaussians.device)
+
+        # torch.Size([1, 21254400, 14])
+        # torch.Size([1, 2, 4, 4])
+        # torch.Size([1, 2])
+        # torch.Size([1, 2])
+        
+        rendered_results =self.renderer.render(
+            gaussians=gaussians.unsqueeze(0),
+            c2w=rendered_c2w.unsqueeze(0),
+            fovx=fovxs.unsqueeze(0),
+            fovy=fovys.unsqueeze(0),
+            rays_o=None,
+            rays_d=None
+        )
+
+
+        # 提取渲染结果
+        rendered_image = rendered_results['image']      # [1, V, 3, H, W]
+        rendered_depth = rendered_results['depth']      # [1, V, 1, H, W]
+        
+        print(rendered_image.shape)
+        print(rendered_depth.shape)
+        quit()
+        
+        
         
         for i in range(2):  # 遍历左右相机
             # 获取当前相机的姿态和内参
             current_pose = camera_poses[i]  # [4, 4]
             current_intrinsics = intrinsics[i]  # [3, 3]
             
-            # 计算当前相机的渲染损失
-            # 这里可以调用现有的渲染器来计算图像和深度
-            # 然后与GT进行比较
+            # 从内参计算FOV
+            H, W = image_size
+            fx = current_intrinsics[0, 0]
+            fy = current_intrinsics[1, 1]
+            fovx = 2 * torch.atan(W / (2.0 * fx))
+            fovy = 2 * torch.atan(H / (2.0 * fy))
             
-            # 目前作为占位符，返回一个小的损失
-            camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
-            total_loss = total_loss + camera_loss
+
+
+
+            rendered_results = self.renderer.render(
+                gaussians=gaussians.unsqueeze(0),  # 添加batch维度 [1, N, 14]
+                c2w=current_pose.unsqueeze(0),     # 添加batch维度 [1, 4, 4]
+                fovx=fovx.unsqueeze(0).unsqueeze(0),  # [1, 1] - batch=1, view=1
+                fovy=fovy.unsqueeze(0).unsqueeze(0),  # [1, 1] - batch=1, view=1
+                rays_o=None,
+                rays_d=None
+            )
+            
+            # 提取渲染结果
+            rendered_image = rendered_results['image']      # [1, V, 3, H, W]
+            rendered_depth = rendered_results['depth']      # [1, V, 1, H, W]
+            
+            print(rendered_image.shape)
+            print(rendered_depth.shape)
+            quit()
+
+
+            try:
+                # 使用渲染器渲染当前视角
+                # 渲染器期望 fovx, fovy 的格式为 [B, V]，其中 B=batch, V=view
+                rendered_results = self.renderer.render(
+                    gaussians=gaussians.unsqueeze(0),  # 添加batch维度 [1, N, 14]
+                    c2w=current_pose.unsqueeze(0),     # 添加batch维度 [1, 4, 4]
+                    fovx=fovx.unsqueeze(0).unsqueeze(0),  # [1, 1] - batch=1, view=1
+                    fovy=fovy.unsqueeze(0).unsqueeze(0),  # [1, 1] - batch=1, view=1
+                    rays_o=None,
+                    rays_d=None
+                )
+                
+                # 提取渲染结果
+                rendered_image = rendered_results['image']      # [1, V, 3, H, W]
+                rendered_depth = rendered_results['depth']      # [1, V, 1, H, W]
+                
+                print(rendered_image.shape)
+                print(rendered_depth.shape)
+                quit()
+                
+                # 从frame_data中获取GT数据（如果可用）
+                if 'imgs' in frame_data and 'psuedo_depth' in frame_data:
+                    gt_image = frame_data['imgs'][i]           # [3, H, W] 或 [V, 3, H, W]
+                    gt_psuedo_depth = frame_data['psuedo_depth'][i]  # [1, H, W] 或 [V, 1, H, W]
+                    
+                    # 确保维度匹配
+                    if rendered_image.dim() == 5:  # [1, V, 3, H, W]
+                        rendered_image = rendered_image[0]     # [V, 3, H, W]
+                        rendered_depth = rendered_depth[0]     # [V, 1, H, W]
+                    
+                    # 计算图像损失（L1损失）
+                    image_loss = F.l1_loss(rendered_image, gt_image)
+                    
+                    # 计算深度损失（L1损失，使用psuedo_depth作为GT）
+                    if gt_psuedo_depth is not None:
+                        # 创建有效深度掩码（psuedo_depth值大于0）
+                        valid_depth_mask = gt_psuedo_depth > 0.1
+                        if valid_depth_mask.sum() > 0:
+                            # 使用psuedo_depth作为GT深度
+                            depth_loss = F.l1_loss(
+                                rendered_depth[valid_depth_mask], 
+                                gt_psuedo_depth[valid_depth_mask]
+                            )
+                        else:
+                            depth_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
+                    else:
+                        depth_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
+                    
+                    # 总损失 = 图像损失 + λ * 深度损失
+                    camera_loss = image_loss + self.lambda_depth * depth_loss
+                    
+                else:
+                    # 如果没有GT数据，使用正则化损失
+                    camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
+                
+                total_loss = total_loss + camera_loss
+                
+            except Exception as e:
+                print(f"Warning: Rendering failed for camera {i}: {e}")
+                # 如果渲染失败，使用占位符损失
+                camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
+                total_loss = total_loss + camera_loss
         
         return total_loss
     
@@ -548,7 +679,8 @@ class IncrementalGaussianFusion(nn.Module):
         ], dim=1)
 
 
-def create_incremental_fusion_pipeline(voxel_size: float = 0.05,
+def create_incremental_fusion_pipeline(renderer=None,
+                                     voxel_size: float = 0.05,
                                      opacity_threshold: float = 0.01,
                                      depth_threshold: float = 0.1,
                                      window_optimization_iterations: int = 50,
@@ -558,6 +690,7 @@ def create_incremental_fusion_pipeline(voxel_size: float = 0.05,
     创建增量式高斯融合流水线
     
     Args:
+        renderer: 渲染器实例，用于计算渲染损失
         voxel_size: 体素大小（米）
         opacity_threshold: 透明度阈值
         depth_threshold: 深度阈值
@@ -566,9 +699,10 @@ def create_incremental_fusion_pipeline(voxel_size: float = 0.05,
         lambda_depth: 深度损失权重
         
     Returns:
-        fusion_pipeline: 增量式高斯融合流水线
+        IncrementalGaussianFusion: 配置好的增量式高斯融合模块
     """
     return IncrementalGaussianFusion(
+        renderer=renderer,
         voxel_size=voxel_size,
         opacity_threshold=opacity_threshold,
         depth_threshold=depth_threshold,

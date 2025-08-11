@@ -13,7 +13,7 @@ ablation_type="no_fusion_as_one_version"
 # ablation_type='no_fusion_as_one_version'
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml volumefusion/baseline_incremental_fusion.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml volumefusion/baseline_fusion.py \
     --config_path  $config_path \
     --output_folder $output_folder \
     --pretrained_model_path $pretrained_model_path \
@@ -52,4 +52,4 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 
 IncrementalFusion
 
-#Baseline_IncrementalFusion
+# Baseline_IncrementalFusion

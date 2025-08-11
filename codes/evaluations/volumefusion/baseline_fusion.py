@@ -651,6 +651,9 @@ def main(args):
                 fovxs = batch["output"]["fovxs"].to(accelerator.device)
                 fovys = batch["output"]["fovys"].to(accelerator.device)
                 
+                
+
+                
                 rendered_results =volumefusion_renderer.render(
                     gaussians=global_gaussains,
                     c2w=rendered_c2w,

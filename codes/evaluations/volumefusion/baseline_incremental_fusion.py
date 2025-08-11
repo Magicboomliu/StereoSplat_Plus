@@ -235,12 +235,13 @@ def main(args):
             
             # 创建增量式融合流水线
             fusion_pipeline = create_incremental_fusion_pipeline(
+                renderer=my_model.renderer,  # 传入渲染器
                 voxel_size=0.05,
                 opacity_threshold=0.01,
                 depth_threshold=0.1,
                 window_optimization_iterations=50,
                 global_optimization_iterations=10,
-                lambda_depth=1.0
+                lambda_depth=0.01
             )
             
             fusion_pipeline = fusion_pipeline.to(accelerator.device)
