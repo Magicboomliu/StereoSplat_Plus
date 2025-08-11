@@ -149,7 +149,6 @@ class FusionConfigurationDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-
 def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
@@ -779,8 +778,6 @@ def main(args):
                 rendered_index = rendered_index + 1
             
             
-        
-        
         if args.output_vis:
             images_to_video(image_list=rendered_images_all_list,
                             output_path=saved_rendered_image_video_path,
@@ -790,9 +787,7 @@ def main(args):
                             output_path=saved_rendered_depth_video_path,
                             fps=10)
         
-        
-        
-                
+          
         saved_quality_results_dict_this_semi_global_map = dict(
             rendered_left=renderd_left_image_metrics.get_stats(),
             rendered_right=rendered_right_image_metrics.get_stats()
