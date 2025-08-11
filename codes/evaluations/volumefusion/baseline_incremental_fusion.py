@@ -312,8 +312,7 @@ def main(args):
                     lidar_to_world_pose=current_pose  # 添加LIDAR姿态用于坐标变换
                 )
                 
-                print(global_gaussains.shape)
-                quit()
+
                 
                 # print(f"Global gaussians after fusion: {global_gaussains.shape}")
                 
