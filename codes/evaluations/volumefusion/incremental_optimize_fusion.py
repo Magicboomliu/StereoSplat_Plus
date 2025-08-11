@@ -36,13 +36,11 @@ import cv2
 from model.utils.image import resize_image,HWC3
 from torchmetrics.functional.image import peak_signal_noise_ratio as psnr
 from torchmetrics.functional.image import structural_similarity_index_measure as ssim
-import skimage.io
 
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
-
 
 class Basic_Meter(object):
     def __init__(self,psnr,ssim,mae,mse):
@@ -66,6 +64,7 @@ class Basic_Meter(object):
             "ssim": 0,
             "mae": 0,
             "mse":0
+                
             }
         else:
             return {
@@ -75,6 +74,67 @@ class Basic_Meter(object):
                 "mse":self.mse/self.counter
             }
 
+def convert_depth_to_disp(factor=328.318735,depth=None):
+    
+    mask = depth>0
+    mask = mask.astype(np.float32)
+
+    disparity = factor / (depth +1e-3)
+    disparity = disparity * mask
+    disparity = np.clip(disparity,a_max=220,a_min=0)
+    
+    disparity = kitti_colormap(disparity)
+    return disparity
+
+def kitti_colormap(disparity, maxval=-1):
+	"""
+	A utility function to reproduce KITTI fake colormap
+	Arguments:
+	  - disparity: numpy float32 array of dimension HxW
+	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
+	
+	Returns a numpy uint8 array of shape HxWx3.
+	"""
+	if maxval < 0:
+		maxval = np.max(disparity)
+
+	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
+	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
+	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
+
+	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
+	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
+	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
+	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
+	index = np.argmax(diffs, axis=-1)-1
+
+	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
+
+
+	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
+	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
+	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
+
+	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
+
+def get_diff_elements(A, B):
+    """
+    返回 B 中存在但 A 中没有的元素
+
+    参数:
+        A (list): 较小的子列表
+        B (list): 包含 A 的完整列表
+
+    返回:
+        list: B 中不在 A 中的元素
+    """
+    return [item for item in B if item not in A]
+
+def load_pkl(filepath):
+
+    with open(filepath, 'rb') as f:
+        data = pickle.load(f)
+    return data
 
 class FusionConfigurationDataset(Dataset):
     def __init__(self, data_list):
@@ -89,10 +149,10 @@ class FusionConfigurationDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-
 def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
+
 
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -131,12 +191,15 @@ def main(args):
         "camera_model": dataset_config.camera_model,
     }
 
+
     map_names_list = os.listdir(dataset_config.semi_global_folder_path)
     map_names_list.remove("global.pkl")
     semi_global_map_list = sorted(map_names_list)
     
+    
     # saved output folder path
-    output_saved_folder_path = os.path.join(args.output_folder, args.ablation_type)
+    output_saved_folder_path = os.path.join(args.output_folder,
+                                            args.ablation_type)
     os.makedirs(output_saved_folder_path,exist_ok=True)
 
     # Define the Model/Optimizer/Schduler Here
@@ -149,7 +212,10 @@ def main(args):
                             dataset_params=cfg.dataset_params,
                             use_checkpoint=cfg.use_checkpoint)
 
-    my_model= accelerator.prepare(my_model)
+
+    my_model= accelerator.prepare(
+        my_model
+    )
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -192,13 +258,16 @@ def main(args):
         saved_rendered_image_video_path = os.path.join(output_saved_folder_path,"/".join(key_input_frames_idx[0].split("/")[:2]).replace("annotations","rendered_rgb_videos"),"rendered_videos_semi_map_{}.mp4".format(idx))
         os.makedirs(os.path.dirname(saved_rendered_image_video_path),exist_ok=True)
                 
+
         saved_rendered_depth_video_path = os.path.join(output_saved_folder_path,"/".join(key_input_frames_idx[0].split("/")[:2]).replace("annotations","rendered_depth_videos"),"rendered_videos_semi_map_{}.mp4".format(idx))
         os.makedirs(os.path.dirname(saved_rendered_depth_video_path),exist_ok=True)
+        
         
         saved_rendered_results_json_path = os.path.join(output_saved_folder_path,"/".join(key_input_frames_idx[0].split("/")[:2]).replace("annotations","rendered_quality_json"),"rendered_quality_semi_map_{}.json".format(idx))
         os.makedirs(os.path.dirname(saved_rendered_results_json_path),exist_ok=True)
 
-        print("Step 1: building semi-global map dataloader for fusion...")
+        
+        print("Step 1:  building semi-global map dataloader for fusion...")
         for input_frame_name in tqdm(key_input_frames_idx):
             
             input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
@@ -211,194 +280,24 @@ def main(args):
                         extra_list=[])
             
             input_key_frame_info = input_infos_list[0]
+            
             input_key_frame_info_list.append(input_key_frame_info)
 
         configuration_fuse_dataset = FusionConfigurationDataset(input_key_frame_info_list)
         configuration_fuse_dataloader = DataLoader(configuration_fuse_dataset, batch_size=1, shuffle=False)
-        configuration_fuse_dataloader = accelerator.prepare(configuration_fuse_dataloader)
+        configuration_fuse_dataloader = accelerator.prepare(
+                                        configuration_fuse_dataloader)
         
         # For the Evaluation Metrics
+        
         renderd_left_image_metrics = Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
         rendered_right_image_metrics = Basic_Meter(psnr=0,ssim=0,mae=0,mse=0)
         
+        
         rendered_index = 0
-        print("Step 2: begin incremental gaussian fusion.....")
+        print("Step 2: begin incremenatl gaussain fusion.....")
     
-        if args.ablation_type=='incremental_fusion':
-            # 导入新的增量式融合模块
-            from incremental_fusion_module import create_incremental_fusion_pipeline
-            
-            # 创建增量式融合流水线
-            fusion_pipeline = create_incremental_fusion_pipeline(
-                voxel_size=0.05,
-                opacity_threshold=0.01,
-                depth_threshold=0.1,
-                window_optimization_iterations=50,
-                global_optimization_iterations=10,
-                lambda_depth=1.0
-            )
-            fusion_pipeline = fusion_pipeline.to(accelerator.device)
-            
-            with torch.no_grad():
-                my_model.eval()
-                
-                # 初始化：第一个关键帧生成初始全局高斯
-                print("Initializing with first keyframe...")
-                first_batch = next(iter(configuration_fuse_dataloader))
-                initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
-                initial_pose = first_batch['input']['lidar_to_world'][0][0]
-                
-                # 将第一个关键帧的高斯点变换到世界坐标系
-                global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
-                
-                print(f"Initial global gaussians: {global_gaussains.shape}")
-                
-                # 增量式处理后续关键帧
-                key_frame_index = 1
-                for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
-                    print(f"Processing keyframe {key_frame_index}...")
-                    
-                    # 获取当前关键帧的3DGS
-                    current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
-                    current_pose = batch['input']['lidar_to_world'][0][0]
-                    
-                    # 获取相机参数用于融合
-                    current_c2w = batch["output"]["c2w"].to(accelerator.device)
-                    current_intrinsics = batch['input']['cks'].to(accelerator.device)
-                    current_image_size = batch['input']['imgs'].shape[-2:]
-                    
-                    print(f"Current gaussians: {current_gaussians.shape}")
-                    print(f"Global gaussians before fusion: {global_gaussains.shape}")
-                    
-                    # 准备监督帧（下一个关键帧之前的所有帧）
-                    supervision_frames = prepare_supervision_frames(
-                        all_frames_idx, key_frame_index, val_params, first_key_frame_lidar_to_world_pose
-                    )
-                    
-                    # 使用新的融合模块进行增量式融合
-                    global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
-                        global_gaussians_prev=global_gaussains,
-                        new_keyframe_gaussians=current_gaussians,
-                        new_keyframe_pose=current_pose,
-                        new_keyframe_intrinsics=current_intrinsics[0],
-                        new_keyframe_image_size=current_image_size,
-                        supervision_frames=supervision_frames
-                    )
-                    
-                    print(f"Global gaussians after fusion: {global_gaussains.shape}")
-                    
-                    key_frame_index += 1
-                    
-                    # 可选：保存中间结果用于调试
-                    if key_frame_index <= 5:  # 只保存前几个关键帧的结果
-                        torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
-                
-                print(f"Final global gaussians: {global_gaussains.shape}")
-                
-                # 后续的渲染和评估逻辑保持不变
-                print("Step 3: Building the Inference Dataset...")
-                
-                # 构建评估数据集
-                all_key_frame_info_list = []
-                for input_frame_name in tqdm(all_frames_idx):
-                    input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
-                
-                    # current_input_infos
-                    input_infos_list = get_inputs_info(datapath=val_params['datapath'],
-                                reso = val_params['resolution'],
-                                first_ref=first_key_frame_lidar_to_world_pose,
-                                simple_annotation_path_list=[input_annotation_name],
-                                depth_info_params =val_params['depth_info_dict'],
-                                extra_list=[])
-                    
-                    input_key_frame_info = input_infos_list[0]
-                    all_key_frame_info_list.append(input_key_frame_info)
-
-                configuration_fuse_dataset_for_eval = FusionConfigurationDataset(all_key_frame_info_list)
-                configuration_fuse_dataloader_for_eval = DataLoader(configuration_fuse_dataset_for_eval, batch_size=1, shuffle=False)
-                configuration_fuse_dataloader_for_eval = accelerator.prepare(configuration_fuse_dataloader_for_eval)
-
-                # 渲染图像和评估
-                rendered_index = 0
-                volumefusion_renderer = my_model.renderer
-                for batch in tqdm(configuration_fuse_dataloader_for_eval):
-                    
-                    current_annotation_path = all_frames_idx[rendered_index]
-                    
-                    saved_rendered_image_name = current_annotation_path.replace("annotations","rendered_images").replace(".json",".png")
-                    saved_rendered_image_name = os.path.join(output_saved_folder_path,saved_rendered_image_name)
-                    os.makedirs(os.path.dirname(saved_rendered_image_name),exist_ok=True)
-
-                    saved_rendered_depth_name = current_annotation_path.replace("annotations","rendered_depth").replace(".json",".png")
-                    saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
-                    os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
-                    
-                    rendered_c2w = batch["output"]["c2w"].to(accelerator.device)
-                    fovxs = batch["output"]["fovxs"].to(accelerator.device)
-                    fovys = batch["output"]["fovys"].to(accelerator.device)
-                    
-                    rendered_results =volumefusion_renderer.render(
-                        gaussians=global_gaussains,
-                        c2w=rendered_c2w,
-                        fovx=fovxs,
-                        fovy=fovys,
-                        rays_o=None,
-                        rays_d=None
-                    )
-                    
-                    rendered_image = rendered_results['image'] #(B,V,3,H,W)
-                    rendered_depth = rendered_results['depth'] #(B,V,1,H,W)
-
-                    gt_images = batch['output']['imgs'].to(accelerator.device)
-                    gt_sparse_depth = batch['output']["sparse_gts"].to(accelerator.device).unsqueeze(2)
-                        
-                    current_left_psnr, current_left_ssim = compute_psnr_ssim(pred=rendered_image[:,0,:,:,:],
-                                                                             target=gt_images[:,0,:,:,:]
-                                                                             )
-                    current_right_psnr, current_right_ssim = compute_psnr_ssim(pred=rendered_image[:,1,:,:,:],
-                                                                             target=gt_images[:,1,:,:,:]
-                                                                             )
-                    
-                    current_left_mae, current_left_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,0,:,:,:],
-                                                                               depth_gt=gt_sparse_depth[:,0,:,:,:])
-
-                    current_right_mae, current_right_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,1,:,:,:],
-                                                                               depth_gt=gt_sparse_depth[:,1,:,:,:])
-                    
-                    renderd_left_image_metrics.update(psnr=current_left_psnr.data.item(),
-                                                      ssim=current_left_ssim.data.item(),
-                                                      mae=current_left_mae.data.item(),
-                                                      mse=current_left_mse.data.item())
-                    
-                    rendered_right_image_metrics.update(psnr=current_right_psnr.data.item(),
-                                                      ssim=current_right_ssim.data.item(),
-                                                      mae=current_right_mae.data.item(),
-                                                      mse=current_right_mse.data.item()
-                    )
-                    
-
-                    if args.output_vis:
-                        
-                        # saved rendered images
-                        rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
-                        rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
-                        rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy() 
-                        skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
-
-                        # saved rendered depths
-                        rendered_depth_left = rendered_depth[0][0][0]
-                        rendered_depth_right = rendered_depth[0][1][0]
-                        rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
-                        rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
-                        rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
-                        skimage.io.imsave(saved_rendered_depth_name,rendered_depth_for_vis)
-                        
-                        rendered_images_all_list.append((rendered_image_for_vis*255).astype(np.uint8))
-                        rendered_depths_all_list.append(rendered_depth_for_vis)
-                        
-                    rendered_index = rendered_index + 1
-
-        elif args.ablation_type=='simple_fusion':
+        if args.ablation_type=='simple_fusion':
             global_gaussains_list = []
             
             with torch.no_grad():
@@ -878,7 +777,179 @@ def main(args):
                     
                 rendered_index = rendered_index + 1
 
-        
+        elif args.ablation_type=='incremental_fusion':
+            print("Step 2: begin incremental gaussian fusion.....")
+            
+            with torch.no_grad():
+                my_model.eval()
+                
+                # 初始化：第一个关键帧生成初始全局高斯
+                print("Initializing with first keyframe...")
+                first_batch = next(iter(configuration_fuse_dataloader))
+                initial_gaussians = my_model.filewise_inference_only(first_batch, cfg=cfg)
+                initial_pose = first_batch['input']['lidar_to_world'][0][0]
+                global_gaussains = transform_gs_to_given_pose(g2=initial_gaussians, c2w=initial_pose)
+                
+                print(f"Initial global gaussians: {global_gaussains.shape}")
+                
+                # 增量式处理后续关键帧
+                key_frame_index = 1
+                for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
+                    print(f"Processing keyframe {key_frame_index}...")
+                    
+                    # 获取当前关键帧的3DGS
+                    current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
+                    current_pose = batch['input']['lidar_to_world'][0][0]
+                    current_gaussians_world = transform_gs_to_given_pose(g2=current_gaussians, c2w=current_pose)
+                    
+                    # 获取相机参数用于视锥剔除
+                    current_c2w = batch["output"]["c2w"].to(accelerator.device)
+                    current_intrinsics = batch['input']['cks'].to(accelerator.device)
+                    current_image_size = batch['input']['imgs'].shape[-2:]
+                    
+                    print(f"Current gaussians: {current_gaussians_world.shape}")
+                    print(f"Global gaussians before fusion: {global_gaussains.shape}")
+                    
+                    # Step 1: Gaussian Insertion & Prune (视锥剔除重叠区域)
+                    print("Step 1: Removing overlapping gaussians in frustum...")
+                    global_gaussains_cleaned = remove_gaussians_in_frustum(
+                        gaussians=global_gaussains[0],
+                        c2w=current_c2w[0],
+                        intrinsics=current_intrinsics[0],
+                        image_size=current_image_size
+                    )
+                    
+                    print(f"Gaussians after frustum removal: {global_gaussains_cleaned.shape}")
+                    
+                    # 将清理后的全局高斯点与新高斯点融合
+                    global_gaussains_cleaned = global_gaussains_cleaned.unsqueeze(0)
+                    global_gaussains = torch.cat((global_gaussains_cleaned, current_gaussians_world), dim=1)
+                    
+                    print(f"Gaussians after fusion: {global_gaussains.shape}")
+                    
+                    # Step 2: Window Optimization (这里可以添加局部优化逻辑)
+                    print("Step 2: Window optimization (placeholder for future implementation)")
+                    # TODO: 实现局部窗口优化，可以包括：
+                    # - 高斯点密度控制
+                    # - 重叠区域的高斯点合并
+                    # - 基于几何一致性的优化
+                    
+                    key_frame_index += 1
+                    
+                    # 可选：保存中间结果用于调试
+                    if key_frame_index <= 5:  # 只保存前几个关键帧的结果
+                        torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
+                
+                print(f"Final global gaussians: {global_gaussains.shape}")
+                
+                # 后续的渲染和评估逻辑保持不变
+                print("Step 3: Building the Inference Dataset...")
+                
+                # 构建评估数据集
+                all_key_frame_info_list = []
+                for input_frame_name in tqdm(all_frames_idx):
+                    input_annotation_name = input_frame_name.replace("annotations","annotations_simple")
+                
+                    # current_input_infos
+                    input_infos_list = get_inputs_info(datapath=val_params['datapath'],
+                                reso = val_params['resolution'],
+                                first_ref=first_key_frame_lidar_to_world_pose,
+                                simple_annotation_path_list=[input_annotation_name],
+                                depth_info_params =val_params['depth_info_dict'],
+                                extra_list=[])
+                    
+                    input_key_frame_info = input_infos_list[0]
+                    
+                    all_key_frame_info_list.append(input_key_frame_info)
+
+                configuration_fuse_dataset_for_eval = FusionConfigurationDataset(all_key_frame_info_list)
+                configuration_fuse_dataloader_for_eval = DataLoader(configuration_fuse_dataset_for_eval, batch_size=1, shuffle=False)
+                configuration_fuse_dataloader_for_eval = accelerator.prepare(
+                                                configuration_fuse_dataloader_for_eval)
+
+                # 渲染图像和评估
+                rendered_index = 0
+                volumefusion_renderer = my_model.renderer
+                for batch in tqdm(configuration_fuse_dataloader_for_eval):
+                    
+                    current_annotation_path = all_frames_idx[rendered_index]
+                    
+                    saved_rendered_image_name = current_annotation_path.replace("annotations","rendered_images").replace(".json",".png")
+                    saved_rendered_image_name = os.path.join(output_saved_folder_path,saved_rendered_image_name)
+                    os.makedirs(os.path.dirname(saved_rendered_image_name),exist_ok=True)
+
+                    saved_rendered_depth_name = current_annotation_path.replace("annotations","rendered_depth").replace(".json",".png")
+                    saved_rendered_depth_name = os.path.join(output_saved_folder_path,saved_rendered_depth_name)
+                    os.makedirs(os.path.dirname(saved_rendered_depth_name),exist_ok=True)
+                    
+
+                    rendered_c2w = batch["output"]["c2w"].to(accelerator.device)
+                    fovxs = batch["output"]["fovxs"].to(accelerator.device)
+                    fovys = batch["output"]["fovys"].to(accelerator.device)
+                    
+                    rendered_results =volumefusion_renderer.render(
+                        gaussians=global_gaussains,
+                        c2w=rendered_c2w,
+                        fovx=fovxs,
+                        fovy=fovys,
+                        rays_o=None,
+                        rays_d=None
+                    )
+                    
+                    rendered_image = rendered_results['image'] #(B,V,3,H,W)
+                    rendered_depth = rendered_results['depth'] #(B,V,1,H,W)
+
+                    gt_images = batch['output']['imgs'].to(accelerator.device)
+                    gt_sparse_depth = batch['output']["sparse_gts"].to(accelerator.device).unsqueeze(2)
+                        
+                    current_left_psnr, current_left_ssim = compute_psnr_ssim(pred=rendered_image[:,0,:,:,:],
+                                                                             target=gt_images[:,0,:,:,:]
+                                                                             )
+                    current_right_psnr, current_right_ssim = compute_psnr_ssim(pred=rendered_image[:,1,:,:,:],
+                                                                             target=gt_images[:,1,:,:,:]
+                                                                             )
+                    
+                    current_left_mae, current_left_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,0,:,:,:],
+                                                                               depth_gt=gt_sparse_depth[:,0,:,:,:])
+
+                    current_right_mae, current_right_mse = compute_depth_mae_mse(depth_pred=rendered_depth[:,1,:,:,:],
+                                                                               depth_gt=gt_sparse_depth[:,1,:,:,:])
+                    
+                    
+                    renderd_left_image_metrics.update(psnr=current_left_psnr.data.item(),
+                                                      ssim=current_left_ssim.data.item(),
+                                                      mae=current_left_mae.data.item(),
+                                                      mse=current_left_mse.data.item())
+                    
+                    rendered_right_image_metrics.update(psnr=current_right_psnr.data.item(),
+                                                      ssim=current_right_ssim.data.item(),
+                                                      mae=current_right_mae.data.item(),
+                                                      mse=current_right_mse.data.item()
+                    )
+                    
+
+                    if args.output_vis:
+                        
+                        # saved rendered images
+                        rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
+                        rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
+                        rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy() 
+                        skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
+
+                        # saved rendered depths
+                        rendered_depth_left = rendered_depth[0][0][0]
+                        rendered_depth_right = rendered_depth[0][1][0]
+                        rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
+                        rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
+                        rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
+                        skimage.io.imsave(saved_rendered_depth_name,rendered_depth_for_vis)
+                        
+                        rendered_images_all_list.append((rendered_image_for_vis*255).astype(np.uint8))
+                        rendered_depths_all_list.append(rendered_depth_for_vis)
+                        
+                    rendered_index = rendered_index + 1
+            
+            
         if args.output_vis:
             images_to_video(image_list=rendered_images_all_list,
                             output_path=saved_rendered_image_video_path,
@@ -979,6 +1050,8 @@ def transform_gs_to_given_pose(g2, c2w):
     # 坐标系变换
     mean3D_new = transform_positions(mean3D, c2w)     # (N2, 3)
     quat_new = transform_quaternions(quat, c2w)       # (N2, 4)
+    # quat_new = quat     # (N2, 4)
+    
     
     g2_transformed = torch.cat([mean3D_new, rgb, opacity, quat_new, scale], dim=1).unsqueeze(0)  # (1, N2, 14)
     return g2_transformed
@@ -1019,30 +1092,12 @@ def kitti_colormap(disparity, maxval=-1):
 
 	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
 
+
 	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
 	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
 	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
-
-def get_diff_elements(A, B):
-    """
-    返回 B 中存在但 A 中没有的元素
-
-    参数:
-        A (list): 较小的子列表
-        B (list): 包含 A 的完整列表
-
-    返回:
-        list: B 中不在 A 中的元素
-    """
-    return [item for item in B if item not in A]
-
-def load_pkl(filepath):
-
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    return data
 
 def clean_and_clip(array):
     """
@@ -1051,6 +1106,64 @@ def clean_and_clip(array):
     array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
     array = np.clip(array, 0, 100)
     return array
+
+# def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
+    
+#     gaussians = gaussians.float()
+#     c2w = c2w.float()
+#     intrinsics = intrinsics.float()
+    
+#     """
+#     使用 PyTorch 删除落入两个相机视锥内的高斯点
+#     参数:
+#         gaussians: (N, 14) or (N, 3) tensor，前3列为高斯中心点
+#         c2w: (2, 4, 4) tensor，相机姿态
+#         intrinsics: (2, 3, 3) tensor，相机内参
+#         image_size: (H, W)，图像大小
+#     返回:
+#         (M, 14) or (M, 3) tensor，保留不在任一视锥内的高斯点
+#     """
+#     device = gaussians.device
+#     points = gaussians[:, :3]  # (N, 3)
+#     N = points.shape[0]
+#     H, W = image_size
+#     keep_mask = torch.ones(N, dtype=torch.bool, device=device)
+
+#     for i in range(2):
+#         w2c = torch.linalg.inv(c2w[i])            # (4, 4)
+#         K = intrinsics[i]                         # (3, 3)
+
+#         # 齐次坐标变换
+#         homo_points = torch.cat([points, torch.ones((N, 1), device=device)], dim=1)  # (N, 4)
+#         cam_points = (w2c @ homo_points.T).T[:, :3]  # (N, 3)
+
+#         # 相机前方
+#         in_front = cam_points[:, 2] > 0.2
+
+#         # 像素投影
+#         proj = (K @ cam_points.T).T  # (N, 3)
+#         proj_x = proj[:, 0] / proj[:, 2]
+#         proj_y = proj[:, 1] / proj[:, 2]
+
+#         in_image = (proj_x >= 1) & (proj_x < W) & (proj_y >= 1) & (proj_y < H)
+#         visible = in_front & in_image
+#         keep_mask &= ~visible  # 可见点设为 False
+
+#     return gaussians[keep_mask]
+
+
+def add_pitch_to_c2w(c2w, degrees=-5.0):
+    pitch_rad = torch.deg2rad(torch.tensor(degrees))
+    rot_x = torch.tensor([
+        [1, 0, 0],
+        [0, torch.cos(pitch_rad), -torch.sin(pitch_rad)],
+        [0, torch.sin(pitch_rad), torch.cos(pitch_rad)],
+    ], dtype=c2w.dtype, device=c2w.device)
+
+    # 添加 pitch 旋转（前乘）
+    c2w_rotated = c2w.clone()
+    c2w_rotated[:3, :3] = rot_x @ c2w[:3, :3]
+    return c2w_rotated
 
 def remove_gaussians_in_frustum(gaussians, c2w, intrinsics, image_size):
     """
@@ -1131,6 +1244,7 @@ def compute_psnr_ssim(pred, target):
     ssim_val = ssim(pred, target, data_range=1.0)
 
     return psnr_val,ssim_val
+    # return torch.stack(psnr_vals).mean().data.item(), torch.stack(ssim_vals).mean().data.item()
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -1165,52 +1279,6 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
 
     return mae, mse
 
-
-def prepare_supervision_frames(all_frames_idx, current_keyframe_index, val_params, first_key_frame_lidar_to_world_pose):
-    """
-    准备监督帧：获取下一个关键帧之前的所有帧作为监督数据
-    
-    Args:
-        all_frames_idx: 所有帧的索引列表
-        current_keyframe_index: 当前关键帧的索引
-        val_params: 验证参数
-        first_key_frame_lidar_to_world_pose: 第一个关键帧的LiDAR到世界坐标变换
-        
-    Returns:
-        supervision_frames: 监督帧列表
-    """
-    supervision_frames = []
-    
-    # 找到下一个关键帧的索引
-    if current_keyframe_index < len(all_frames_idx):
-        next_keyframe_idx = current_keyframe_index + 1
-        # 获取当前关键帧和下一个关键帧之间的所有帧
-        supervision_frame_indices = all_frames_idx[current_keyframe_index:next_keyframe_idx]
-        
-        for frame_idx in supervision_frame_indices:
-            try:
-                # 构建帧的完整路径
-                frame_annotation_name = frame_idx.replace("annotations", "annotations_simple")
-                
-                # 获取帧信息
-                frame_infos = get_inputs_info(
-                    datapath=val_params['datapath'],
-                    reso=val_params['resolution'],
-                    first_ref=first_key_frame_lidar_to_world_pose,
-                    simple_annotation_path_list=[frame_annotation_name],
-                    depth_info_params=val_params['depth_info_dict'],
-                    extra_list=[]
-                )
-                
-                if frame_infos:
-                    supervision_frames.append(frame_infos[0])
-                    
-            except Exception as e:
-                print(f"Warning: Failed to load supervision frame {frame_idx}: {e}")
-                continue
-    
-    print(f"Prepared {len(supervision_frames)} supervision frames")
-    return supervision_frames
 
 
 if __name__ == '__main__':
