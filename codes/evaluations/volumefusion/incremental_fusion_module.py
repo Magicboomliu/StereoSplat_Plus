@@ -86,7 +86,6 @@ class IncrementalGaussianFusion(nn.Module):
         )
         
 
-
         # Step 2: 基于FOV分离重叠和遗留的高斯点
         print("Step 2: Separating overlapping and legacy gaussians based on FOV...")
         g_overlapped, g_legacy = self.separate_gaussians_by_fov(
@@ -96,9 +95,7 @@ class IncrementalGaussianFusion(nn.Module):
             new_keyframe_image_size
         )
         
-        print(f"Overlapped gaussians: {g_overlapped.shape[0]}, Legacy gaussians: {g_legacy.shape[0]}")
-        quit()
-        
+
         
         # Step 3: 启发式剪枝
         print("Step 3: Heuristic pruning of overlapped gaussians...")
@@ -106,12 +103,12 @@ class IncrementalGaussianFusion(nn.Module):
             g_overlapped, new_gaussians_world[0], new_keyframe_pose[0]  # 使用左相机姿态
         )
         
-        print(f"Gaussians after pruning: {g_overlapped_pruned.shape[0]}")
+ 
         
         # Step 4: 窗口优化
         print(f"Step 4: Window loss-based optimization ({self.window_optimization_iterations} iterations)...")
         g_overlapped_optimized = self.window_loss_based_optimization(
-            g_overlapped_pruned, new_keyframe_pose[0], new_keyframe_intrinsics[0],  # 使用左相机姿态和内参
+            g_overlapped_pruned, new_keyframe_pose, new_keyframe_intrinsics,  # 使用左右相机姿态和内参
             new_keyframe_image_size, supervision_frames
         )
         
@@ -241,7 +238,7 @@ class IncrementalGaussianFusion(nn.Module):
                            g_new: torch.Tensor,
                            new_keyframe_pose: torch.Tensor) -> torch.Tensor:
         """
-        基于体素的剪枝：在重叠区域保留新的高斯点
+        基于体素的剪枝：在重叠区域保留新的高斯点（完全向量化快速版本）
         
         Args:
             g_overlapped: 重叠的全局高斯点 [N, 14]
@@ -251,67 +248,64 @@ class IncrementalGaussianFusion(nn.Module):
         Returns:
             g_pruned: 剪枝后的高斯点 [K, 14]
         """
+        if g_overlapped.shape[0] == 0:
+            return g_new
+        if g_new.shape[0] == 0:
+            return g_overlapped
+            
         # 确保数据类型一致
         dtype = g_overlapped.dtype
         device = g_overlapped.device
         g_new = g_new.to(dtype=dtype, device=device)
         
-        # 将新高斯点变换到世界坐标系（如果还没有变换）
-        g_new_world = g_new  # 假设已经是世界坐标系
+        # 体素化重叠区域 - 向量化操作
+        all_positions = torch.cat([g_overlapped[:, :3], g_new[:, :3]], dim=0)
         
-        # 体素化重叠区域
-        all_positions = torch.cat([g_overlapped[:, :3], g_new_world[:, :3]], dim=0)
-        
-        # 计算体素索引
+        # 计算体素索引 - 向量化
         voxel_indices = torch.floor(all_positions / self.voxel_size).long()
         
-        # 创建体素到高斯点的映射
-        voxel_to_gaussians = {}
-        for i, voxel_idx in enumerate(voxel_indices):
-            voxel_key = tuple(voxel_idx.cpu().numpy())
-            if voxel_key not in voxel_to_gaussians:
-                voxel_to_gaussians[voxel_key] = {'old': [], 'new': []}
-            
-            if i < g_overlapped.shape[0]:
-                voxel_to_gaussians[voxel_key]['old'].append(i)
-            else:
-                voxel_to_gaussians[voxel_key]['new'].append(i - g_overlapped.shape[0])
+        # 将体素索引转换为线性索引
+        voxel_hash = (voxel_indices[:, 0] * 73856093 + 
+                     voxel_indices[:, 1] * 19349663 + 
+                     voxel_indices[:, 2] * 83492791) % 1000000007
         
-        # 在每个体素中保留新的高斯点，去除旧的
-        kept_indices = []
+        # 创建点类型标识符：0=旧，1=新
+        point_type = torch.cat([
+            torch.zeros(g_overlapped.shape[0], dtype=torch.long, device=device),
+            torch.ones(g_new.shape[0], dtype=torch.long, device=device)
+        ])
         
-        for voxel_key, gaussian_indices in voxel_to_gaussians.items():
-            old_indices = gaussian_indices['old']
-            new_indices = gaussian_indices['new']
-            
-            # 如果有新的高斯点，保留所有新的
-            if new_indices:
-                kept_indices.extend([idx + g_overlapped.shape[0] for idx in new_indices])
-            # 如果没有新的高斯点，保留旧的
-            elif old_indices:
-                kept_indices.extend(old_indices)
+        # 找到唯一体素和对应的点类型
+        unique_voxels, inverse_indices, counts = torch.unique(
+            voxel_hash, return_inverse=True, return_counts=True
+        )
+        
+        # 对于每个体素，统计新高斯点的数量
+        new_counts = torch.zeros(unique_voxels.shape[0], dtype=torch.long, device=device)
+        new_counts.scatter_add_(0, inverse_indices, point_type)
+        
+        # 创建掩码：移除有新高斯点的体素中的旧高斯点
+        keep_mask = torch.ones(voxel_hash.shape[0], dtype=torch.bool, device=device)
+        old_points_to_remove = (point_type == 0) & (new_counts[inverse_indices] > 0)
+        keep_mask[old_points_to_remove] = False
         
         # 返回保留的高斯点
-        if kept_indices:
-            kept_indices = torch.tensor(kept_indices, device=device, dtype=torch.long)
-            all_gaussians = torch.cat([g_overlapped, g_new_world], dim=0)
-            return all_gaussians[kept_indices]
-        else:
-            return torch.empty((0, 14), device=device, dtype=dtype)
+        all_gaussians = torch.cat([g_overlapped, g_new], dim=0)
+        return all_gaussians[keep_mask]
     
     def window_loss_based_optimization(self,
                                      gaussians: torch.Tensor,
-                                     camera_pose: torch.Tensor,
+                                     camera_poses: torch.Tensor,
                                      intrinsics: torch.Tensor,
                                      image_size: Tuple[int, int],
                                      supervision_frames: List[Dict] = None) -> torch.Tensor:
         """
-        基于渲染损失的窗口优化
+        基于渲染损失的窗口优化（支持左右相机）
         
         Args:
             gaussians: 待优化的高斯点 [N, 14]
-            camera_pose: 相机姿态 [4, 4]
-            intrinsics: 相机内参 [3, 3]
+            camera_poses: 相机姿态 [2, 4, 4] (left/right camera)
+            intrinsics: 相机内参 [2, 3, 3] (left/right camera)
             image_size: 图像尺寸 (H, W)
             supervision_frames: 监督帧列表
             
@@ -331,7 +325,7 @@ class IncrementalGaussianFusion(nn.Module):
         # 确保数据类型一致
         dtype = gaussians.dtype
         device = gaussians.device
-        camera_pose = camera_pose.to(dtype=dtype, device=device)
+        camera_poses = camera_poses.to(dtype=dtype, device=device)
         intrinsics = intrinsics.to(dtype=dtype, device=device)
         
         # 创建可训练的高斯点参数
@@ -348,9 +342,10 @@ class IncrementalGaussianFusion(nn.Module):
             
             # 对每个监督帧计算损失
             for frame_data in supervision_frames:
-                # 这里需要实现渲染和损失计算
-                # 目前作为占位符
-                loss = self.compute_rendering_loss(gaussians_optimizable, frame_data)
+                # 同时使用左右相机的信息计算损失
+                loss = self.compute_rendering_loss_multi_camera(
+                    gaussians_optimizable, frame_data, camera_poses, intrinsics, image_size
+                )
                 total_loss += loss
             
             # 反向传播
@@ -380,6 +375,45 @@ class IncrementalGaussianFusion(nn.Module):
         
         # 目前返回一个小的随机损失作为占位符
         return torch.tensor(0.001, device=gaussians.device, requires_grad=True)
+    
+    def compute_rendering_loss_multi_camera(self, 
+                                          gaussians: torch.Tensor, 
+                                          frame_data: Dict,
+                                          camera_poses: torch.Tensor,
+                                          intrinsics: torch.Tensor,
+                                          image_size: Tuple[int, int]) -> torch.Tensor:
+        """
+        计算多相机渲染损失（支持左右相机）
+        
+        Args:
+            gaussians: 高斯点 [N, 14]
+            frame_data: 帧数据
+            camera_poses: 相机姿态 [2, 4, 4] (left/right camera)
+            intrinsics: 相机内参 [2, 3, 3] (left/right camera)
+            image_size: 图像尺寸 (H, W)
+            
+        Returns:
+            loss: 多相机渲染损失
+        """
+        # TODO: 实现完整的多相机渲染损失计算
+        # 对左右相机分别计算损失，然后合并
+        
+        total_loss = torch.tensor(0.0, device=gaussians.device, requires_grad=True)
+        
+        for i in range(2):  # 遍历左右相机
+            # 获取当前相机的姿态和内参
+            current_pose = camera_poses[i]  # [4, 4]
+            current_intrinsics = intrinsics[i]  # [3, 3]
+            
+            # 计算当前相机的渲染损失
+            # 这里可以调用现有的渲染器来计算图像和深度
+            # 然后与GT进行比较
+            
+            # 目前作为占位符，返回一个小的损失
+            camera_loss = torch.tensor(0.001, device=gaussians.device, requires_grad=True)
+            total_loss = total_loss + camera_loss
+        
+        return total_loss
     
     def global_optimization(self, gaussians: torch.Tensor) -> torch.Tensor:
         """
@@ -542,3 +576,35 @@ def create_incremental_fusion_pipeline(voxel_size: float = 0.05,
         global_optimization_iterations=global_optimization_iterations,
         lambda_depth=lambda_depth
     )
+
+
+
+import numpy as np
+import torch
+from plyfile import PlyData, PlyElement
+
+def save_points_to_ply(points, filename="output.ply"):
+    """
+    将 (N,3) 点云保存为 .ply 文件
+    支持 torch.Tensor 或 numpy.ndarray
+
+    Args:
+        points: (N, 3) torch.Tensor 或 numpy.ndarray
+        filename: 输出文件名
+    """
+    # 转 numpy
+    if isinstance(points, torch.Tensor):
+        points = points.detach().cpu().numpy()
+    elif not isinstance(points, np.ndarray):
+        raise TypeError("points 必须是 torch.Tensor 或 numpy.ndarray")
+
+    assert points.ndim == 2 and points.shape[1] == 3, "points 必须是 (N, 3) 形状"
+
+    # 构造 ply 顶点数据
+    vertex = np.array([tuple(p) for p in points],
+                      dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+
+    # 保存为 PLY
+    ply = PlyData([PlyElement.describe(vertex, 'vertex')], text=True)
+    ply.write(filename)
+    print(f"已保存 {points.shape[0]} 个点到 {filename}")
