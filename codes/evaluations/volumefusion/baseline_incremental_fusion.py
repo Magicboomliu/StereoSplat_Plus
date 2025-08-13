@@ -117,6 +117,97 @@ def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
 
+    # 添加配置保存函数
+    def save_configuration_to_txt(output_folder, args, cfg, enable_memory_optimization, memory_threshold, enable_gradient_checkpointing):
+        """保存配置信息到txt文件"""
+        config_file_path = os.path.join(output_folder, "fusion_configuration.txt")
+        
+        with open(config_file_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 60 + "\n")
+            f.write("FUSION PIPELINE CONFIGURATION\n")
+            f.write("=" * 60 + "\n\n")
+            
+            # 基本信息
+            f.write("BASIC INFORMATION:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Config file: {args.config_path}\n")
+            f.write(f"Output folder: {args.output_folder}\n")
+            f.write(f"Semi-global map: {args.semi_global_map}\n")
+            f.write(f"Pretrained model: {args.pretrained_model_path if args.pretrained_model_path else 'None'}\n")
+            f.write(f"Ablation type: {args.ablation_type}\n")
+            f.write(f"Output visualization: {args.output_vis}\n\n")
+            
+            # 融合管道超参数
+            f.write("FUSION PIPELINE HYPERPARAMETERS:\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Voxel size: {args.voxel_size}\n")
+            f.write(f"Opacity threshold: {args.opacity_threshold}\n")
+            f.write(f"Depth threshold: {args.depth_threshold}\n")
+            f.write(f"Window optimization iterations: {args.window_optimization_iterations}\n")
+            f.write(f"Global optimization iterations: {args.global_optimization_iterations}\n")
+            f.write(f"Lambda depth: {args.lambda_depth}\n\n")
+            
+            # 内存优化配置
+            f.write("MEMORY OPTIMIZATION SETTINGS:\n")
+            f.write("-" * 35 + "\n")
+            f.write(f"Memory optimization enabled: {enable_memory_optimization}\n")
+            f.write(f"Memory threshold: {memory_threshold} ({memory_threshold*100:.1f}%)\n")
+            f.write(f"Gradient checkpointing: {enable_gradient_checkpointing}\n")
+            f.write(f"CUDA memory split size: 512MB\n")
+            f.write(f"CUDA launch blocking: Enabled\n\n")
+            
+            # 模型配置
+            f.write("MODEL CONFIGURATION:\n")
+            f.write("-" * 25 + "\n")
+            f.write(f"Backbone: {cfg.model.backbone}\n")
+            f.write(f"Neck: {cfg.model.neck}\n")
+            f.write(f"Cost volume GS: {cfg.model.costvolume_gs}\n")
+            f.write(f"Volume GS: {cfg.model.volume_gs}\n")
+            f.write(f"Use checkpoint: {cfg.use_checkpoint}\n\n")
+            
+            # 数据集配置
+            f.write("DATASET CONFIGURATION:\n")
+            f.write("-" * 25 + "\n")
+            f.write(f"Data path: {cfg.dataset_params.datapath}\n")
+            f.write(f"Resolution: {cfg.dataset_params.resolution}\n")
+            f.write(f"Sequence: {cfg.dataset_params.sequence}\n")
+            f.write(f"Camera model: {cfg.dataset_params.camera_model}\n\n")
+            
+            # 相机配置
+            f.write("CAMERA CONFIGURATION:\n")
+            f.write("-" * 25 + "\n")
+            for key, value in cfg.camera_args.items():
+                f.write(f"{key}: {value}\n")
+            f.write("\n")
+            
+            # 系统信息
+            f.write("SYSTEM INFORMATION:\n")
+            f.write("-" * 25 + "\n")
+            f.write(f"PyTorch version: {torch.__version__}\n")
+            f.write(f"CUDA available: {torch.cuda.is_available()}\n")
+            if torch.cuda.is_available():
+                f.write(f"CUDA version: {torch.version.cuda}\n")
+                f.write(f"GPU count: {torch.cuda.device_count()}\n")
+                f.write(f"Current GPU: {torch.cuda.current_device()}\n")
+                f.write(f"GPU name: {torch.cuda.get_device_name(0)}\n")
+                f.write(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB\n")
+            f.write("\n")
+            
+            # 环境变量
+            f.write("ENVIRONMENT VARIABLES:\n")
+            f.write("-" * 25 + "\n")
+            f.write(f"PYTORCH_CUDA_ALLOC_CONF: {os.environ.get('PYTORCH_CUDA_ALLOC_CONF', 'Not set')}\n")
+            f.write(f"CUDA_LAUNCH_BLOCKING: {os.environ.get('CUDA_LAUNCH_BLOCKING', 'Not set')}\n")
+            f.write("\n")
+            
+            f.write("=" * 60 + "\n")
+            f.write("END OF CONFIGURATION\n")
+            f.write("=" * 60 + "\n")
+        
+        print(f"Configuration saved to: {config_file_path}")
+        return config_file_path
+
     # 添加内存监控
     def print_gpu_memory_usage():
         """打印GPU内存使用情况"""
@@ -191,6 +282,13 @@ def main(args):
     # saved output folder path
     output_saved_folder_path = os.path.join(args.output_folder, args.ablation_type)
     os.makedirs(output_saved_folder_path,exist_ok=True)
+    
+    # 保存配置信息到txt文件（可选）
+    config_file_path = None
+    if args.save_config_txt:
+        config_file_path = save_configuration_to_txt(output_saved_folder_path, args, cfg, enable_memory_optimization, memory_threshold, enable_gradient_checkpointing)
+    else:
+        print("Configuration file saving disabled")
 
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusion(backbone=cfg.model.backbone,
@@ -305,13 +403,23 @@ def main(args):
             fusion_pipeline = create_incremental_fusion_pipeline(
                 renderer=my_model.renderer,  # 传入渲染器
                 history_batch_data=[],  # 初始化空的历史数据列表
-                voxel_size=0.05,
-                opacity_threshold=0.01,
-                depth_threshold=0.1,
-                window_optimization_iterations=50,
-                global_optimization_iterations=30,
-                lambda_depth=0.01
+                voxel_size=args.voxel_size,
+                opacity_threshold=args.opacity_threshold,
+                depth_threshold=args.depth_threshold,
+                window_optimization_iterations=args.window_optimization_iterations,
+                global_optimization_iterations=args.global_optimization_iterations,
+                lambda_depth=args.lambda_depth
             )
+            
+            # 打印融合管道超参数
+            print("=== Fusion Pipeline Hyperparameters ===")
+            print(f"Voxel size: {args.voxel_size}")
+            print(f"Opacity threshold: {args.opacity_threshold}")
+            print(f"Depth threshold: {args.depth_threshold}")
+            print(f"Window optimization iterations: {args.window_optimization_iterations}")
+            print(f"Global optimization iterations: {args.global_optimization_iterations}")
+            print(f"Lambda depth: {args.lambda_depth}")
+            print("=====================================")
             
             fusion_pipeline = fusion_pipeline.to(accelerator.device)
             
@@ -464,6 +572,30 @@ def main(args):
                 #     torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
             
             print(f"Final global gaussians: {global_gaussains.shape}")
+            
+            # 保存运行时信息到配置文件
+            def append_runtime_info(config_file_path, key_frame_index, final_gaussians_shape):
+                """将运行时信息追加到配置文件"""
+                try:
+                    with open(config_file_path, 'a', encoding='utf-8') as f:
+                        f.write("\n" + "=" * 60 + "\n")
+                        f.write("RUNTIME INFORMATION\n")
+                        f.write("=" * 60 + "\n\n")
+                        f.write(f"Total keyframes processed: {key_frame_index}\n")
+                        f.write(f"Final global gaussians shape: {final_gaussians_shape}\n")
+                        f.write(f"Fusion completed at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write("\n" + "=" * 60 + "\n")
+                        f.write("FUSION COMPLETED SUCCESSFULLY\n")
+                        f.write("=" * 60 + "\n")
+                    print(f"Runtime information appended to: {config_file_path}")
+                except Exception as e:
+                    print(f"Warning: Failed to append runtime info: {e}")
+            
+            # 追加运行时信息
+            if config_file_path:
+                append_runtime_info(config_file_path, key_frame_index, global_gaussains.shape)
+            else:
+                print("Runtime information not saved (config file disabled)")
             
             # 后续的渲染和评估逻辑保持不变
             print("Step 3: Building the Inference Dataset...")
@@ -1432,6 +1564,79 @@ if __name__ == '__main__':
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
     ) # visualize the outputs image
     
+    # 融合管道超参数
+    parser.add_argument(
+        "--voxel_size", 
+        type=float, 
+        default=0.05,
+        help="Voxel size for fusion pipeline (default: 0.05)"
+    )
+    
+    parser.add_argument(
+        "--opacity_threshold", 
+        type=float, 
+        default=0.01,
+        help="Opacity threshold for fusion pipeline (default: 0.01)"
+    )
+    
+    parser.add_argument(
+        "--depth_threshold", 
+        type=float, 
+        default=0.1,
+        help="Depth threshold for fusion pipeline (default: 0.1)"
+    )
+    
+    parser.add_argument(
+        "--window_optimization_iterations", 
+        type=int, 
+        default=50,
+        help="Number of window optimization iterations (default: 50)"
+    )
+    
+    parser.add_argument(
+        "--global_optimization_iterations", 
+        type=int, 
+        default=30,
+        help="Number of global optimization iterations (default: 30)"
+    )
+    
+    parser.add_argument(
+        "--lambda_depth", 
+        type=float, 
+        default=0.01,
+        help="Depth loss weight lambda (default: 0.01)"
+    )
+    
+    # 内存优化参数
+    parser.add_argument(
+        "--enable_memory_optimization",
+        action="store_true",
+        default=True,
+        help="Enable memory optimization strategies (default: True)"
+    )
+    
+    parser.add_argument(
+        "--memory_threshold",
+        type=float,
+        default=0.8,
+        help="Memory usage threshold for adaptive processing (default: 0.8)"
+    )
+    
+    parser.add_argument(
+        "--enable_gradient_checkpointing",
+        action="store_true",
+        default=True,
+        help="Enable gradient checkpointing to save memory (default: True)"
+    )
+    
+    # 配置保存参数
+    parser.add_argument(
+        "--save_config_txt",
+        action="store_true",
+        default=True,
+        help="Save configuration information to txt file (default: True)"
+    )
+
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
