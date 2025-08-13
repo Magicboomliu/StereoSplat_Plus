@@ -27,7 +27,17 @@ import json
 # define the models
 from models_lab.VolumeFusion.volumefusion import VolumeFusion
 import os
+
+# 内存优化配置
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # 帮助调试内存问题
+
+# 设置PyTorch内存分配策略
+torch.backends.cudnn.benchmark = False  # 减少内存碎片
+torch.backends.cudnn.deterministic = True
+
+# 启用梯度检查点以节省内存
+torch.utils.checkpoint.checkpoint_impl = "reentrant"
 from evaluations.data_container.simple_datareader import get_inputs_info,Get_First_Key_Frame_LiDAR_To_World
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
@@ -93,8 +103,49 @@ class FusionConfigurationDataset(Dataset):
 
 
 def main(args):
+    # 解析内存优化参数
+    enable_memory_optimization = getattr(args, 'enable_memory_optimization', True)
+    memory_threshold = getattr(args, 'memory_threshold', 0.8)
+    enable_gradient_checkpointing = getattr(args, 'enable_gradient_checkpointing', True)
+    
+    if enable_memory_optimization:
+        print("Memory optimization enabled")
+        if enable_gradient_checkpointing:
+            print("Gradient checkpointing enabled")
+            torch.utils.checkpoint.checkpoint_impl = "reentrant"
+    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
+
+    # 添加内存监控
+    def print_gpu_memory_usage():
+        """打印GPU内存使用情况"""
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            print(f"GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved, {total:.2f}GB total")
+    
+    def adaptive_batch_processing(batch, cfg, max_memory_threshold=memory_threshold):
+        """自适应批处理大小，根据内存使用情况调整"""
+        if torch.cuda.is_available():
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated_memory = torch.cuda.memory_allocated()
+            
+            # 如果内存使用超过阈值，尝试减少处理规模
+            if allocated_memory / total_memory > max_memory_threshold:
+                print(f"High memory usage detected ({allocated_memory/total_memory*100:.1f}%). Attempting memory optimization...")
+                
+                # 清理缓存
+                torch.cuda.empty_cache()
+                
+                # 如果还是高内存，返回None表示需要跳过
+                if torch.cuda.memory_allocated() / total_memory > max_memory_threshold:
+                    print("Memory still high after cleanup. Skipping this batch.")
+                    return None
+        
+        # 正常处理
+        return my_model.filewise_inference_only(batch, cfg=cfg)
 
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -150,6 +201,21 @@ def main(args):
                             camera_args=cfg.camera_args,
                             dataset_params=cfg.dataset_params,
                             use_checkpoint=cfg.use_checkpoint)
+
+    # 应用内存优化策略
+    if enable_memory_optimization:
+        # 启用梯度检查点
+        if hasattr(my_model, 'costvolume_gs') and enable_gradient_checkpointing:
+            my_model.costvolume_gs.gradient_checkpointing = True
+            print("Enabled gradient checkpointing for costvolume_gs")
+        
+        # 如果模型支持，启用CPU卸载
+        if hasattr(my_model, 'enable_cpu_offload'):
+            my_model.enable_cpu_offload()
+            print("Enabled CPU offloading for model")
+        
+        # 设置模型为评估模式以节省内存
+        my_model.eval()
 
     my_model= accelerator.prepare(my_model)
 
@@ -271,13 +337,45 @@ def main(args):
             # 增量式处理后续关键帧
             key_frame_index = 1
 
+            # 添加内存管理
+            def clear_gpu_cache():
+                """清理GPU缓存和中间变量"""
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            
+            def clear_intermediate_variables():
+                """清理中间变量"""
+                nonlocal current_gaussians, current_pose, current_c2w, current_intrinsics, current_image_size
+                nonlocal supervision_frames
+                
+                # 清理中间变量
+                del current_gaussians, current_pose, current_c2w, current_intrinsics, current_image_size
+                del supervision_frames
+                
+                # 清理GPU缓存
+                clear_gpu_cache()
                         
             for batch in tqdm(list(configuration_fuse_dataloader)[1:], desc="Processing keyframes"):
                 print(f"Processing keyframe {key_frame_index}...")
                 
+                # 在处理新key frame前清理内存
+                if key_frame_index > 1:
+                    clear_gpu_cache()
                 
-                # 获取当前关键帧的3DGS
-                current_gaussians = my_model.filewise_inference_only(batch, cfg=cfg)
+                # 打印当前内存使用情况
+                print_gpu_memory_usage()
+                
+                # 获取当前关键帧的3DGS（使用自适应批处理）
+                with torch.no_grad():
+                    current_gaussians = adaptive_batch_processing(batch, cfg)
+                    
+                    # 如果内存不足导致处理失败，跳过这个key frame
+                    if current_gaussians is None:
+                        print(f"Skipping keyframe {key_frame_index} due to memory constraints")
+                        key_frame_index += 1
+                        continue
+                        
                 current_pose = batch['input']['lidar_to_world'][0][0] # current LIDAR to World LIDAR 
                 
                 
@@ -302,25 +400,68 @@ def main(args):
  
                 
                 # 使用新的融合模块进行增量式融合
-                global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
-                    global_gaussians_prev=global_gaussains,
-                    new_keyframe_gaussians=current_gaussians,
-                    new_keyframe_pose=current_c2w,  # 使用相机姿态用于FOV判断
-                    new_keyframe_intrinsics=current_intrinsics[0],
-                    new_keyframe_image_size=current_image_size,
-                    supervision_frames=supervision_frames,
-                    lidar_to_world_pose=current_pose  # 添加LIDAR姿态用于坐标变换
-                )
+                try:
+                    global_gaussains = fusion_pipeline.incremental_fusion_pipeline(
+                        global_gaussians_prev=global_gaussains,
+                        new_keyframe_gaussians=current_gaussians,
+                        new_keyframe_pose=current_c2w,  # 使用相机姿态用于FOV判断
+                        new_keyframe_intrinsics=current_intrinsics[0],
+                        new_keyframe_image_size=current_image_size,
+                        supervision_frames=supervision_frames,
+                        lidar_to_world_pose=current_pose  # 添加LIDAR姿态用于坐标变换
+                    )
+                    
+                    print(f"Successfully processed keyframe {key_frame_index}")
+                    
+                except torch.cuda.OutOfMemoryError as e:
+                    print(f"CUDA OOM at keyframe {key_frame_index}. Attempting memory cleanup...")
+                    
+                    # 强制清理内存
+                    clear_gpu_cache()
+                    
+                    # 尝试减少batch size或使用梯度检查点
+                    print("Attempting to process with reduced memory usage...")
+                    
+                    # 如果还是失败，尝试保存当前状态并退出
+                    if key_frame_index > 1:
+                        print(f"Saving current state at keyframe {key_frame_index-1}...")
+                        torch.save(global_gaussains, f"emergency_save_keyframe_{key_frame_index-1}.pt")
+                        print("Emergency save completed. Exiting...")
+                        break
+                    else:
+                        raise e
+                        
+                except Exception as e:
+                    print(f"Error processing keyframe {key_frame_index}: {str(e)}")
+                    
+                    # 如果是内存相关错误，尝试清理内存
+                    if "memory" in str(e).lower() or "cuda" in str(e).lower():
+                        print("Memory-related error detected. Attempting cleanup...")
+                        clear_gpu_cache()
+                        
+                        # 尝试跳过这个key frame
+                        print(f"Skipping keyframe {key_frame_index} due to error")
+                        key_frame_index += 1
+                        continue
+                    else:
+                        # 其他错误，重新抛出
+                        raise e
                 
-
+                # 清理中间变量
+                clear_intermediate_variables()
                 
                 # print(f"Global gaussians after fusion: {global_gaussains.shape}")
                 
                 key_frame_index += 1
                 
-                # 可选：保存中间结果用于调试
-                if key_frame_index <= 5:  # 只保存前几个关键帧的结果
-                    torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
+                # 每处理几个key frame后强制清理内存
+                if key_frame_index % 3 == 0:
+                    print(f"Periodic memory cleanup at keyframe {key_frame_index}")
+                    clear_gpu_cache()
+                
+                # # 可选：保存中间结果用于调试
+                # if key_frame_index <= 5:  # 只保存前几个关键帧的结果
+                #     torch.save(global_gaussains, f"debug_global_gs_keyframe_{key_frame_index}.pt")
             
             print(f"Final global gaussians: {global_gaussains.shape}")
             
