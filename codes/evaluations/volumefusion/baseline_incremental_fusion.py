@@ -343,8 +343,6 @@ def main(args):
         key_input_frames_idx, all_frames_idx = semi_global_info['key_frames_list'], semi_global_info['all_frames_list']
 
         
-
-        
         # get the first key input frame's LiDAR as the world orgin: where is 4x4
         first_key_frame_lidar_to_world_pose = Get_First_Key_Frame_LiDAR_To_World(val_params['datapath'],
                                                                                  key_input_frames_idx[0].replace("annotations","annotations_simple"))
