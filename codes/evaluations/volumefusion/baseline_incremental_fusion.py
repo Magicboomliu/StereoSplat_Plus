@@ -141,11 +141,21 @@ def main(args):
             # 融合管道超参数
             f.write("FUSION PIPELINE HYPERPARAMETERS:\n")
             f.write("-" * 40 + "\n")
-            f.write(f"Voxel size: {args.voxel_size}\n")
-            f.write(f"Opacity threshold: {args.opacity_threshold}\n")
-            f.write(f"Depth threshold: {args.depth_threshold}\n")
+            
+            f.write(f"Use pruning: {args.use_pruning}\n")
+            f.write(f"Use opacity based pruning: {args.use_opacity_based_pruning}\n")
+            f.write(f"Use geometry based pruning: {args.use_geometry_based_pruning}\n")
+            f.write(f"Use gradient based pruning: {args.use_gradient_based_pruning}\n")
+            
+            f.write(f"Geometry based pruning depth error threshold: {args.geometry_based_pruning_depth_error_threshold}\n")
+            f.write(f"Gradient based pruning keep ratio: {args.gradient_based_pruning_keep_ratio}\n")
+            f.write(f"Opacity based pruning threshold: {args.opacity_based_pruning_threshold}\n")
+            
+            f.write(f"Use window loss based optimization: {args.use_window_loss_based_optimization}\n")
+            f.write(f"Use global optimization: {args.use_global_optimization}\n")
             f.write(f"Window optimization iterations: {args.window_optimization_iterations}\n")
             f.write(f"Global optimization iterations: {args.global_optimization_iterations}\n")
+    
             f.write(f"Lambda depth: {args.lambda_depth}\n\n")
             
             # 内存优化配置
@@ -181,29 +191,7 @@ def main(args):
                 f.write(f"{key}: {value}\n")
             f.write("\n")
             
-            # 系统信息
-            f.write("SYSTEM INFORMATION:\n")
-            f.write("-" * 25 + "\n")
-            f.write(f"PyTorch version: {torch.__version__}\n")
-            f.write(f"CUDA available: {torch.cuda.is_available()}\n")
-            if torch.cuda.is_available():
-                f.write(f"CUDA version: {torch.version.cuda}\n")
-                f.write(f"GPU count: {torch.cuda.device_count()}\n")
-                f.write(f"Current GPU: {torch.cuda.current_device()}\n")
-                f.write(f"GPU name: {torch.cuda.get_device_name(0)}\n")
-                f.write(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB\n")
-            f.write("\n")
-            
-            # 环境变量
-            f.write("ENVIRONMENT VARIABLES:\n")
-            f.write("-" * 25 + "\n")
-            f.write(f"PYTORCH_CUDA_ALLOC_CONF: {os.environ.get('PYTORCH_CUDA_ALLOC_CONF', 'Not set')}\n")
-            f.write(f"CUDA_LAUNCH_BLOCKING: {os.environ.get('CUDA_LAUNCH_BLOCKING', 'Not set')}\n")
-            f.write("\n")
-            
-            f.write("=" * 60 + "\n")
-            f.write("END OF CONFIGURATION\n")
-            f.write("=" * 60 + "\n")
+
         
         print(f"Configuration saved to: {config_file_path}")
         return config_file_path
@@ -332,6 +320,24 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
     
+    
+    optimiation_options = {
+        "use_pruning": args.use_pruning,
+        
+        "use_gradient_based_pruning": args.use_gradient_based_pruning,
+        "use_opacity_based_pruning": args.use_opacity_based_pruning,
+        "use_geometry_based_pruning": args.use_geometry_based_pruning,
+
+        "use_window_loss_based_optimization": args.use_window_loss_based_optimization,
+        "use_global_optimization": args.use_global_optimization,
+    }
+    
+    # debug here
+    
+    
+    
+
+    
     volumefusion_renderer = my_model.renderer
     
     for idx, semi_global_info_path in enumerate(semi_global_map_list):
@@ -401,23 +407,17 @@ def main(args):
             fusion_pipeline = create_incremental_fusion_pipeline(
                 renderer=my_model.renderer,  # 传入渲染器
                 history_batch_data=[],  # 初始化空的历史数据列表
-                voxel_size=args.voxel_size,
-                opacity_threshold=args.opacity_threshold,
-                depth_threshold=args.depth_threshold,
+                geometry_based_pruning_depth_error_threshold=args.geometry_based_pruning_depth_error_threshold,
+                gradient_based_pruning_keep_ratio=args.gradient_based_pruning_keep_ratio,
+                opacity_based_pruning_threshold=args.opacity_based_pruning_threshold,
+                
                 window_optimization_iterations=args.window_optimization_iterations,
                 global_optimization_iterations=args.global_optimization_iterations,
-                lambda_depth=args.lambda_depth
+                lambda_depth=args.lambda_depth,
+                optimiation_options=optimiation_options,
             )
             
-            # 打印融合管道超参数
-            print("=== Fusion Pipeline Hyperparameters ===")
-            print(f"Voxel size: {args.voxel_size}")
-            print(f"Opacity threshold: {args.opacity_threshold}")
-            print(f"Depth threshold: {args.depth_threshold}")
-            print(f"Window optimization iterations: {args.window_optimization_iterations}")
-            print(f"Global optimization iterations: {args.global_optimization_iterations}")
-            print(f"Lambda depth: {args.lambda_depth}")
-            print("=====================================")
+
             
             fusion_pipeline = fusion_pipeline.to(accelerator.device)
             
@@ -514,7 +514,7 @@ def main(args):
                         new_keyframe_intrinsics=current_intrinsics[0],
                         new_keyframe_image_size=current_image_size,
                         supervision_frames=supervision_frames,
-                        lidar_to_world_pose=current_pose  # 添加LIDAR姿态用于坐标变换
+                        lidar_to_world_pose=current_pose
                     )
                     
                     print(f"Successfully processed keyframe {key_frame_index}")
@@ -531,7 +531,7 @@ def main(args):
                     # 如果还是失败，尝试保存当前状态并退出
                     if key_frame_index > 1:
                         print(f"Saving current state at keyframe {key_frame_index-1}...")
-                        torch.save(global_gaussains, f"emergency_save_keyframe_{key_frame_index-1}.pt")
+                        #torch.save(global_gaussains, f"emergency_save_keyframe_{key_frame_index-1}.pt")
                         print("Emergency save completed. Exiting...")
                         break
                     else:
@@ -637,14 +637,15 @@ def main(args):
                 fovxs = batch["output"]["fovxs"].to(accelerator.device)
                 fovys = batch["output"]["fovys"].to(accelerator.device)
                 
-                rendered_results =volumefusion_renderer.render(
-                    gaussians=global_gaussains,
-                    c2w=rendered_c2w,
-                    fovx=fovxs,
-                    fovy=fovys,
-                    rays_o=None,
-                    rays_d=None
-                )
+                with torch.no_grad():
+                    rendered_results =volumefusion_renderer.render(
+                        gaussians=global_gaussains,
+                        c2w=rendered_c2w,
+                        fovx=fovxs,
+                        fovy=fovys,
+                        rays_o=None,
+                        rays_d=None
+                    )
                 
                 rendered_image = rendered_results['image'] #(B,V,3,H,W)
                 rendered_depth = rendered_results['depth'] #(B,V,1,H,W)
@@ -680,14 +681,14 @@ def main(args):
                 if args.output_vis:
                     
                     # saved rendered images
-                    rendered_image_left = rendered_image[0][0].permute(1,2,0) #(H,W,3)
-                    rendered_image_right = rendered_image[0][1].permute(1,2,0) #(H,W,3)
+                    rendered_image_left = rendered_image[0][0].permute(1,2,0).detach() #(H,W,3)
+                    rendered_image_right = rendered_image[0][1].permute(1,2,0).detach() #(H,W,3)
                     rendered_image_for_vis = torch.cat((rendered_image_left,rendered_image_right),dim=1).cpu().numpy() 
                     skimage.io.imsave(saved_rendered_image_name,(rendered_image_for_vis*255).astype(np.uint8))
 
                     # saved rendered depths
-                    rendered_depth_left = rendered_depth[0][0][0]
-                    rendered_depth_right = rendered_depth[0][1][0]
+                    rendered_depth_left = rendered_depth[0][0][0].detach()
+                    rendered_depth_right = rendered_depth[0][1][0].detach()
                     rendered_depth_for_vis = torch.cat((rendered_depth_left,rendered_depth_right),dim=1).cpu().numpy()
                     rendered_depth_for_vis = clean_and_clip(rendered_depth_for_vis)
                     rendered_depth_for_vis = convert_depth_to_disp(factor=328.318735,depth=rendered_depth_for_vis)
@@ -1196,7 +1197,6 @@ def main(args):
         
         saved_into_json(saved_quality_results_dict_this_semi_global_map,path=saved_rendered_results_json_path)
 
-        
         quit()
         
 def load_dict_from_pickle(filepath):
@@ -1562,26 +1562,49 @@ if __name__ == '__main__':
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
     ) # visualize the outputs image
     
-    # 融合管道超参数
     parser.add_argument(
-        "--voxel_size", 
-        type=float, 
-        default=0.05,
-        help="Voxel size for fusion pipeline (default: 0.05)"
+        "--use_pruning",
+        action="store_true",
+        help="Use pruning (default: False)"
     )
     
     parser.add_argument(
-        "--opacity_threshold", 
-        type=float, 
-        default=0.01,
-        help="Opacity threshold for fusion pipeline (default: 0.01)"
+        "--use_gradient_based_pruning",
+        action="store_true",
+        help="Use gradient based pruning (default: False)"
     )
     
     parser.add_argument(
-        "--depth_threshold", 
-        type=float, 
+        "--use_opacity_based_pruning",
+        action="store_true",
+        help="Use opacity based pruning (default: False)"
+    )
+    
+    parser.add_argument(
+        "--use_geometry_based_pruning",
+        action="store_true",
+        help="Use geometry based pruning (default: False)"
+    )
+    
+    parser.add_argument(
+        "--geometry_based_pruning_depth_error_threshold",
+        type=float,
         default=0.1,
-        help="Depth threshold for fusion pipeline (default: 0.1)"
+        help="Geometry based pruning depth error threshold (default: 0.1)"
+    )
+    
+    parser.add_argument(
+        "--gradient_based_pruning_keep_ratio",
+        type=float,
+        default=0.1,
+        help="Gradient based pruning keep ratio (default: 0.1)"
+    )
+    
+    parser.add_argument(
+        "--opacity_based_pruning_threshold",
+        type=float,
+        default=0.01,
+        help="Opacity based pruning threshold (default: 0.01)"
     )
     
     parser.add_argument(
@@ -1633,6 +1656,20 @@ if __name__ == '__main__':
         action="store_true",
         default=True,
         help="Save configuration information to txt file (default: True)"
+    )
+    
+
+
+    parser.add_argument(
+        "--use_window_loss_based_optimization",
+        action="store_true",
+        help="Use window loss based optimization (default: False)"
+    )
+    
+    parser.add_argument(
+        "--use_global_optimization",
+        action="store_true",
+        help="Use global optimization (default: True)"
     )
 
     args = parser.parse_args()

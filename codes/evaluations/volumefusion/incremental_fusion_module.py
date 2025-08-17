@@ -9,6 +9,8 @@ import torch.optim as optim
 import random
 import matplotlib.pyplot as plt
 import lpips
+import skimage
+from rgb_loss import rgb_loss_l1_dssim_5d
 
 @torch.no_grad()
 def lpips_vgg_batch(pred_1v3hw: torch.Tensor,
@@ -63,38 +65,44 @@ class IncrementalGaussianFusion(nn.Module):
     
     def __init__(self, 
                  renderer=None,
-                 history_batch_data=None,
-                 voxel_size: float = 0.05,
-                 opacity_threshold: float = 0.01,
-                 depth_threshold: float = 0.1,
+                 history_batch_data=None,     
+                 opacity_based_pruning_threshold: float = 0.01,
+                 gradient_based_pruning_keep_ratio: float = 0.1,
+                 geometry_based_pruning_depth_error_threshold: float = 0.1,
+
                  window_optimization_iterations: int = 50,
                  global_optimization_iterations: int = 20,
-                 lambda_depth: float = 1.0):
-        """
-        初始化增量式高斯融合模块
-        
-        Args:
-            renderer: 渲染器实例，用于计算渲染损失
-            history_batch_data: 历史批次数据，用于全局优化
-            voxel_size: 体素大小（米）
-            opacity_threshold: 透明度阈值
-            depth_threshold: 深度阈值
-            window_optimization_iterations: 窗口优化迭代次数
-            global_optimization_iterations: 全局优化迭代次数
-            lambda_depth: 深度损失权重
-        """
+                 lambda_depth: float = 1.0,
+                 optimiation_options: Dict = None):
+
         super().__init__()
         self.renderer = renderer
         self.history_batch_data = history_batch_data
-        self.voxel_size = voxel_size
-        self.opacity_threshold = opacity_threshold
-        self.depth_threshold = depth_threshold
+        
+        self.opacity_based_pruning_threshold = opacity_based_pruning_threshold
+        self.gradient_based_pruning_keep_ratio = gradient_based_pruning_keep_ratio
+        self.geometry_based_pruning_depth_error_threshold = geometry_based_pruning_depth_error_threshold
+        
         self.window_optimization_iterations = window_optimization_iterations
         self.global_optimization_iterations = global_optimization_iterations
         self.lambda_depth = lambda_depth
         
         self.lpips_net = lpips.LPIPS(net='vgg').cuda().eval()
         
+        # 恢复原有的优化选项
+        if optimiation_options is not None:
+            self.optimiation_options = optimiation_options
+        else:
+            self.optimiation_options = {
+                "use_pruning": False,
+                "use_opacity_based_pruning": False,
+                "use_geometry_based_pruning": False,
+                "use_gradient_based_pruning": False,
+                "use_window_loss_based_optimization": False,
+                "use_global_optimization": True,
+            }
+        
+
     
     def store_batch_data_to_history(self, batch_data: Dict):
         self.history_batch_data.append(batch_data)
@@ -130,7 +138,7 @@ class IncrementalGaussianFusion(nn.Module):
         Returns:
             updated_global_gaussians: 更新后的全局高斯点 [1, N+M, 14]
         """
-        print("Starting incremental gaussian fusion pipeline...")
+
         
         # 确保数据类型一致性
         dtype = global_gaussians_prev.dtype
@@ -160,8 +168,6 @@ class IncrementalGaussianFusion(nn.Module):
             # 移除最旧的数据
             self.history_batch_data.pop(0)
         
-        print(f"Added current frame to history. Total history frames: {len(self.history_batch_data)}")
-
 
         # Step 2: 基于FOV分离重叠和遗留的高斯点
         print("Step 2: Separating overlapping and legacy gaussians based on FOV...")
@@ -172,37 +178,95 @@ class IncrementalGaussianFusion(nn.Module):
             new_keyframe_image_size
         )
         
+        
+        if self.optimiation_options["use_pruning"]:
+            # Simple Pruing by Opacity
+            if self.optimiation_options["use_opacity_based_pruning"]:
+                g_overlapped_pruned = self.filter_by_opacity(g_overlapped, self.opacity_based_pruning_threshold)
+
+                if len(g_overlapped) == 0:
+                    g_overlapped_pruned = new_gaussians_world[0][:1,:]
+            else:
+                g_overlapped_pruned = g_overlapped
+                
+            # Use Gradient-based Pruning
+            if self.optimiation_options["use_gradient_based_pruning"]:
+                if len(supervision_frames) > 0:
+                    g_overlapped_pruned = self.gradient_based_pruning(g_overlapped_pruned, supervision_frames[0], 
+                                                                      self.gradient_based_pruning_keep_ratio)
+                    
+
+                    if len(g_overlapped_pruned) == 0:
+                        g_overlapped_pruned = new_gaussians_world[0][:1,:]
+                else:
+                    g_overlapped_pruned = g_overlapped_pruned
+            else:
+                g_overlapped_pruned = g_overlapped_pruned
+                
+                
+            # # debug here
+            
+            # rendered_image, rendered_depth = self.rendered_views_using_gaussians(g_overlapped, 
+            #                                                                      supervision_frames[0])
+
+            # # skimage.io.imshow(rendered_image[0,0,:,:,:])
+            # rendered_image_vis = rendered_image[0,0,:,:,:].permute(1,2,0).detach().cpu().numpy()
+            # skimage.io.imsave("min_gradient.png",(rendered_image_vis*255).astype(np.uint8))
+            # quit()
+
+                
+            # Using Geometry-based Pruning
+            if self.optimiation_options["use_geometry_based_pruning"]:
+                if len(supervision_frames) > 0:
+                    if self.optimiation_options["use_gradient_based_pruning"]:
+                        g_overlapped_pruned_geo = self.geometry_based_pruning(g_overlapped, supervision_frames[0], 
+                                                                        self.geometry_based_pruning_depth_error_threshold)
+                        g_overlapped_pruned = torch.cat([g_overlapped_pruned, g_overlapped_pruned_geo], dim=0)
+                    else:
+                        g_overlapped_pruned = self.geometry_based_pruning(g_overlapped_pruned, supervision_frames[0], 
+                                                                        self.geometry_based_pruning_depth_error_threshold)
+                    if len(g_overlapped_pruned) == 0:
+                        g_overlapped_pruned = new_gaussians_world[0][:1,:]
+                else:
+                    g_overlapped_pruned = g_overlapped_pruned
+            else:
+                    g_overlapped_pruned = g_overlapped_pruned
+            
+            
+        else:
+            g_overlapped_pruned = g_overlapped
+        
+        
+        g_overlapped_for_optimization = torch.cat([g_overlapped_pruned, new_gaussians_world[0]], dim=0)
 
         
-        # Step 3: 启发式剪枝
-        print("Step 3: Heuristic pruning of overlapped gaussians...")
-        g_overlapped_pruned = self.heuristic_prev_prune(
-            g_overlapped, new_gaussians_world[0], new_keyframe_pose[0]  # 使用左相机姿态
-        )
         
- 
         
         # Step 4: 窗口优化
-        print(f"Step 4: Window loss-based optimization ({self.window_optimization_iterations} iterations)...")
-        g_overlapped_optimized = self.window_loss_based_optimization(
-            g_overlapped_pruned, new_keyframe_pose, new_keyframe_intrinsics,  # 使用完整的左右相机姿态和内参
-            new_keyframe_image_size, supervision_frames
-        )
-        
-        
+        if self.optimiation_options["use_window_loss_based_optimization"]:
+            print(f"Step 4: Window loss-based optimization ({self.window_optimization_iterations} iterations)...")
+            g_overlapped_optimized = self.window_loss_based_optimization(
+                g_overlapped_for_optimization, new_keyframe_pose, new_keyframe_intrinsics,  # 使用完整的左右相机姿态和内参
+                new_keyframe_image_size, supervision_frames
+            )
+        else:
+            g_overlapped_optimized = g_overlapped_for_optimization
+            
+            
         
         # Step 5: 融合优化后的重叠高斯点和遗留高斯点
         print("Step 5: Concatenating optimized overlapped and legacy gaussians...")
         g_update_global = torch.cat([g_overlapped_optimized, g_legacy], dim=0)
         
+        # Step 6: 全局优化
+        if self.optimiation_options["use_global_optimization"]:
+            print(f"Step 6: Global optimization ({self.global_optimization_iterations} iterations)...")
+            g_final_global = self.global_optimization(g_update_global,
+                                                      window_size=new_keyframe_image_size)
+        else:
+            g_final_global = g_update_global
         
 
-        
-        # Step 6: 全局优化
-        print(f"Step 6: Global optimization ({self.global_optimization_iterations} iterations)...")
-        g_final_global = self.global_optimization(g_update_global,
-                                                  window_size=new_keyframe_image_size)
-        
         
         return g_final_global.unsqueeze(0)  # [1, N, 14]
     
@@ -308,7 +372,10 @@ class IncrementalGaussianFusion(nn.Module):
         
         # 3. 体素化处理重叠区域
         if g_filtered.shape[0] > 0 and g_new.shape[0] > 0:
+            # FXIME
+            #g_voxelized = self.voxel_based_pruning(g_filtered, g_new, new_keyframe_pose)
             g_voxelized = self.voxel_based_pruning(g_filtered, g_new, new_keyframe_pose)
+            
             print(f"After voxel-based pruning: {g_voxelized.shape[0]} gaussians")
             return g_voxelized
         else:
@@ -438,24 +505,153 @@ class IncrementalGaussianFusion(nn.Module):
         print("Window optimization completed")
         return gaussians_optimizable.detach()
     
-    def compute_rendering_loss(self, gaussians: torch.Tensor, frame_data: Dict) -> torch.Tensor:
+    def rendered_views_using_gaussians(self, gaussians: torch.Tensor, 
+                                       frame_data: Dict) -> torch.Tensor:
         """
-        计算渲染损失（占位符实现）
+        """
+        rendered_c2w = frame_data["output"]["c2w"].to(gaussians.device)
+        fovxs = frame_data["output"]["fovxs"].to(gaussians.device)
+        fovys = frame_data["output"]["fovys"].to(gaussians.device)
+        
+        
+        if len(rendered_c2w.shape) < 4:
+            rendered_c2w = rendered_c2w.unsqueeze(0)
+        if len(fovxs.shape) < 2:
+            fovxs = fovxs.unsqueeze(0)
+        if len(fovys.shape) < 2:
+            fovys = fovys.unsqueeze(0)
+        
+        rendered_results = self.renderer.render(
+            gaussians=gaussians.unsqueeze(0),
+            c2w=rendered_c2w,
+            fovx=fovxs,
+            fovy=fovys,
+            rays_o=None,
+            rays_d=None
+        )
+        
+        rendered_image = rendered_results['image']
+        rendered_depth = rendered_results['depth']
+        
+        return rendered_image, rendered_depth
+
+
+    def gradient_based_pruning(self, gaussians: torch.Tensor, 
+                            frame_data: Dict, 
+                            keep_ratio: float = 0.1,
+                            keep_count: int = None) -> torch.Tensor:
+        """
+        基于梯度的剪枝：选择最可靠的10%高斯点
+        """
+        
+        if keep_count is None:
+            N = gaussians.shape[0]
+            target_count = int(N * keep_ratio)
+        else:
+            target_count = keep_count
+        
+        #print(f"Starting gradient-based pruning: {N} -> {target_count} gaussians (keep {keep_ratio*100}%)")
+        
+        # 确保高斯点需要梯度
+        gaussians = gaussians.detach().clone().requires_grad_(True)
+        
+        # 1. 渲染所有高斯点
+        rendered_c2w = frame_data["output"]["c2w"].to(gaussians.device)
+        fovxs = frame_data["output"]["fovxs"].to(gaussians.device)
+        fovys = frame_data["output"]["fovys"].to(gaussians.device)
+
+        if len(rendered_c2w.shape) < 4:
+            rendered_c2w = rendered_c2w.unsqueeze(0)
+        if len(fovxs.shape) < 2:
+            fovxs = fovxs.unsqueeze(0)
+        if len(fovys.shape) < 2:
+            fovys = fovys.unsqueeze(0)
+        
+        rendered_results = self.renderer.render(
+            gaussians=gaussians.unsqueeze(0),
+            c2w=rendered_c2w,
+            fovx=fovxs,
+            fovy=fovys,
+            rays_o=None,
+            rays_d=None
+        )
+        
+        # 2. 提取渲染结果
+        rendered_image = rendered_results['image']      # [1, V, 3, H, W]
+        rendered_depth = rendered_results['depth']      # [1, V, 1, H, W]
+        
+        # 3. 准备GT数据
+        if len(frame_data['output']['imgs'].shape) < 5:    
+            output_rgb_for_supervision = frame_data['output']['imgs'].unsqueeze(0).to(rendered_image.device)
+        else:
+            output_rgb_for_supervision = frame_data['output']['imgs'].to(rendered_image.device)
+        
+        if len(frame_data['output']['psuedo_depth']) < 4:
+            output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).unsqueeze(0).to(rendered_image.device)
+        else:
+            output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).to(rendered_image.device)
+        
+        # 4. 计算损失
+        rgb_l1_loss_value = F.l1_loss(rendered_image, output_rgb_for_supervision)
+        depth_l1_loss_value = F.l1_loss(rendered_depth, output_depth_for_supervision)
+        total_loss = rgb_l1_loss_value + self.lambda_depth * depth_l1_loss_value
+        
+        print(f"Total loss: {total_loss.item():.6f}")
+        
+        # 5. 反向传播，计算梯度
+        total_loss.backward()
+        
+        # 6. 分析每个高斯点的梯度贡献
+        gradient_contributions = self._analyze_gaussian_gradients(gaussians)
+        
+        # 7. 选择梯度最小的点（最可靠的点）
+        _, top_indices = torch.topk(-gradient_contributions, k=target_count)  # 负号选择最小的
+        
+        selected_gaussians = gaussians[top_indices].detach().clone()
+        
+
+        # 8. 清理梯度
+        gaussians.grad = None
+        gaussians.requires_grad_(False)
+        
+        return selected_gaussians
+
+    def _analyze_gaussian_gradients(self, gaussians: torch.Tensor) -> torch.Tensor:
+        """
+        分析每个高斯点的梯度贡献
         
         Args:
-            gaussians: 高斯点 [N, 14]
-            frame_data: 帧数据
+            gaussians: 高斯点 [N, 14]，需要已经计算过梯度
             
         Returns:
-            loss: 渲染损失
+            gradient_contributions: 每个点的梯度贡献 [N]
         """
-        # TODO: 实现完整的渲染损失计算
-        # 包括图像渲染损失和深度渲染损失
-        # loss = |I_render - I_GT| + λ|D_render - D_GT|
+        if gaussians.grad is None:
+            raise ValueError("Gaussians must have gradients computed")
         
-        # 目前返回一个小的随机损失作为占位符
-        return torch.tensor(0.001, device=gaussians.device, requires_grad=True)
-    
+        N = gaussians.shape[0]
+        device = gaussians.device
+        
+        # 计算每个高斯点的梯度范数
+        gradients = gaussians.grad  # [N, 14]
+        
+        # 方法1：所有参数的梯度范数
+        gradient_norms = torch.norm(gradients, dim=1)  # [N]
+        
+        # 方法2：只考虑位置和透明度的梯度（更关注几何和外观）
+        # position_gradients = gradients[:, :3]  # 位置梯度
+        # opacity_gradients = gradients[:, 6:7]  # 透明度梯度
+        # scale_gradients = gradients[:, 11:14]  # 尺度梯度
+        # 
+        # position_norms = torch.norm(position_gradients, dim=1)
+        # opacity_norms = torch.abs(opacity_gradients).squeeze()
+        # scale_norms = torch.norm(scale_gradients, dim=1)
+        # 
+        # # 加权组合
+        # gradient_norms = 0.5 * position_norms + 0.3 * opacity_norms + 0.2 * scale_norms
+        
+        return gradient_norms
+
     def compute_rendering_loss_multi_camera(self, 
                                           gaussians: torch.Tensor, 
                                           frame_data: Dict,
@@ -531,14 +727,16 @@ class IncrementalGaussianFusion(nn.Module):
             output_depth_for_supervision = frame_data['output']['psuedo_depth'].unsqueeze(0).to(rendered_image.device)
         
         # Loss Function Here
-        rgb_l1_loss_value = F.l1_loss(rendered_image, output_rgb_for_supervision)
+        #rgb_l1_loss_value = F.l1_loss(rendered_image, output_rgb_for_supervision)
+        
+        rgb_loss_l1_dssim_5d_value, rgb_loss_l1_dssim_5d_dict = rgb_loss_l1_dssim_5d(rendered_image, output_rgb_for_supervision)
         
         # lpips_loss_value = lpips_vgg_batch(rendered_image, output_rgb_for_supervision,
         #                                    net=self.lpips_net)
         
         # rgb_loss = rgb_l1_loss_value + lpips_loss_value*0.05
         
-        rgb_loss = rgb_l1_loss_value
+        rgb_loss = rgb_loss_l1_dssim_5d_value
         
         depth_l1_loss_value = F.l1_loss(rendered_depth, output_depth_for_supervision)
         
@@ -548,7 +746,6 @@ class IncrementalGaussianFusion(nn.Module):
         return total_loss 
         
 
-    
     def global_optimization(self, gaussians: torch.Tensor,
                             window_size: Tuple[int, int]) -> torch.Tensor:
         """
@@ -616,24 +813,150 @@ class IncrementalGaussianFusion(nn.Module):
         print("Global optimization completed")
         return gaussians_optimizable.detach()
     
-    def compute_global_consistency_loss(self, gaussians: torch.Tensor) -> torch.Tensor:
+
+    def filter_by_opacity(self, gaussians: torch.Tensor, 
+                          opacity_threshold: float = 0.01) -> torch.Tensor:
         """
-        计算全局一致性损失（占位符实现）
+        基于透明度的剪枝
+        """
+        opacity = gaussians[:, 6]
+        mask = opacity > opacity_threshold
+        return gaussians[mask]
+
+
+
+    def depth_consistency_mask(
+        self,
+        K: torch.Tensor,                 # (V, 3, 3)
+        cam2world: torch.Tensor,         # (V, 4, 4)
+        depth_maps: torch.Tensor,        # (V, H, W)
+        points_world: torch.Tensor,      # (N, 3)
+        threshold: float                 # 标量阈值（同单位：米）
+    ) -> torch.Tensor:
+        """
+        返回: mask (N,)，若某点被任一相机看到且 |z_pred - z_gt| < threshold 则为 True
+        """
+        device = points_world.device
+        dtype  = points_world.dtype
+        V, H, W = depth_maps.shape
+
+        # 1) world->cam 变换
+        world2cam = torch.linalg.inv(cam2world.to(device=device, dtype=dtype))  # (V, 4, 4)
+
+        # 准备点的齐次坐标，并扩展到 (V, N, 4)
+        N = points_world.shape[0]
+        ones = torch.ones((N, 1), device=device, dtype=dtype)
+        Pw_h = torch.cat([points_world.to(device=device, dtype=dtype), ones], dim=-1)  # (N,4)
+        Pw_h = Pw_h.unsqueeze(0).expand(V, -1, -1)                                     # (V,N,4)
+
+        # cam = world2cam @ Pw_h^T
+        cam = torch.bmm(world2cam, Pw_h.transpose(1, 2)).transpose(1, 2)  # (V,N,4)
+        Xc, Yc, Zc = cam[..., 0], cam[..., 1], cam[..., 2]                 # (V,N)
+
+        # 仅正深度
+        z_positive = Zc > 0
+
+        # 2) 像素投影 u = fx*x/z + cx, v = fy*y/z + cy（忽略skew）
+        K = K.to(device=device, dtype=dtype)
+        fx, fy = K[:, 0, 0].unsqueeze(-1), K[:, 1, 1].unsqueeze(-1)  # (V,1)
+        cx, cy = K[:, 0, 2].unsqueeze(-1), K[:, 1, 2].unsqueeze(-1)  # (V,1)
+
+        invZ = torch.where(z_positive, 1.0 / Zc, torch.zeros_like(Zc))
+        u = fx * (Xc * invZ) + cx   # (V,N)
+        v = fy * (Yc * invZ) + cy   # (V,N)
+
+        # 3) 双线性从深度图采样：需要把(u,v)归一化到[-1,1]
+        #    注意 align_corners=True 时，归一化公式为: x_norm = u/(W-1)*2 - 1; y 同理
+        x_norm = (u / (W - 1) * 2.0) - 1.0
+        y_norm = (v / (H - 1) * 2.0) - 1.0
+
+        # 有效像素范围（不让grid_sample把越界当成0深度误导）
+        in_bounds = (
+            (x_norm >= -1.0) & (x_norm <= 1.0) &
+            (y_norm >= -1.0) & (y_norm <= 1.0)
+        )
+
+        # 组织 grid 给 grid_sample: (V, N, 1, 2) ; input: (V,1,H,W)
+        grid = torch.stack([x_norm, y_norm], dim=-1).unsqueeze(2)  # (V,N,1,2)
+        depth_in = depth_maps.to(device=device, dtype=dtype).unsqueeze(1)  # (V,1,H,W)
+
+        # 采样 (V,1,N,1) -> (V,N)
+        depth_sampled = torch.nn.functional.grid_sample(
+            depth_in, grid,
+            mode='bilinear',
+            padding_mode='zeros',
+            align_corners=True
+        ).squeeze(1).squeeze(-1)  # (V,N)
+
+        # 4) 构建有效性：正深度 + 在图内 + gt深度>0
+        gt_valid = depth_sampled > 0
+        valid = z_positive & in_bounds & gt_valid  # (V,N)
+
+        # 5) 误差并聚合到点级别（任一相机满足即可）
+        err = (Zc - depth_sampled).abs()  # (V,N)
+        ok = valid & (err < float(threshold))
+
+        # 任一相机Ok -> 点可用
+        mask_any = ok.any(dim=0)  # (N,)
+
+        return mask_any
+    
+    # geometry-based pruning
+    def geometry_based_pruning(self, gaussians: torch.Tensor, 
+                               frame_data: Dict, 
+                               depth_error_threshold: float = 0.1) -> torch.Tensor:
+        """
+        基于几何的剪枝：删除深度误差大于阈值的3DGS
         
         Args:
             gaussians: 高斯点 [N, 14]
+            frame_data: 帧数据，包含相机参数和GT深度
+            depth_error_threshold: 深度误差阈值，大于此值的点会被删除
             
         Returns:
-            loss: 全局一致性损失
+            selected_gaussians: 选择后的高斯点 [M, 14], M <= N
         """
-        # TODO: 实现全局一致性损失
-        # 可以包括：
-        # 1. 时间一致性损失
-        # 2. 几何一致性损失
-        # 3. 正则化损失
+        gaussians_pcd = gaussians[:, :3]
+
+        gt_depth = frame_data['output']['psuedo_depth'] #(2,H,W)
+
+        mask = self.depth_consistency_mask(frame_data["output"]['cks'], 
+                                           frame_data["output"]['c2w'], 
+                                           gt_depth, 
+                                           gaussians_pcd,depth_error_threshold)
         
-        # 目前返回一个小的随机损失作为占位符
-        return torch.tensor(0.001, device=gaussians.device, requires_grad=True)
+        pruned_gaussians = gaussians[mask]
+        
+        return pruned_gaussians
+
+
+    def _fallback_simple_selection(self, gaussians: torch.Tensor, target_count: int) -> torch.Tensor:
+        """
+        回退方案：基于属性的简单选择
+        """
+        N = gaussians.shape[0]
+        
+        # 基于透明度和尺度评分
+        opacity_scores = gaussians[:, 6]  # 透明度
+        
+        scales = gaussians[:, 11:14]
+        scale_norms = torch.norm(scales, dim=1)
+        scale_scores = torch.where(
+            (scale_norms >= 0.05) & (scale_norms <= 0.2),
+            torch.ones_like(scale_norms),
+            0.5 * torch.ones_like(scale_norms)
+        )
+        
+        # 综合评分
+        total_scores = 0.7 * opacity_scores + 0.3 * scale_scores
+        
+        # 选择评分最高的点
+        _, top_indices = torch.topk(total_scores, k=target_count)
+        selected_gaussians = gaussians[top_indices]
+        
+        print(f"Fallback selection: {N} -> {target_count} gaussians")
+        
+        return selected_gaussians
     
     def transform_gaussians_to_world(self,
                                    gaussians: torch.Tensor,
@@ -690,7 +1013,8 @@ class IncrementalGaussianFusion(nn.Module):
         c2w = c2w.to(dtype=dtype, device=device)
         
         R = c2w[:3, :3]
-        R_c2w = Rscipy.from_matrix(R.cpu().numpy())
+        # 使用 detach() 避免梯度问题
+        R_c2w = Rscipy.from_matrix(R.detach().cpu().numpy())
         q_c2w = R_c2w.as_quat()
         q_c2w = torch.tensor([q_c2w[3], q_c2w[0], q_c2w[1], q_c2w[2]], 
                             device=device, dtype=dtype)
@@ -711,41 +1035,33 @@ class IncrementalGaussianFusion(nn.Module):
 
 
 
+
 def create_incremental_fusion_pipeline(renderer=None,
                                      history_batch_data=None,
-                                     voxel_size: float = 0.05,
-                                     opacity_threshold: float = 0.01,
-                                     depth_threshold: float = 0.1,
+                                     opacity_based_pruning_threshold: float = 0.01,
+                                     gradient_based_pruning_keep_ratio: float = 0.1,
+                                     geometry_based_pruning_depth_error_threshold: float = 0.1,
                                      window_optimization_iterations: int = 50,
                                      global_optimization_iterations: int = 20,
-                                     lambda_depth: float = 1.0) -> IncrementalGaussianFusion:
-    """
-    创建增量式高斯融合流水线
-    
-    Args:
-        renderer: 渲染器实例，用于计算渲染损失
-        history_batch_data: 历史批次数据，用于全局优化
-        voxel_size: 体素大小（米）
-        opacity_threshold: 透明度阈值
-        depth_threshold: 深度阈值
-        window_optimization_iterations: 窗口优化迭代次数
-        global_optimization_iterations: 全局优化迭代次数
-        lambda_depth: 深度损失权重
-        
-    Returns:
-        IncrementalGaussianFusion: 配置好的增量式高斯融合模块
-    """
-    return IncrementalGaussianFusion(
+                                     lambda_depth: float = 1.0,
+                                     optimiation_options: Dict = None) -> IncrementalGaussianFusion:
+ 
+
+    fusion_module = IncrementalGaussianFusion(
         renderer=renderer,
         history_batch_data=history_batch_data,
-        voxel_size=voxel_size,
-        opacity_threshold=opacity_threshold,
-        depth_threshold=depth_threshold,
+        geometry_based_pruning_depth_error_threshold=geometry_based_pruning_depth_error_threshold,
+        gradient_based_pruning_keep_ratio=gradient_based_pruning_keep_ratio,
+        opacity_based_pruning_threshold=opacity_based_pruning_threshold,
         window_optimization_iterations=window_optimization_iterations,
         global_optimization_iterations=global_optimization_iterations,
-        lambda_depth=lambda_depth
+        lambda_depth=lambda_depth,
+        optimiation_options=optimiation_options
     )
+    
 
+    
+    return fusion_module
 
 
 import numpy as np
