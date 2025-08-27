@@ -27,7 +27,7 @@ IncrementalFusion(){
 cd /home/zliu/Project2025/FeedStereoGS/codes/evaluations
 
 config_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/eval/optimize_fusion.py"
-output_folder="/data1/zliu/feedforward_outputs_fusion/VolumeFusion/OptimizeFusion/Windows_Optimization_Plus_Global_Optimization/From_Alpha_Geometry_Gradient"
+output_folder="/data1/zliu/feedforward_outputs_fusion/VolumeFusion/OptimizeFusion/Windows_Optimization_Only/Plus_Alpha_Geometry_Gradient"
 pretrained_model_path="/data1/zliu/feedforward_outputs_new/VolumeFusion/First_LiDAR_As_Ref_No_Offset/saved_models/checkpoint-150000/"
 semi_global_map="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/semi_global_maps/2013_05_28_drive_0000_sync"
 ablation_type="incremental_fusion"
@@ -55,9 +55,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --ablation_type $ablation_type \
     --output_vis \
     --use_window_loss_based_optimization \
-    --use_global_optimization \
     --window_optimization_iterations $window_optimization_iterations \
-    --global_optimization_iterations $global_optimization_iterations \
     --lambda_depth $lambda_depth \
     --use_pruning \
     --use_opacity_based_pruning \

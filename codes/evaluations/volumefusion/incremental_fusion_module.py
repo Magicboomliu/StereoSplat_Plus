@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import lpips
 import skimage
 from rgb_loss import rgb_loss_l1_dssim_5d
+from image_quality import psnr, ssim
 
 @torch.no_grad()
 def lpips_vgg_batch(pred_1v3hw: torch.Tensor,
@@ -178,6 +179,8 @@ class IncrementalGaussianFusion(nn.Module):
             new_keyframe_image_size
         )
         
+
+
         
         if self.optimiation_options["use_pruning"]:
             # Simple Pruing by Opacity
@@ -202,16 +205,22 @@ class IncrementalGaussianFusion(nn.Module):
                     g_overlapped_pruned = g_overlapped_pruned
             else:
                 g_overlapped_pruned = g_overlapped_pruned
-                
+            
+            
+ 
                 
             # # debug here
             
-            # rendered_image, rendered_depth = self.rendered_views_using_gaussians(g_overlapped, 
+            # rendered_image, rendered_depth = self.rendered_views_using_gaussians(torch.cat([g_overlapped_pruned, new_gaussians_world[0]], dim=0), 
             #                                                                      supervision_frames[0])
+            
 
-            # # skimage.io.imshow(rendered_image[0,0,:,:,:])
+            
+
+            # # # # skimage.io.imshow(rendered_image[0,0,:,:,:])
             # rendered_image_vis = rendered_image[0,0,:,:,:].permute(1,2,0).detach().cpu().numpy()
-            # skimage.io.imsave("min_gradient.png",(rendered_image_vis*255).astype(np.uint8))
+            # skimage.io.imsave("new_gs_revised.png",(rendered_image_vis*255).astype(np.uint8))
+            
             # quit()
 
                 
@@ -238,9 +247,11 @@ class IncrementalGaussianFusion(nn.Module):
         
         
         g_overlapped_for_optimization = torch.cat([g_overlapped_pruned, new_gaussians_world[0]], dim=0)
+        
+        
+        # FIMXE
+        g_overlapped_for_optimization = new_gaussians_world[0]
 
-        
-        
         
         # Step 4: 窗口优化
         if self.optimiation_options["use_window_loss_based_optimization"]:
