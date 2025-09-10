@@ -33,7 +33,6 @@ class TPVImageCrossAttention(BaseModule):
 
     def __init__(self,
                  embed_dims=256,
-                 num_cams=6,
                  pc_range=None,
                  dropout=0.1,
                  init_cfg=None,
@@ -53,7 +52,6 @@ class TPVImageCrossAttention(BaseModule):
         self.fp16_enabled = False
         self.deformable_attention = MODELS.build(deformable_attention)
         self.embed_dims = embed_dims
-        self.num_cams = num_cams
         self.output_proj = nn.Linear(embed_dims, embed_dims)
         self.batch_first = batch_first
         self.tpv_h, self.tpv_w, self.tpv_z = tpv_h, tpv_w, tpv_z
@@ -106,6 +104,9 @@ class TPVImageCrossAttention(BaseModule):
         if residual is None:
             inp_residual = query
         bs, _, _ = query.size()
+        
+
+        self.num_cams = key.shape[0]
 
         queries = torch.split(
             query, [

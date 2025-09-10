@@ -153,7 +153,6 @@ def crop_size(h,w,img,K=None,type='pil'):
         return cropped_image
     
 
-
 def load_conditions(img_paths, reso,depth_info_params):
     
     def maybe_resize(img, tgt_reso, ck):
@@ -171,8 +170,6 @@ def load_conditions(img_paths, reso,depth_info_params):
         return np.array(img), ck, resize_flag
     
     
-    
-
     imgs, cks = [], []
     
     if depth_info_params.use_pseudo_depth:

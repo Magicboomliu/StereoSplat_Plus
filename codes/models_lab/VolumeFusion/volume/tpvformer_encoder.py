@@ -9,6 +9,10 @@ from .cross_view_hybrid_attention import TPVCrossViewHybridAttention
 from .image_cross_attention import TPVMSDeformableAttention3D
 from einops import rearrange
 
+import math
+import torch.nn.functional as F
+from typing import Tuple
+
 
 # @MODELS.register_module()
 class TPVFormerEncoder(TransformerLayerSequence):
@@ -20,7 +24,6 @@ class TPVFormerEncoder(TransformerLayerSequence):
                  tpv_only=False,
                  pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
                  num_feature_levels=4,
-                 num_cams=6,
                  embed_dims=256,
                  num_points_in_pillar=[4, 32, 32],
                  num_points_in_pillar_cross_view=[32, 32, 32],
@@ -28,6 +31,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
                  transformerlayers=None,
                  positional_encoding=None,
                  return_intermediate=False):
+        
         
         super().__init__(transformerlayers, num_layers)
 
@@ -43,7 +47,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
         # 多尺度level embedding & camera embedding
         self.level_embeds = nn.Parameter(
             torch.Tensor(num_feature_levels, embed_dims))
-        self.cams_embeds = nn.Parameter(torch.Tensor(num_cams, embed_dims))
+
         
         # 三平面的TPV嵌入表示
         self.tpv_embedding_hw = nn.Embedding(tpv_h * tpv_w, embed_dims) # learnable, support index
@@ -92,7 +96,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
                     m, TPVCrossViewHybridAttention):
                 m.init_weights()
         normal_(self.level_embeds)
-        normal_(self.cams_embeds)
+        # normal_(self.cams_embeds)
 
     @staticmethod
     def get_cross_view_ref_points(tpv_h, tpv_w, tpv_z, num_points_in_pillar):
@@ -274,9 +278,104 @@ class TPVFormerEncoder(TransformerLayerSequence):
         tpv_mask = tpv_mask.permute(2, 1, 3, 0, 4).squeeze(-1)
 
         return reference_points_cam, tpv_mask
+    
 
 
-    def forward(self, mlvl_feats, project_feats, img_metas):
+    def pose_embedding_128(
+        self,
+        poses: torch.Tensor,              # [B,V,4,4] 或 [V,4,4]，cam2world
+        embed_dim: int = 128,
+        pos_scale: float = 25.0,          # 平移归一化（你的范围[-20,30]米，25是好起点）
+        base: float = 10000.0,            # 频率基数：越大→更平滑；常见1e3~1e5
+        rot_mode: str = "log",            # "log" 用 logR(轴角，推荐)；"rot6d" 用旋转矩阵前两列
+        rot_scale: float = math.pi,       # 旋转归一化（logR 用 π，rot6d 可用 1.0）
+        include_raw: bool = True          # 是否把原始(归一化后)的 t 和旋转分量也拼进去
+    ) -> torch.Tensor:
+        """
+        返回: [V, embed_dim] 的确定性编码（对每个标量通道做 sin/cos 多频正弦编码 + 可选原始分量）
+        说明：
+        - 平移 t 先除以 pos_scale（把米尺度压到 ~1）
+        - 旋转:
+            * rot_mode="log": R -> w ∈ R^3 (轴角向量)，再 / rot_scale
+            * rot_mode="rot6d": 取 R[:,:3,:2] 展平为 6 维，再 / rot_scale
+        - 每个标量通道分配相同的（偶数）维度：一半 sin 一半 cos；不足时尾部用 0 补齐
+        """
+        assert poses.shape[-2:] == (4, 4), "poses must end with (4,4)"
+        device, dtype = poses.device, poses.dtype
+
+        # -------- 取出 [V,3] 的平移 t 和 [V,3,3] 的旋转 R --------
+        if poses.ndim == 4:
+            V = poses.shape[1]
+            T = poses[0, :, :3, 3].to(device=device, dtype=dtype)   # [V,3]
+            R = poses[0, :, :3, :3].to(device=device, dtype=dtype)  # [V,3,3]
+        elif poses.ndim == 3:
+            V = poses.shape[0]
+            T = poses[:, :3, 3].to(device=device, dtype=dtype)      # [V,3]
+            R = poses[:, :3, :3].to(device=device, dtype=dtype)     # [V,3,3]
+        else:
+            raise ValueError("poses must be [B,V,4,4] or [V,4,4]")
+
+        # -------- 平移归一化 --------
+        t = T / float(pos_scale)                                     # [V,3]
+
+        # -------- 旋转表征 --------
+        if rot_mode.lower() in ("log", "logr", "so3", "axisangle"):
+            # so(3) 对数映射：R -> w（数值稳定版）
+            cos_th = ((R[...,0,0] + R[...,1,1] + R[...,2,2]) - 1.0) * 0.5
+            cos_th = cos_th.clamp(-1.0 + 1e-7, 1.0 - 1e-7)
+            th = torch.acos(cos_th)                                  # [V]
+            A = R - R.transpose(-1, -2)                              # [V,3,3] = 2 sin(th) [u]_x
+            vee = torch.stack([A[...,2,1], A[...,0,2], A[...,1,0]], dim=-1)  # [V,3]
+            sin_th = torch.sin(th)
+            w = (th / (2.0 * sin_th + 1e-6)).unsqueeze(-1) * vee     # [V,3]
+            small = th < 1e-4
+            if small.any():
+                w = w.clone()
+                w[small] = 0.5 * vee[small]
+            r = w / float(rot_scale)                                 # [V,3]
+            C_rot = 3
+        elif rot_mode.lower() in ("rot6d", "6d"):
+            r = R[:, :, :2].reshape(V, 6) / float(rot_scale)         # [V,6]
+            C_rot = 6
+        else:
+            raise ValueError("rot_mode must be 'log' or 'rot6d'")
+
+        # -------- 拼成标量通道 x=[t, r] --------
+        x = torch.cat([t, r], dim=-1).to(dtype)                      # [V, C]
+        C = x.shape[-1]
+        raw_dim = C if include_raw else 0
+        if include_raw and embed_dim < raw_dim:
+            raise ValueError(f"embed_dim={embed_dim} is smaller than raw feature dim={raw_dim}.")
+
+        # -------- 给每个通道分配 sin/cos 频率维度（偶数），余下补零 --------
+        # 预留 raw_dim 后，平均分配给每个通道；至少给每通道 2 维（=1个频率对）若空间足够
+        remain = max(embed_dim - raw_dim, 0)
+        per = (remain // C) // 2 * 2          # 每通道可用的 sin/cos 维度（偶数）
+        half = per // 2                        # 每通道的频率个数
+        used = C * per                         # 总的 sin/cos 维度
+        leftover = embed_dim - (used + raw_dim)
+
+        # -------- 生成确定性的对数刻度频率（device/dtype一致） --------
+        if half > 0:
+            freqs = base ** (-torch.linspace(0, 1, steps=half, device=device, dtype=dtype))  # [half]
+            angles = (x.unsqueeze(-1) * (2.0 * math.pi) * freqs.view(1, 1, -1))              # [V,C,half]
+            sincos = torch.cat([angles.sin(), angles.cos()], dim=-1).reshape(V, used)        # [V, used]
+        else:
+            sincos = x.new_zeros((V, 0))
+
+        # -------- 拼接 raw 分量 + 尾部补零 --------
+        out_list = [sincos]
+        if include_raw:
+            out_list.append(x)  # 原始(归一化后的)平移+旋转分量
+        out = torch.cat(out_list, dim=-1)                      # [V, used + raw_dim]
+        if leftover > 0:
+            out = F.pad(out, (0, leftover))                    # [V, embed_dim]
+        return out
+
+
+
+
+    def forward(self, mlvl_feats, project_feats, extrinsics,img_metas):
         """Forward function.
 
         Args:
@@ -284,6 +383,12 @@ class TPVFormerEncoder(TransformerLayerSequence):
                 network, each is a 5D-tensor with shape
                 (B, N, C, H, W).
         """
+        
+
+        # hard-cold camera embedding
+        cams_embeds = self.pose_embedding_128(poses=extrinsics,
+                                              embed_dim=128)
+        
         
         # default input size is [B,num_of_camearas,C,H//4,W//4]
         # [4,6,128,56,100]
@@ -328,7 +433,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
             spatial_shape = (h, w)
             feat = feat.flatten(3).permute(1, 0, 3, 2)  # num_cam, bs, hw, c
             
-            feat = feat + self.cams_embeds[:, None, None, :].to(dtype)
+            feat = feat + cams_embeds[:, None, None, :].to(dtype)
             feat = feat + self.level_embeds[None, None,
                                             lvl:lvl + 1, :].to(dtype)
             spatial_shapes.append(spatial_shape)

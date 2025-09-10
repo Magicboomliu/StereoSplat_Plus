@@ -44,7 +44,12 @@ class VolumeGaussian(BaseModule):
     def device(self):
         return next(self.parameters()).device
 
-    def forward(self, img_feats, candidate_gaussians, candidate_feats, img_metas=None, status="train"):
+    def forward(self, img_feats, 
+                extrinsics,
+                candidate_gaussians, 
+                candidate_feats, 
+                img_metas=None, 
+                status="train"):
         """Forward training function.
         # candaites gaussains: the shared location masked gaussians between the pixel gaussains and the volume gaussains.
         # candadiates feature mask : the shared locations masked gaussains features.
@@ -137,13 +142,11 @@ class VolumeGaussian(BaseModule):
             project_feats = [project_feats_hw, project_feats_zh, project_feats_wz]
         else:
             project_feats = [None, None, None]
-
         
         # get shared features
-        
         if self.use_checkpoint and status != "test":
             # img metas: including lidar2img, image shape.
-            input_vars_enc = (img_feats, project_feats, img_metas)
+            input_vars_enc = (img_feats, project_feats,extrinsics, img_metas)
             outs = torch.utils.checkpoint.checkpoint(
                 self.encoder, *input_vars_enc, use_reentrant=False
             )
@@ -151,7 +154,7 @@ class VolumeGaussian(BaseModule):
         else:
             
             # gaussain encoding.
-            outs = self.encoder(img_feats, project_feats, img_metas) #
+            outs = self.encoder(img_feats, project_feats,extrinsics, img_metas) #
             
             # gaussain decoding.
             gaussians = self.gs_decoder(outs) #(B,tpv_h, tpv_w, tpv_z,3,14), here 3 is the gpv
