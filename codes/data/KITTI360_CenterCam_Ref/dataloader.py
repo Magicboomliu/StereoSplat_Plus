@@ -67,6 +67,9 @@ class KITTI360Dataset(Dataset):
         self.camera_model = camera_model
         
         
+        
+        # there are two kinds of the cameras,
+        
         self.camera_types = [
             "CAM_LEFT",
             "CAM_RIGHT"
@@ -103,10 +106,25 @@ class KITTI360Dataset(Dataset):
         
 
     def _uniform_sample(self,ordered_list, N):
-        if N <= 0 or N > len(ordered_list):
-            raise ValueError("N must be > 0 and <= length of ordered_list")
+        if N <= 0:
+            raise ValueError("N must be > 0")
 
         total = len(ordered_list)
+        if total == 0:
+            raise ValueError("ordered_list cannot be empty")
+        
+        # 如果N大于等于列表长度，允许重复采样
+        if N >= total:
+            # 先添加所有元素
+            result = list(ordered_list)
+            # 如果还需要更多元素，进行重复采样
+            if N > total:
+                remaining = N - total
+                for i in range(remaining):
+                    result.append(ordered_list[i % total])
+            return result
+        
+        # 原来的均匀采样逻辑（当N < total时）
         step = (total - 1) / (N - 1) if N > 1 else 0
         indices = []
         last_index = -1

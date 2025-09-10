@@ -54,6 +54,11 @@ def main(args):
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
     
+    print(cfg)
+    quit()
+    
+    
+    
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(

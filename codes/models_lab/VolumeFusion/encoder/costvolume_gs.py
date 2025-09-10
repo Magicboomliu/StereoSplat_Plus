@@ -140,7 +140,7 @@ class CostVolumeGS(nn.Module):
         predicted_input_depth = results_dict['depth_preds'][0]
         
         if cfg.train_depth_only:
-            pass
+            return predicted_input_depth
         
         
         else:
