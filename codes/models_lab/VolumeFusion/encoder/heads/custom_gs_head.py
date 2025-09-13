@@ -8,7 +8,7 @@ from jaxtyping import Float
 
 import sys
 from ..unimatch.dpt_head import DPTHead
-from einops import rearrange, einsum
+from einops import rearrange, einsum, repeat
 
 
 def get_world_points_from_depth(depth, K, T):
@@ -215,16 +215,30 @@ class Custom_Gaussain_Head(nn.Module):
         rotations = self.rot_act(gaussians[..., 7:11]) # rotations, 4-dimension, quard
         rgbs = self.rgb_act(gaussians[..., 11:14]) # RGB
         
-
-        means = get_world_points_from_depth(depth=depths,
-                                            K=intrinsics,
-                                            T=extrinsics)
-        means = rearrange(means, "b v c h w -> b (v h w) c",
-                              b=b, v=v, c=3) #(B,V*H*W,14)
         
-        #FIXME
-        if cfg.used_3D_offset:
-            means = means + offsets
+        if not cfg.used_3D_offset:
+            means = get_world_points_from_depth(depth=depths,
+                                                K=intrinsics,
+                                                T=extrinsics)
+            means = rearrange(means, "b v c h w -> b (v h w) c",
+                                b=b, v=v, c=3) #(B,V*H*W,14)
+        else:
+            means = get_world_points_from_depth(depth=depths, K=intrinsics, T=extrinsics)   # [B,V,3,H,W]
+            means = rearrange(means, "b v c h w -> b (v h w) c", b=b, v=v, c=3)             # [B, VHW, 3]
+
+            # --- 如果需要 3D offset：将 camera 系 offset 旋到 world 再相加 ---
+            # R: [B,V,3,3] -> 重复到 [B,VHW,3,3]
+            R = extrinsics[:, :, :3, :3]                                               # [B,V,3,3]
+            R_rep = repeat(R, "b v i j -> b (v h w) i j", h=h, w=w)                    # [B, VHW, 3,3]
+
+            # 将 offsets 视为 camera 坐标的偏移（做个温和限幅/尺度，默认 ~5cm，可在 cfg 里覆盖）
+            offset_scale = getattr(cfg, "offset_scale", 0.05)                           # 0.05m ≈ 5 cm
+            offsets_cam = torch.tanh(offsets) * offset_scale                            # [B, VHW, 3]
+
+            # 旋到 world：delta_world = R * offsets_cam
+            delta_world = einsum(R_rep, offsets_cam, "b n i j, b n j -> b n i")         # [B, VHW, 3]
+            means = means + delta_world
+                
         
         gaussians = torch.cat([means, rgbs, opacities, rotations, scales], dim=-1)
  

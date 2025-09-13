@@ -24,9 +24,7 @@ class VolumeGaussian(BaseModule):
 
         self.use_checkpoint = use_checkpoint
 
-        
-        self.encoder = TPVFormerEncoder(**encoder)
-        
+        self.encoder = TPVFormerEncoder(**encoder)        
         self.gs_decoder = VolumeGaussianDecoder(**gs_decoder)
 
 

@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion_kitti360_stereo_224x1088"
-output_dir = "/data1/zliu/feedforward_outputs_new/VolumeFusion/112x544/6_Input_4_Match/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_new/VolumeFusion/112x544_RandomSample/6_Input_4_Match/visualization"
 validation_vis_progress=True
 
 # learning rate setiing
@@ -45,12 +45,12 @@ test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/v
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=6
-world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
+world_center="First_LiDAR_3_Uniform" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 # if neccssary
 unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
-used_3D_offset=False
+used_3D_offset=True
 
 
 depth_info_params = dict(

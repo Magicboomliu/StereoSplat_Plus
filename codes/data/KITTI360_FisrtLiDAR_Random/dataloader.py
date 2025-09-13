@@ -29,6 +29,32 @@ from model.utils.typing import *
 from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
 from data.KITTI360_CenterCam_Ref.transforms.loading import load_info,load_conditions
+import random
+
+def sample_three(lst, seed=None):
+    """
+    从 lst 中随机取三个元素：
+      - 第一个固定为 0（要求 lst 中包含 0）
+      - 第二个在所有 >=3 的元素中随机选
+      - 第三个在所有 >= 第二个元素的集合中随机选
+    可能出现重复（例如长度为4时只能取到 [0,3,3]）
+    """
+    if seed is not None:
+        random.seed(int(seed))
+
+    if 1 not in lst:
+        raise ValueError("lst 必须包含值 0 作为第一个元素。")
+
+    cand2 = [x for x in lst if x >= 3]
+    if not cand2:
+        raise ValueError("lst 中需要至少有一个值 ≥ 3（例如长度≥4且包含 3）。")
+
+    second = random.choice(cand2)
+    cand3 = [x for x in lst if x >= second]
+    third = random.choice(cand3)
+
+    return [1, second, third]
+
 
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
@@ -147,18 +173,18 @@ class KITTI360Dataset(Dataset):
         abs_bin_token_fname = os.path.join(self.datapath,"feedforward_bins",self.data_version,bin_token_name)    
         bin_info = self._load_pkl_file(abs_bin_token_fname)
         
+
         
         if not self.input_additional:
             input_view_indices = [1]  #center/ first/last
         # using input additional views
         else:
             if len(bin_info["sensor_info"]["CAM_LEFT"]) >= 2:
-                input_view_indices = [1, 3, 4]
-            else:
+                input_view_indices = sample_three(list(range(len(bin_info["sensor_info"]["CAM_LEFT"]))))
+                
                 input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
             
         
-
                 
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []

@@ -87,6 +87,8 @@ def main(args):
             import data.KITTI360_FirstCam_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR":
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR_3_Uniform":
+            import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
 
@@ -158,6 +160,8 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
+
+    
     
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
@@ -261,10 +265,16 @@ def main(args):
                 
                 try:
                     if args.gpus <= 1:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", iter=global_iter, cfg=cfg)
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", 
+                                                                                                                        view_num=6,
+                                                                                                                        matching_nums=4,
+                                                                                                                         iter=global_iter, cfg=cfg)
                     else:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", iter=global_iter, cfg=cfg)
-                    
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", 
+                                                                                                                               view_num=6,
+                                                                                                                               matching_nums=4,
+                                                                                                                               iter=global_iter, cfg=cfg)
+                        
         
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -287,7 +297,9 @@ def main(args):
                         continue
                     else:
                         raise e  # 其他错误照常抛出
-                
+            
+            
+            
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             accelerator.wait_for_everyone()
@@ -305,13 +317,10 @@ def main(args):
                 if global_iter % 100 == 0:
                     torch.cuda.empty_cache()
 
-
-
             # perform the validation scripts
                 if global_iter % cfg.val_freq == 0:
                     my_model.eval()
                     if accelerator.is_main_process:
-                        
                         
                         #=========================================================================#
                         output_rgb_meter_center_fusion = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),

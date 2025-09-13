@@ -61,7 +61,6 @@ def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
 
     return mae, mse
 
-
 def get_pointmap_from_depth(depth, intrinsics, c2w):
     """
     depth:      [B, V, H, W]
@@ -97,7 +96,6 @@ def get_pointmap_from_depth(depth, intrinsics, c2w):
 
     world_points = torch.matmul(R, cam_points.unsqueeze(-1)).squeeze(-1) + T  # [B, V, H, W, 3]
     return world_points
-
 
 def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     if torch.isnan(gaussians).any() or torch.isinf(gaussians).any():
@@ -460,7 +458,6 @@ class VolumeFusionRevision(BaseModule):
         
         gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
         bs = gaussians_all.shape[0] # batch size is 2
-
         
         # doing rendering here
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
@@ -491,6 +488,8 @@ class VolumeFusionRevision(BaseModule):
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+
         
         
         if mode =='train' or mode=='val':
