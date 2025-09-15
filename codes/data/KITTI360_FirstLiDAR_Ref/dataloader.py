@@ -279,6 +279,14 @@ class KITTI360Dataset(Dataset):
             else:
                 rend_indices = [[0]] * len(self.camera_types)
             
+            if self.supp_view_nums=="all":
+                # -3 is the center 
+                # -2 is the last
+                # -1 is the first
+                rend_indices = [list(range(len(bin_info["sensor_info"]["CAM_LEFT"])))[3:]+[0,2]] * len(self.camera_types)
+                
+            
+            
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]
             for ind in indices:

@@ -120,3 +120,53 @@ def compute_psnr_ssim(pred, target):
 
     return psnr_val,ssim_val
     # return torch.stack(psnr_vals).mean().data.item(), torch.stack(ssim_vals).mean().data.item()
+
+
+def compute_stereo_psnr_ssim(pred, target):
+    B,V, C, H, W = pred.shape
+    
+    pred_left = pred[:,0,:,:,:]
+    pred_right = pred[:,1,:,:,:]
+    target_left = target[:,0,:,:,:]
+    target_right = target[:,1,:,:,:]
+    
+    psnr_val_left = psnr(pred_left, target_left, data_range=1.0)
+    ssim_val_left = ssim(pred_left, target_left, data_range=1.0)
+    psnr_val_right = psnr(pred_right, target_right, data_range=1.0)
+    ssim_val_right = ssim(pred_right, target_right, data_range=1.0)
+
+    return psnr_val_left,ssim_val_left,psnr_val_right,ssim_val_right
+
+
+def compute_all_stereo_psnr_ssim(pred, target):
+    B,V, C, H, W = pred.shape
+    left_psnr_average = 0
+    right_psnr_average = 0
+    left_ssim_average = 0
+    right_ssim_average = 0
+    
+    for i in range(V):
+        if i%2 == 0:
+            
+            pred_stereo = pred[:,i,:,:,:]
+            target_stereo = target[:,i,:,:,:]
+            psnr_val_stereo = psnr(pred_stereo, target_stereo, data_range=1.0)
+            ssim_val_stereo = ssim(pred_stereo, target_stereo, data_range=1.0)
+            left_psnr_average += psnr_val_stereo
+            left_ssim_average += ssim_val_stereo
+        else:
+            pred_stereo = pred[:,i,:,:,:]
+            target_stereo = target[:,i,:,:,:]
+            psnr_val_stereo = psnr(pred_stereo, target_stereo, data_range=1.0)
+            ssim_val_stereo = ssim(pred_stereo, target_stereo, data_range=1.0)
+            right_psnr_average += psnr_val_stereo
+            right_ssim_average += ssim_val_stereo
+
+        
+    left_psnr_average /= V//2
+    left_ssim_average /= V//2
+    right_psnr_average /= V//2
+    right_ssim_average /= V//2
+    
+    return left_psnr_average,left_ssim_average,right_psnr_average,right_ssim_average
+    
