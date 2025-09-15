@@ -26,8 +26,8 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
-from models_lab.VolumeFusion.volumefusion import VolumeFusion
 
+from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
@@ -140,16 +140,17 @@ def main(args):
         os.makedirs(args.output_folder, exist_ok=True)
         cfg.dump(osp.join(args.output_folder, osp.basename(args.config_path)))
     
-    if args.dataset_type=="Center_LiDAR":
-        import sys
-        sys.path.append("..")
-        import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
-    elif args.dataset_type=="First_LiDAR":
-        import sys
-        sys.path.append("..")
-        import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
+    if cfg.world_center is not None:
+        if cfg.world_center=="Center_LiDAR":
+            import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_Cam0":
+            import data.KITTI360_FirstCam_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR":
+            import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
+        elif cfg.world_center=="First_LiDAR_3_Uniform":
+            import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
     else:
-        raise NotImplementedError
+        import data.KITTI360_CenterCam_Ref.dataloader as datasets
     
     
     dataset = getattr(datasets, dataset_config.dataset_name)
@@ -168,11 +169,14 @@ def main(args):
         "resolution":dataset_config.resolution, 
         "split":"val",
         "sequence":dataset_config.sequence,
-        "supp_view_nums": 3,
+        "use_center":dataset_config.use_center,
+        "use_first": dataset_config.use_first,
+        "use_last": dataset_config.use_last,
+        "supp_view_nums": "all",
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-        "pair_images": dataset_config.pair_images
+        "camera_model": dataset_config.camera_model
     }
+
     
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
@@ -181,16 +185,15 @@ def main(args):
     )
 
 
-    
     # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusion(backbone=cfg.model.backbone,
-                            neck=cfg.model.neck,
-                            costvolume_gs=cfg.model.costvolume_gs,
-                            volume_gs=cfg.model.volume_gs,
-                            losses_params=cfg.model.losses_params,
-                            camera_args=cfg.camera_args,
-                            dataset_params=cfg.dataset_params,
-                            use_checkpoint=cfg.use_checkpoint)
+    my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
+                                    neck=cfg.model.neck,
+                                    costvolume_gs=cfg.model.costvolume_gs,
+                                    volume_gs=cfg.model.volume_gs,
+                                    losses_params=cfg.model.losses_params,
+                                    camera_args=cfg.camera_args,
+                                    dataset_params=cfg.dataset_params,
+                                    use_checkpoint=cfg.use_checkpoint)
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
@@ -223,6 +226,7 @@ def main(args):
         "all_avg_l":Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
         "all_avg_r":Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
     }
+    
 
 
     with torch.no_grad():
@@ -230,13 +234,16 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
+
             
             rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
-            left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list= my_model.validation_complete_with_bin_tokens(batch,
+            left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list= my_model.validation_on_the_forward_views(batch,
                                             args.output_folder,
                                             bin_token_list,
-                                            saved_label=args.output_vis,
-                                            cfg=cfg)
+                                            cfg=cfg,
+                                            view_num=2,
+                                            matching_nums=2,
+                                            vis=args.output_vis)
 
 
             left_psnr_first,left_psnr_center,left_psnr_last = left_psnr_list[:3]
