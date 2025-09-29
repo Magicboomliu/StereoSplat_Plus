@@ -16,7 +16,6 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
-
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
@@ -28,91 +27,12 @@ import json
 # define the models
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
-
-def saved_into_json(data_dict,path):
-    with open(path, "w") as f:
-        json.dump(data_dict, f, indent=4)
-
-class Basic_Meter(object):
-    def __init__(self,psnr,ssim,mae,mse):
-        self.psnr = psnr
-        self.ssim = ssim
-        self.mae = mae
-        self.mse = mse
-        self.counter = 0
-    
-    def update(self,psnr,ssim,mae,mse):
-        self.psnr +=psnr
-        self.ssim +=ssim
-        self.mae +=mae
-        self.mse +=mse
-        self.counter = self.counter+1
-    
-    def get_stats(self):
-        if self.counter ==0:
-            return{
-            "psnr": 0,
-            "ssim": 0,
-            "mae": 0,
-            "mse":0
-                
-            }
-        else:
-            return {
-                "psnr": self.psnr/self.counter,
-                "ssim": self.ssim/self.counter,
-                "mae": self.mae/self.counter,
-                "mse":self.mse/self.counter
-            }
-
-def convert_depth_to_disp(factor=328.318735,depth=None):
-    
-    mask = depth>0
-    mask = mask.astype(np.float32)
-
-    disparity = factor / (depth +1e-3)
-    disparity = disparity * mask
-    disparity = np.clip(disparity,a_max=220,a_min=0)
-    
-    disparity = kitti_colormap(disparity)
-    return disparity
-
-def kitti_colormap(disparity, maxval=-1):
-	"""
-	A utility function to reproduce KITTI fake colormap
-	Arguments:
-	  - disparity: numpy float32 array of dimension HxW
-	  - maxval: maximum disparity value for normalization (if equal to -1, the maximum value in disparity will be used)
-	
-	Returns a numpy uint8 array of shape HxWx3.
-	"""
-	if maxval < 0:
-		maxval = np.max(disparity)
-
-	colormap = np.asarray([[0,0,0,114],[0,0,1,185],[1,0,0,114],[1,0,1,174],[0,1,0,114],[0,1,1,185],[1,1,0,114],[1,1,1,0]])
-	weights = np.asarray([8.771929824561404,5.405405405405405,8.771929824561404,5.747126436781609,8.771929824561404,5.405405405405405,8.771929824561404,0])
-	cumsum = np.asarray([0,0.114,0.299,0.413,0.587,0.701,0.8859999999999999,0.9999999999999999])
-
-	colored_disp = np.zeros([disparity.shape[0], disparity.shape[1], 3])
-	values = np.expand_dims(np.minimum(np.maximum(disparity/maxval, 0.), 1.), -1)
-	bins = np.repeat(np.repeat(np.expand_dims(np.expand_dims(cumsum,axis=0),axis=0), disparity.shape[1], axis=1), disparity.shape[0], axis=0)
-	diffs = np.where((np.repeat(values, 8, axis=-1) - bins) > 0, -1000, (np.repeat(values, 8, axis=-1) - bins))
-	index = np.argmax(diffs, axis=-1)-1
-
-	w = 1-(values[:,:,0]-cumsum[index])*np.asarray(weights)[index]
 
 
-	colored_disp[:,:,2] = (w*colormap[index][:,:,0] + (1.-w)*colormap[index+1][:,:,0])
-	colored_disp[:,:,1] = (w*colormap[index][:,:,1] + (1.-w)*colormap[index+1][:,:,1])
-	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
-
-	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
-
 
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -148,9 +68,9 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        
     
     dataset = getattr(datasets, dataset_config.dataset_name)
     
@@ -182,8 +102,7 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
+    
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -213,49 +132,11 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-        
-    view_num = 2
-    matching_nums = 2
     
-    evaluate_results_average_dict_rgb = {
-        "first_view_psnr_left": 0,
-        "first_view_ssim_left": 0,
-        "first_view_psnr_right": 0,
-        "first_view_ssim_right": 0,
-        "center_view_psnr_left": 0,
-        "center_view_ssim_left": 0,
-        "center_view_psnr_right": 0,
-        "center_view_ssim_right": 0,
-        "last_view_psnr_left": 0,
-        "last_view_ssim_left": 0,
-        "last_view_psnr_right": 0,
-        "last_view_ssim_right": 0,
-        "all_view_psnr_left": 0,
-        "all_view_ssim_left": 0,
-        "all_view_psnr_right": 0,
-        "all_view_ssim_right": 0,
+    print(".....................  Loading the Models ...............................")
 
-    }
-    
-    evaluate_results_average_dict_depth = {
-        "first_view_left_mae": 0,
-        "first_view_left_mse": 0,
-        "first_view_right_mae": 0,
-        "first_view_right_mse": 0,
-        "center_view_left_mae": 0,
-        "center_view_left_mse": 0,
-        "center_view_right_mae": 0,
-        "center_view_right_mse": 0,
-        "last_view_left_mae": 0,
-        "last_view_left_mse": 0,
-        "last_view_right_mae": 0,
-        "last_view_right_mse": 0,
-        "all_view_left_mae": 0,
-        "all_view_left_mse": 0,
-        "all_view_right_mae": 0,
-        "all_view_right_mse": 0,
-    }
-
+    view_nums = args.view_nums
+    matching_nums = args.matching_nums
 
     with torch.no_grad():
         my_model.eval()
@@ -263,39 +144,16 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views(batch,
-                                            args.output_folder,
-                                            bin_token_list,
-                                            cfg=cfg,
-                                            view_num=view_num,
-                                            matching_nums=matching_nums,
-                                            vis=args.output_vis)
-            
-            current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
-            current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
-            
-            for key in current_evaluate_results_dict_rgb.keys():
-                evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
-            for key in current_evaluate_results_dict_depth.keys():
-                evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
+            if batch_idx%10==0:
+                my_model.generate_low_quality_gt_pairs(batch,
+                                                    args.output_folder,
+                                                    bin_token_list,
+                                                    cfg=cfg,
+                                                    view_nums=view_nums,
+                                                    matching_nums=matching_nums)
             batch_idx += 1
-           
-        for key in evaluate_results_average_dict_rgb.keys():
-            evaluate_results_average_dict_rgb[key] /= batch_idx
-        for key in evaluate_results_average_dict_depth.keys():
-            evaluate_results_average_dict_depth[key] /= batch_idx
-            
-        results_dict = {
-            "rgb": evaluate_results_average_dict_rgb,
-            "depth": evaluate_results_average_dict_depth,
-        }
-        
-        if not args.output_vis:
-            saved_into_json(data_dict=results_dict,
-                                path=os.path.join(args.output_folder,"metric.json"))
-
+    
 
 def get_mean(list):
     return sum(list)*1.0/len(list)
@@ -308,9 +166,11 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
-    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
+    
+    parser.add_argument('--view_nums', type=int, default=6)
+    parser.add_argument('--matching_nums', type=int, default=4)
 
     parser.add_argument(
         "--output_vis",

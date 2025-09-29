@@ -153,7 +153,8 @@ class KITTI360Dataset(Dataset):
         # using input additional views
         else:
             if len(bin_info["sensor_info"]["CAM_LEFT"]) >= 2:
-                input_view_indices = [1, 3, 4]
+                #input_view_indices = [1, 3, 4]
+                input_view_indices = [1, 0, 2]
             else:
                 input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
             
@@ -238,7 +239,6 @@ class KITTI360Dataset(Dataset):
         # here the input is chnagedf from 2 to 6
         
         
-        
         # ======= Render views from non-key frames for rendering losses ====== #
         output_img_paths, output_c2ws, output_w2cs = [], [], []
         frame_num = len(bin_info["sensor_info"]["LIDAR_TOP"]) # how many frames, if no problems, here should be 7
@@ -285,7 +285,7 @@ class KITTI360Dataset(Dataset):
                 # -1 is the first
                 rend_indices = [list(range(len(bin_info["sensor_info"]["CAM_LEFT"])))[3:]+[0,2]] * len(self.camera_types)
                 
-            
+
             
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]

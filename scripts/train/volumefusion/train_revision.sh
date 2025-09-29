@@ -2,7 +2,7 @@ TRAIN_VolumeFusion_Revision(){
 cd ../../..
 cd codes
 configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_v2.py"
-work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/saved_models/6view_4matching_112x544_RandomSample"
+work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/saved_models_news/6view_4matching_112x544_RandomSample"
 # resume_from="/data1/zliu/temp_for_0617/VolumeFusion/Current_Version/checkpoint-90000/"
 resume_from="None"
 

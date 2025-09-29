@@ -26,6 +26,7 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
+
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
@@ -148,9 +149,9 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
+    
     
     dataset = getattr(datasets, dataset_config.dataset_name)
     
@@ -214,48 +215,9 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
         
-    view_num = 2
-    matching_nums = 2
+    view_num = 6
+    matching_nums = 4
     
-    evaluate_results_average_dict_rgb = {
-        "first_view_psnr_left": 0,
-        "first_view_ssim_left": 0,
-        "first_view_psnr_right": 0,
-        "first_view_ssim_right": 0,
-        "center_view_psnr_left": 0,
-        "center_view_ssim_left": 0,
-        "center_view_psnr_right": 0,
-        "center_view_ssim_right": 0,
-        "last_view_psnr_left": 0,
-        "last_view_ssim_left": 0,
-        "last_view_psnr_right": 0,
-        "last_view_ssim_right": 0,
-        "all_view_psnr_left": 0,
-        "all_view_ssim_left": 0,
-        "all_view_psnr_right": 0,
-        "all_view_ssim_right": 0,
-
-    }
-    
-    evaluate_results_average_dict_depth = {
-        "first_view_left_mae": 0,
-        "first_view_left_mse": 0,
-        "first_view_right_mae": 0,
-        "first_view_right_mse": 0,
-        "center_view_left_mae": 0,
-        "center_view_left_mse": 0,
-        "center_view_right_mae": 0,
-        "center_view_right_mse": 0,
-        "last_view_left_mae": 0,
-        "last_view_left_mse": 0,
-        "last_view_right_mae": 0,
-        "last_view_right_mse": 0,
-        "all_view_left_mae": 0,
-        "all_view_left_mse": 0,
-        "all_view_right_mae": 0,
-        "all_view_right_mse": 0,
-    }
-
 
     with torch.no_grad():
         my_model.eval()
@@ -265,7 +227,7 @@ def main(args):
             bin_token_list = batch['bin_token']
 
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views(batch,
+            my_model.validation_on_the_novel_bev_views(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
@@ -273,28 +235,9 @@ def main(args):
                                             matching_nums=matching_nums,
                                             vis=args.output_vis)
             
-            current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
-            current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
+            quit()
             
-            for key in current_evaluate_results_dict_rgb.keys():
-                evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
-            for key in current_evaluate_results_dict_depth.keys():
-                evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
-            batch_idx += 1
-           
-        for key in evaluate_results_average_dict_rgb.keys():
-            evaluate_results_average_dict_rgb[key] /= batch_idx
-        for key in evaluate_results_average_dict_depth.keys():
-            evaluate_results_average_dict_depth[key] /= batch_idx
-            
-        results_dict = {
-            "rgb": evaluate_results_average_dict_rgb,
-            "depth": evaluate_results_average_dict_depth,
-        }
-        
-        if not args.output_vis:
-            saved_into_json(data_dict=results_dict,
-                                path=os.path.join(args.output_folder,"metric.json"))
+
 
 
 def get_mean(list):
