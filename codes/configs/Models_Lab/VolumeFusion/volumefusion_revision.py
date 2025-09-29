@@ -47,7 +47,7 @@ data_version="bin_infos_8.0_FirstCAM"
 supp_view_nums=6
 world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 # if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs/DepthSplat/Depth_Estimation_Only/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
 used_3D_offset=False

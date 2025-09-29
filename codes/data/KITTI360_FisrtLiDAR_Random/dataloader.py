@@ -182,9 +182,12 @@ class KITTI360Dataset(Dataset):
             if len(bin_info["sensor_info"]["CAM_LEFT"]) >= 2:
                 input_view_indices = sample_three(list(range(len(bin_info["sensor_info"]["CAM_LEFT"]))))
                 
-                input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
+                # input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
+                
+                # #FIXME： Debug Only
+                input_view_indices = [1, 3, 4]
             
-        
+
                 
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
@@ -221,10 +224,9 @@ class KITTI360Dataset(Dataset):
         if self.depth_info_dict.use_sparse_lidar:
             input_sparse_gt_depth = input_depths_dict['sparse_gts']
         
-            
+    
         input_cks = torch.as_tensor(input_cks, dtype=torch.float32) #(6,3,3)--> Camera Intrinsics
         
-
         # get the fx, fy, cx,cy 
         input_fxs, input_fys, input_cxs, input_cys = input_cks[:, 0, 0], input_cks[:, 1, 1], input_cks[:, 0, 2], input_cks[:, 1, 2]
         
@@ -304,6 +306,14 @@ class KITTI360Dataset(Dataset):
                 rend_indices = [[0, 2]] * len(self.camera_types) # [[1, 2], [1, 2]]--> Second and the Last
             else:
                 rend_indices = [[0]] * len(self.camera_types)
+
+
+            if self.supp_view_nums=="all":
+                # -3 is the center 
+                # -2 is the last
+                # -1 is the first
+                rend_indices = [list(range(len(bin_info["sensor_info"]["CAM_LEFT"])))[3:]+[0,2]] * len(self.camera_types)
+
             
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]
@@ -343,18 +353,18 @@ class KITTI360Dataset(Dataset):
         
         # remove the duplication
         if input_c2ws.shape[0]>2:
-            input_c2ws_for_output = input_c2ws[:2]
-            input_fovxs_for_output = input_fovxs[:2]
-            input_fovys_for_output = input_fovys[:2]
-            input_fxs_for_output = input_fxs[:2]
-            input_fys_for_output = input_fys[:2]
-            input_cxs_for_output = input_cxs[:2]
-            input_cys_for_output = input_cys[:2]
-            input_imgs_for_output = input_imgs[:2]
-            input_depths_for_output = input_depths[:2]
-            input_depths_m_for_output = input_depths_m[:2]
-            input_confs_m_for_output = input_confs_m[:2]
-            input_sparse_gt_depth_for_output = input_sparse_gt_depth[:2]
+            input_c2ws_for_output = input_c2ws[[0,3]]
+            input_fovxs_for_output = input_fovxs[[0,3]]
+            input_fovys_for_output = input_fovys[[0,3]]
+            input_fxs_for_output = input_fxs[[0,3]]
+            input_fys_for_output = input_fys[[0,3]]
+            input_cxs_for_output = input_cxs[[0,3]]
+            input_cys_for_output = input_cys[[0,3]]
+            input_imgs_for_output = input_imgs[[0,3]]
+            input_depths_for_output = input_depths[[0,3]]
+            input_depths_m_for_output = input_depths_m[[0,3]]
+            input_confs_m_for_output = input_confs_m[[0,3]]
+            input_sparse_gt_depth_for_output = input_sparse_gt_depth[[0,3]]
         else:
             input_c2ws_for_output = input_c2ws
             input_fovxs_for_output = input_fovxs
