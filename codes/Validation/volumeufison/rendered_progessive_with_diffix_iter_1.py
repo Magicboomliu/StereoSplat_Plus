@@ -279,7 +279,7 @@ def main(args):
         "all_view_right_mse": 0,
     }
 
-
+    
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
