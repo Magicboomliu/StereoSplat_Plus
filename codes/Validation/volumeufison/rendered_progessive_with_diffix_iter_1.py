@@ -287,7 +287,8 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive(batch,
+            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_iter_once(
+                                            batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
