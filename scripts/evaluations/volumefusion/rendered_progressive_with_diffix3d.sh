@@ -42,7 +42,7 @@ cd ../../..
 cd /home/zliu/Project2025/FeedStereoGS/codes/Validation
 
 config_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_v2.py"
-output_folder="/home/zliu/Project2025/EvaluationResults/20250930/VolumeFusion/WithOffset/Progressive_With_Diffix3D_IterationOnce/IterationOnce_No_Enhancement"
+output_folder="/home/zliu/Project2025/EvaluationResults/20250930/VolumeFusion/WithOffset/Progressive_With_Diffix3D_IterationOnce/IterationOnce_With_Enhancement_PostProcessing"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -52,7 +52,6 @@ pretrained_model_path="/data1/zliu/feedforward_outputs_revision/VolumeFusion/Fir
 pretrained_diffix_model_path="/data3/zliu/CVPR25/OutputModels/KITTI360_NOGrammLoss_Filtered/checkpoints/model_60001.pkl"
 prompt="remove degradation"
 timestep=199
-
 
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
@@ -69,10 +68,14 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --prompt "$prompt" \
     --use_ref \
     --use_diffix3d \
-    --output_vis
+    --use_diffix3d_postprocessing \
+    # --output_vis
+    # --output_vis
+    # --output_vis
 
 
 }
 
+#ProgressiveInference_Iteration_Twice
 
 ProgressiveInference_Iteration_Once
