@@ -1,6 +1,3 @@
-torch
-torchvision
-opencv-python
 numpy
 Pillow
 DateTime
@@ -12,4 +9,3 @@ tensorboardX
 imgaug
 iopath
 imagecorruptions
-mmcv
