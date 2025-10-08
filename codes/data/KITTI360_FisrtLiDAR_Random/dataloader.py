@@ -91,11 +91,7 @@ class KITTI360Dataset(Dataset):
         self.supp_view_nums = supp_view_nums
         self.depth_info_dict = depth_info_dict
         self.camera_model = camera_model
-        
         self.input_additional = True
-        
-    
-        
         
         # there are two kinds of the cameras,
         
@@ -182,11 +178,11 @@ class KITTI360Dataset(Dataset):
             if len(bin_info["sensor_info"]["CAM_LEFT"]) >= 2:
                 input_view_indices = sample_three(list(range(len(bin_info["sensor_info"]["CAM_LEFT"]))))
                 
-                # Debug Here
-                input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
+                # # Debug Here
+                # input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
                 
-                # #FIXME： Debug Only
-                # input_view_indices = [1, 3, 4]
+                # # #FIXME： Debug Only
+                # # input_view_indices = [1, 3, 4]
             
 
                 
