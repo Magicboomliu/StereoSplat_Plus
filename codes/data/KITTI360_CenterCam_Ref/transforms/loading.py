@@ -214,9 +214,9 @@ def load_conditions(img_paths, reso,depth_info_params):
         # /data1/StereoDatasets/KITTI/KITTI360/monocular_depth/monodepthV2/data_2d_raw/2013_05_28_drive_0000_sync/
 
         if depth_info_params.use_pseudo_depth:
-            depth_path = img_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw")
+            depth_path = img_path.replace("data_2d_raw", "PseudoDepth_NMRFStereo/data_2d_raw")
             assert os.path.exists(depth_path)
-            disp = load_the_depthanytingV2_results(depth_path)
+            disp = load_the_Metric3DV2_results(depth_path)
 
             disp =  crop_size(h=disp.shape[0],w=disp.shape[1],img=disp,type='npy')
     
@@ -226,13 +226,7 @@ def load_conditions(img_paths, reso,depth_info_params):
                 disp = disp.resize((reso[1], reso[0]), Image.BILINEAR)
                 disp = np.array(disp)
 
-            # inverse disparity to relative depth
-            # clamping the farthest depth to 50x of the nearest
-            range = np.minimum(disp.max() / (disp.min() + 0.001), 50.0)
-            max = disp.max()
-            min = max / range
-            depth = 1 / np.maximum(disp, min)
-            depth = (depth - depth.min()) / (depth.max() - depth.min()) # range from 0 ~1
+            depth = disp
             depths.append(depth)
 
 

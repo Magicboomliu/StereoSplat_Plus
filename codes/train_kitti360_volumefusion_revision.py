@@ -21,10 +21,13 @@ import numpy as np
 from torch import Tensor,nn
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
-
+import random
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+from tqdm import tqdm
+
+
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -45,7 +48,13 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     logger.propagate = False
     return logger
 
-
+def sample_2_to_6(n=1, floats=False):
+    """Return 1 or n random values in 2..6.
+       ints by default; set floats=True for [2,6)."""
+    if floats:
+        return random.uniform(2, 6) if n == 1 else [random.uniform(2, 6) for _ in range(n)]
+    else:
+        return random.randint(2, 6) if n == 1 else [random.randint(2, 6) for _ in range(n)]
 
 def main(args):
     # load config
@@ -147,7 +156,6 @@ def main(args):
         "camera_model": dataset_config.camera_model
     }
 
-    
     # Define the dataloader
     train_dataset = dataset(**train_params)
     val_dataset = dataset(**val_params)
@@ -161,8 +169,7 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
 
-    
-    
+
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -250,6 +257,21 @@ def main(args):
         print('work dir: ', args.work_dir)
         print("max iteration steps: ",cfg.max_train_steps)
 
+    
+    # test the training set, is it balanced
+    for sample in tqdm(train_dataloader):
+        sample['inputs'].keys()
+        sample['inputs_pix'].keys()
+        sample['inputs_vol'].keys()
+
+  
+    
+    quit()
+    
+    
+    
+    
+    
     # training along the iterations.
     print_freq = cfg.print_freq
     while epoch < max_num_epochs:
@@ -259,22 +281,38 @@ def main(args):
         for i_iter, batch in enumerate(train_dataloader):
             data_time_e = time.time()
             
-            
             with accelerator.accumulate(my_model):
                 optimizer.zero_grad()
                 
+                sample_view_nums = sample_2_to_6(n=1, floats=False)
+                if sample_view_nums == 2:
+                    view_num = 2
+                    matching_nums = 2
+                elif sample_view_nums == 3:
+                    view_num = 3
+                    matching_nums = 2
+                elif sample_view_nums == 4:
+                    view_num = 4
+                    matching_nums = 3
+                elif sample_view_nums == 5:
+                    view_num = 5
+                    matching_nums = 4
+                elif sample_view_nums == 6:
+                    view_num = 6
+                    matching_nums = 5
+                
+
                 try:
                     if args.gpus <= 1:
                         loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", 
-                                                                                                                        view_num=6,
-                                                                                                                        matching_nums=4,
+                                                                                                                        view_num=view_num,
+                                                                                                                        matching_nums=matching_nums,
                                                                                                                          iter=global_iter, cfg=cfg)
                     else:
                         loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", 
-                                                                                                                               view_num=6,
-                                                                                                                               matching_nums=4,
+                                                                                                                               view_num=view_num,
+                                                                                                                               matching_nums=matching_nums,
                                                                                                                                iter=global_iter, cfg=cfg)
-                        
         
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -297,7 +335,6 @@ def main(args):
                         continue
                     else:
                         raise e  # 其他错误照常抛出
-            
             
             
 
@@ -626,8 +663,7 @@ def main(args):
     accelerator.end_training()
     
             
-            
-
+        
 if __name__ == '__main__':
     # Training settings
     parser = argparse.ArgumentParser(description='')

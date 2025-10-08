@@ -17,10 +17,8 @@ from utils.file_io import read_text_lines
 from kitti360scripts.helpers.project import CameraPerspective
 from projection.lidar import loadVelodyneData,Kitti360Viewer3DRaw
 from projection.rotation import rotation_matrix_x,expand_to_4x4
-
 from tqdm import tqdm
 import mmengine
-
 import open3d as o3d
 
 def depth_to_pointcloud_torch(depth_map, K, extrinsic):
@@ -515,6 +513,7 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
 
         dist_i = math.sqrt((sample_x0 - sample_x1) ** 2 + (sample_y0 - sample_y1) ** 2)
         dists.append(dist_i)
+        
     
     dist_sum = sum(dists) # get th summs
     assert len(dists) == len(annotations_list) -1
@@ -584,9 +583,16 @@ def create_kitti_infos(args,annotation_path,current_seq_name):
 def kitti360_data_prep(args):
     idx = 0
     all_sequence_names = sorted(os.listdir(args.filelist_folder))
-    all_sequence_names = all_sequence_names[:1]
-    
+    all_sequence_names = ['2013_05_28_drive_0000_sync_list.txt', 
+                          '2013_05_28_drive_0002_sync_list.txt', 
+                          '2013_05_28_drive_0004_sync_list.txt', 
+                          '2013_05_28_drive_0005_sync_list.txt', 
+                          '2013_05_28_drive_0006_sync_list.txt', 
+                          '2013_05_28_drive_0009_sync_list.txt']
+
     for filename_list in all_sequence_names:
+        
+        
         seq_name = os.path.basename(filename_list)[:-9]
         print("Processed Current Seq is {}, Finished {}/{}".format(seq_name,idx,len(os.listdir(args.filelist_folder))))
         idx = idx +1    
