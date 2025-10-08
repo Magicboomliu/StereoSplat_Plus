@@ -19,11 +19,13 @@ def save_dict_to_json(data_dict, file_path, indent=4):
         json.dump(data_dict, f, indent=indent)
 
 if __name__=="__main__":
+    
+    
+    
     parser = argparse.ArgumentParser(description='Metric3D-V2 Dataset Configration')    
     parser.add_argument('--root_path', type=str)
     parser.add_argument('--out_path', type=str, default='./vis_depth')
     parser.add_argument('--sequence_name', type=str, default='2013_05_28_drive_0000_sync')
-
     args = parser.parse_args()
 
     os.makedirs(args.out_path,exist_ok=True)
@@ -33,11 +35,13 @@ if __name__=="__main__":
         
     if args.sequence_name=="All":
         saved_test_annotations_json_path = os.path.join(args.out_path,"test_annotations.json")
-        sequence_list = os.listdir(args.root_path,"data_2d_raw/")
+        sequence_list = os.listdir(os.path.join(args.root_path,"data_2d_raw/"))
         
         for seq in sorted(sequence_list):
             input_image_folder_left = os.path.join(args.root_path,"data_2d_raw/",seq,"image_00/data_rect")
             input_image_folder_right = os.path.join(args.root_path,"data_2d_raw/",seq,"image_01/data_rect")
+            
+            print("currently processing sequence name is :", seq)
 
             for image_fname in tqdm(os.listdir(input_image_folder_left)):
                 input_image_fname_left = os.path.join(input_image_folder_left,image_fname)

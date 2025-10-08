@@ -257,21 +257,7 @@ def main(args):
         print('work dir: ', args.work_dir)
         print("max iteration steps: ",cfg.max_train_steps)
 
-    
-    # test the training set, is it balanced
-    for sample in tqdm(train_dataloader):
-        sample['inputs'].keys()
-        sample['inputs_pix'].keys()
-        sample['inputs_vol'].keys()
 
-  
-    
-    quit()
-    
-    
-    
-    
-    
     # training along the iterations.
     print_freq = cfg.print_freq
     while epoch < max_num_epochs:
