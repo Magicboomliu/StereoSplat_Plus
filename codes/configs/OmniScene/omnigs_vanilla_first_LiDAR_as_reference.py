@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "omni_gs_kitti360_stereo_r50_224x804"
-output_dir = "/data1/zliu/feedforward_outputs_new/OmniScene/MetricV2/First_LiDAR_As_Ref/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_revision/OmniScene_2_Views/MetricV2/First_LiDAR_As_Ref/visualization"
 
 # learning rate setiing
 lr = 1e-4
@@ -34,18 +34,18 @@ seed = 0
 use_center, use_first, use_last = False, True, False
 # resolution = [224, 840]
 # resolution = [168, 632]
-resolution = [224, 1088]
+resolution = [112, 544]
 
 # LiDAR Range id different
 point_cloud_range = [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
 sequence='2013_05_28_drive_0000_sync'
-data_version="bin_infos_8.0_FirstCAM"
-supp_view_nums=3
+data_version="bin_infos_8.0_FirstLIDAR"
+supp_view_nums=6
 camera_model='OpenGL' # select from OpenCV and OpenGL
 world_center="First_LiDAR" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
 
@@ -54,7 +54,6 @@ depth_info_params = dict(
     pseudo_depth_type='Metric3DV2', # select from "MonocularDepthV2", "Metric3DV2","NMRFStereo"
     use_sparse_lidar=True
     )
-
 
 
 dataset_params = dict(
@@ -162,7 +161,6 @@ self_cross_layer = dict(
         dict(
             type='TPVImageCrossAttention',
             pc_range=point_cloud_range,
-            num_cams=2,
             dropout=0.1,
             deformable_attention=dict(
                 type='TPVMSDeformableAttention3D',
