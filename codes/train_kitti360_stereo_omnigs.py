@@ -5,8 +5,6 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
@@ -22,7 +20,6 @@ from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType,
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
-
 
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
@@ -81,7 +78,6 @@ def main(args):
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
-    
     max_num_epochs = cfg.max_epochs # default is 30
     
     
@@ -113,6 +109,9 @@ def main(args):
     # build model
     from builder import builder as model_builder
     my_model = model_builder.build(cfg.model).to(accelerator.device)
+
+    
+    
     n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
     if logger is not None:
         logger.info(f'Number of params: {n_parameters}')
