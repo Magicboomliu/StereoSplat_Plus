@@ -149,6 +149,8 @@ class PixelGaussian(BaseModule):
         pluckers = rearrange(pluckers, "b v c h w -> b v h w c")
         plucker_embeds = self.plucker_to_embed(pluckers) # using a MLP for Mapping. [B,V,H,W,C]
         
+
+        
         # image feature + learnable camear embeddings + ray embeddings
         img_feats = img_feats + self.cams_embeds[None, :, None, None] + plucker_embeds
         img_feats = rearrange(img_feats, "b v h w c -> (b v) c h w") # image feature all

@@ -10,30 +10,33 @@ import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
+from torch import Tensor,nn
 from tqdm import tqdm
+import numpy as np
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+import json
 import warnings
 warnings.filterwarnings("ignore")
+torch.autograd.set_detect_anomaly(True)
+import json
+
+import warnings
+warnings.filterwarnings("ignore")
+torch.autograd.set_detect_anomaly(True)
 
 import sys
 sys.path.append("..")
-torch.autograd.set_detect_anomaly(True)
-import numpy as np
-from torch import Tensor,nn
+
+from depthsplat.vanilla.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
+from depthsplat.vanilla.models.encoder.unimatch.dpt_head import DPTHead
+from depthsplat.vanilla.models.encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
+from depthsplat.vanilla.models.decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
+from depthsplat.vanilla.models.model_warpper_splat import ModelWarpper
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
-from mmengine.registry import MODELS
-import json
-# define the models
-from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
-from models_lab.diffix3D.model import Difix
-
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-import skimage.io
-
-import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -114,16 +117,16 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
+class DecoderCFG(object):
+    def __init__(self,background_color=[0.0, 0.0, 0.0]):
+        self.background_color = background_color
+
+
 
 def main(args):
+    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
-    
-    cfg.prompt = args.prompt
-    
-    cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
-
-
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -135,35 +138,32 @@ def main(args):
         mixed_precision=cfg.mixed_precision,
         log_with=cfg.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs]
-    )
+        kwargs_handlers=[kwargs])
 
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
     
     dataset_config = cfg.dataset_params
-    
     # configure logger
     if accelerator.is_main_process:
         os.makedirs(args.output_folder, exist_ok=True)
         cfg.dump(osp.join(args.output_folder, osp.basename(args.config_path)))
     
-    if cfg.world_center is not None:
-        if cfg.world_center=="Center_LiDAR":
-            import data.KITTI360_CenterCam_Ref.dataloader as datasets
-        elif cfg.world_center=="First_Cam0":
-            import data.KITTI360_FirstCam_Ref.dataloader as datasets
-        elif cfg.world_center=="First_LiDAR":
-            import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
-        elif cfg.world_center=="First_LiDAR_3_Uniform":
-            import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    
+    if args.dataset_type=="Center_LiDAR":
+        import sys
+        sys.path.append("..")
+        import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
+    elif args.dataset_type=="First_LiDAR":
+        import sys
+        sys.path.append("..")
+        # import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
+        import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
     else:
-        import data.KITTI360_CenterCam_Ref.dataloader as datasets
+        raise NotImplementedError
+    
     
     dataset = getattr(datasets, dataset_config.dataset_name)
-    
     if args.output_vis:
         val_filelist = args.demo_filelist
     else:
@@ -186,41 +186,64 @@ def main(args):
         "camera_model": dataset_config.camera_model
     }
 
-    
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
-    # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
-                                    neck=cfg.model.neck,
-                                    costvolume_gs=cfg.model.costvolume_gs,
-                                    volume_gs=cfg.model.volume_gs,
-                                    losses_params=cfg.model.losses_params,
-                                    camera_args=cfg.camera_args,
-                                    dataset_params=cfg.dataset_params,
-                                    use_checkpoint=cfg.use_checkpoint)
     
-    # loading the pretrained diffix3d models.
-    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
 
-    pretrained_diffix_model = Difix(
-        pretrained_name=None,
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref)
+    '''     Model Configuration   '''
+    encoder_cfg = cfg.model.encoder
     
-    pretrained_diffix_model.set_eval()
+    # depth unimatch model
+    depth_estimator_unimatch = MultiViewUniMatch(
+            num_scales=encoder_cfg.num_scales, # default is 1
+            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
+            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
+            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
+            unet_channels=encoder_cfg.depth_unet_channels, # 128
+            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
+        )
+    
+    # 3dgs head: define the the gaussain head
+    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
+    # color branch
+    gaussain_color_branch_config = {
+            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
+            "color_large_unet": cfg.model.encoder.color_large_unet,
+            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
+            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
+            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
+            "num_surfaces":cfg.model.encoder.num_surfaces}
+    
+    # gaussain head estimation
+    gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
+                                             upsample_factor=cfg.model.encoder.upsample_factor,
+                                             num_scales=cfg.model.encoder.num_scales,
+                                             gaussian_head_settings_dict=gaussian_adapter_config,
+                                             gaussians_color_branch_dict=gaussain_color_branch_config)
+    
+    dataset_config = DecoderCFG(background_color=cfg.background_color)
+    depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_config)
+    
+    
+    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
+                            gaussain_head=gaussain_head,
+                            decoder_branch=depthsplattercuda_decoder,
+                            unimatch_weight = cfg.unimatch_weights_path
+                            )
+    
+
+    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
+    
+    print("Number of params: ",n_parameters)
 
 
-
-    my_model, val_dataloader = accelerator.prepare(
-        my_model, val_dataloader
+    # move to the accelerate
+    my_modelval_dataloader = accelerator.prepare(
+        my_model,  val_dataloader
     )
-
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -236,11 +259,7 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-        
-    pretrained_diffix_model.to(accelerator.device)
-    
 
-    
     evaluate_results_average_dict_rgb = {
         "first_view_psnr_left": 0,
         "first_view_ssim_left": 0,
@@ -280,7 +299,7 @@ def main(args):
         "all_view_right_mse": 0,
     }
 
-    
+
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
@@ -288,18 +307,13 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_iter_once(
-                                            batch,
-                                            args.output_folder,
-                                            bin_token_list,
-                                            cfg=cfg,
-                                            start_images_views=2,
-                                            use_diffix3d=args.use_diffix3d,
-                                            diffix3d_network=pretrained_diffix_model,
-                                            use_ref=args.use_ref,
-                                            vis=args.output_vis)
+            evaluation_results_stat =my_model.validation_complete_with_bin_tokens(batch,
+                                                        args.output_folder,
+                                                        bin_token_list,
+                                                        cfg=cfg,
+                                                        vis=args.output_vis)
 
-            
+
             current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
             current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
             
@@ -335,15 +349,9 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
+    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
-    
-    parser.add_argument('--pretrained_diffix_model_path', type=str, default="")
-    parser.add_argument('--timestep', type=int, default=199)
-    parser.add_argument('--prompt', type=str, default="remove degradation")
-    parser.add_argument('--use_ref', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
 
     parser.add_argument(
         "--output_vis",
@@ -354,5 +362,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
-
     main(args)

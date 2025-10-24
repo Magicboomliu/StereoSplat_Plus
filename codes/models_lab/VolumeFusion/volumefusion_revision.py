@@ -2464,15 +2464,15 @@ class VolumeFusionRevision(BaseModule):
 
             enhanced_rendered_center_left_pil = diffix3d_network.sample(
                     rendered_center_left_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_left_pil,
                     prompt=cfg.prompt
                 )
             enhanced_rendered_center_right_pil = diffix3d_network.sample(
                     rendered_center_right_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_right_pil,
                     prompt=cfg.prompt
                 )
@@ -2491,14 +2491,11 @@ class VolumeFusionRevision(BaseModule):
             rendered_center_frame = enhanced_rendered_center_frame
             
             # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.75 + gt_center_frame * 0.25
+            fusion_rendered_center_frame = rendered_center_frame * 0.66 + gt_center_frame * 0.34
             fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
             rendered_center_frame = fusion_rendered_center_frame
 
             
-
-        
-
         '''second time inference'''
         input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=4,
                                                                          matching_nums=3)
@@ -2592,15 +2589,15 @@ class VolumeFusionRevision(BaseModule):
 
             enhanced_rendered_last_left_pil = diffix3d_network.sample(
                     rendered_last_left_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_left_pil,
                     prompt=cfg.prompt
                 )
             enhanced_rendered_last_right_pil = diffix3d_network.sample(
                     rendered_last_right_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_right_pil,
                     prompt=cfg.prompt
                 )
@@ -2618,7 +2615,7 @@ class VolumeFusionRevision(BaseModule):
             
             rendered_last_frame = enhanced_rendered_last_frame
             
-            fusion_rendered_last_frame = rendered_last_frame * 0.75 + gt_last_frame * 0.25
+            fusion_rendered_last_frame = rendered_last_frame * 0.68 + gt_last_frame * 0.32
             fusion_rendered_last_frame = torch.clamp(fusion_rendered_last_frame,min=0,max=1.0)
             rendered_last_frame = fusion_rendered_last_frame
             
@@ -2730,8 +2727,8 @@ class VolumeFusionRevision(BaseModule):
                 
                 current_rendered_image_pil = diffix3d_network.sample(
                         current_rendered_image_pil,
-                        height=288,
-                        width=512,
+                        height=112,
+                        width=544,
                         ref_image=ref_image_left_pil,
                         prompt=cfg.prompt
                     )
@@ -3077,29 +3074,29 @@ class VolumeFusionRevision(BaseModule):
 
             enhanced_rendered_center_left_pil = diffix3d_network.sample(
                     rendered_center_left_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_left_pil,
                     prompt=cfg.prompt
                 )
             enhanced_rendered_center_right_pil = diffix3d_network.sample(
                     rendered_center_right_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_right_pil,
                     prompt=cfg.prompt
                 )
             enhanced_rendered_last_left_pil = diffix3d_network.sample(
                     rendered_last_left_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_left_pil,
                     prompt=cfg.prompt
                 )
             enhanced_rendered_last_right_pil = diffix3d_network.sample(
                     rendered_last_right_pil,
-                    height=288,
-                    width=512,
+                    height=112,
+                    width=544,
                     ref_image=ref_image_right_pil,
                     prompt=cfg.prompt
                 )
@@ -3127,7 +3124,7 @@ class VolumeFusionRevision(BaseModule):
             
 
             # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.71 + gt_center_frame * 0.29
+            fusion_rendered_center_frame = rendered_center_frame * 0.66 + gt_center_frame * 0.34
             fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
             rendered_center_frame = fusion_rendered_center_frame
 
@@ -3229,8 +3226,8 @@ class VolumeFusionRevision(BaseModule):
                 
                 current_rendered_image_pil = diffix3d_network.sample(
                         current_rendered_image_pil,
-                        height=288,
-                        width=512,
+                        height=112,
+                        width=544,
                         ref_image=ref_image_left_pil,
                         prompt=cfg.prompt
                     )
@@ -3442,9 +3439,6 @@ class VolumeFusionRevision(BaseModule):
         return evaluation_results_stat 
         
 
-
-
-        
 
 
 def get_mean(list):

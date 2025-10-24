@@ -16,7 +16,6 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
-
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
@@ -27,11 +26,6 @@ from mmengine.registry import MODELS
 import json
 # define the models
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
-from models_lab.diffix3D.model import Difix
-
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-import skimage.io
-
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
@@ -72,7 +66,6 @@ class Basic_Meter(object):
             }
 
 def convert_depth_to_disp(factor=328.318735,depth=None):
-    
     mask = depth>0
     mask = mask.astype(np.float32)
 
@@ -114,16 +107,11 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
-
 def main(args):
+    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
     
-    cfg.prompt = args.prompt
-    
-    cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
-
-
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -158,11 +146,11 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
     
     dataset = getattr(datasets, dataset_config.dataset_name)
+    
     
     if args.output_vis:
         val_filelist = args.demo_filelist
@@ -185,15 +173,13 @@ def main(args):
         "depth_info_dict":dataset_config.depth_info_params,
         "camera_model": dataset_config.camera_model
     }
-
-    
+        
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
+    
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -203,24 +189,10 @@ def main(args):
                                     camera_args=cfg.camera_args,
                                     dataset_params=cfg.dataset_params,
                                     use_checkpoint=cfg.use_checkpoint)
-    
-    # loading the pretrained diffix3d models.
-    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
-
-    pretrained_diffix_model = Difix(
-        pretrained_name=None,
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref)
-    
-    pretrained_diffix_model.set_eval()
-
-
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
     )
-
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -237,91 +209,26 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
         
-    pretrained_diffix_model.to(accelerator.device)
-    
-
-    
-    evaluate_results_average_dict_rgb = {
-        "first_view_psnr_left": 0,
-        "first_view_ssim_left": 0,
-        "first_view_psnr_right": 0,
-        "first_view_ssim_right": 0,
-        "center_view_psnr_left": 0,
-        "center_view_ssim_left": 0,
-        "center_view_psnr_right": 0,
-        "center_view_ssim_right": 0,
-        "last_view_psnr_left": 0,
-        "last_view_ssim_left": 0,
-        "last_view_psnr_right": 0,
-        "last_view_ssim_right": 0,
-        "all_view_psnr_left": 0,
-        "all_view_ssim_left": 0,
-        "all_view_psnr_right": 0,
-        "all_view_ssim_right": 0,
-
-    }
-    
-    evaluate_results_average_dict_depth = {
-        "first_view_left_mae": 0,
-        "first_view_left_mse": 0,
-        "first_view_right_mae": 0,
-        "first_view_right_mse": 0,
-        "center_view_left_mae": 0,
-        "center_view_left_mse": 0,
-        "center_view_right_mae": 0,
-        "center_view_right_mse": 0,
-        "last_view_left_mae": 0,
-        "last_view_left_mse": 0,
-        "last_view_right_mae": 0,
-        "last_view_right_mse": 0,
-        "all_view_left_mae": 0,
-        "all_view_left_mse": 0,
-        "all_view_right_mae": 0,
-        "all_view_right_mse": 0,
-    }
-
+    view_num = args.view_nums
+    matching_nums = args.matching_nums
     
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
-            # process the current folder
-            bin_token_list = batch['bin_token']
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_iter_once(
-                                            batch,
-                                            args.output_folder,
-                                            bin_token_list,
-                                            cfg=cfg,
-                                            start_images_views=2,
-                                            use_diffix3d=args.use_diffix3d,
-                                            diffix3d_network=pretrained_diffix_model,
-                                            use_ref=args.use_ref,
-                                            vis=args.output_vis)
+            if batch_idx%15==0:
+                bin_token_list = batch['bin_token']
+                my_model.generate_low_quality_gt_pairs(
+                                                batch,
+                                                args.output_folder,
+                                                bin_token_list,
+                                                cfg=cfg,
+                                                view_nums=view_num,
+                                                matching_nums=matching_nums)
 
-            
-            current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
-            current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
-            
-            for key in current_evaluate_results_dict_rgb.keys():
-                evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
-            for key in current_evaluate_results_dict_depth.keys():
-                evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
             batch_idx += 1
-           
-        for key in evaluate_results_average_dict_rgb.keys():
-            evaluate_results_average_dict_rgb[key] /= batch_idx
-        for key in evaluate_results_average_dict_depth.keys():
-            evaluate_results_average_dict_depth[key] /= batch_idx
             
-        results_dict = {
-            "rgb": evaluate_results_average_dict_rgb,
-            "depth": evaluate_results_average_dict_depth,
-        }
-        
-        if not args.output_vis:
-            saved_into_json(data_dict=results_dict,
-                                path=os.path.join(args.output_folder,"metric.json"))
 
 
 def get_mean(list):
@@ -335,15 +242,12 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
+    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
     
-    parser.add_argument('--pretrained_diffix_model_path', type=str, default="")
-    parser.add_argument('--timestep', type=int, default=199)
-    parser.add_argument('--prompt', type=str, default="remove degradation")
-    parser.add_argument('--use_ref', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
+    parser.add_argument('--view_nums', type=int, default=2)
+    parser.add_argument('--matching_nums', type=int, default=2)
 
     parser.add_argument(
         "--output_vis",
@@ -354,5 +258,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
-
     main(args)

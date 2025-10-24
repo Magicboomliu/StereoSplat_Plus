@@ -7,9 +7,7 @@ from tqdm import tqdm
 import torch
 from torchvision import transforms
 from transformers import AutoTokenizer, CLIPTextModel
-
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
-# from .autoVAE import AutoencoderKL_Local
 from peft import LoraConfig
 p = "src/"
 sys.path.append(p)
@@ -123,8 +121,6 @@ class Difix(torch.nn.Module):
         self.sched = make_1step_sched()
 
         vae = AutoencoderKL.from_pretrained("stabilityai/sd-turbo", subfolder="vae")
-        #vae = AutoencoderKL_Local.from_pretrained("nvidia/difix_ref", subfolder="vae")
-        
         vae.encoder.forward = my_vae_encoder_fwd.__get__(vae.encoder, vae.encoder.__class__)
         vae.decoder.forward = my_vae_decoder_fwd.__get__(vae.decoder, vae.decoder.__class__)
         # add the skip connection convs
@@ -139,9 +135,7 @@ class Difix(torch.nn.Module):
         else:
             from diffusers import UNet2DConditionModel
 
-        #unet = UNet2DConditionModel.from_pretrained("stabilityai/sd-turbo", subfolder="unet")
-        
-        unet = UNet2DConditionModel.from_pretrained("nvidia/difix_ref", subfolder="unet")
+        unet = UNet2DConditionModel.from_pretrained("stabilityai/sd-turbo", subfolder="unet")
 
         if pretrained_path is not None:
             sd = torch.load(pretrained_path, map_location="cpu")

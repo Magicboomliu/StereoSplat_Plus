@@ -30,6 +30,8 @@ from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
 from data.KITTI360_CenterCam_Ref.transforms.loading import load_info,load_conditions
 
+import skimage.io
+
 def read_text_lines(filepath):
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -159,8 +161,6 @@ class KITTI360Dataset(Dataset):
                 input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
             
         
-
-                
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
 
@@ -284,9 +284,8 @@ class KITTI360Dataset(Dataset):
                 # -2 is the last
                 # -1 is the first
                 rend_indices = [list(range(len(bin_info["sensor_info"]["CAM_LEFT"])))[3:]+[0,2]] * len(self.camera_types)
-                
 
-            
+                
         for cam_id, cam in enumerate(self.camera_types):
             indices = rend_indices[cam_id]
             for ind in indices:
@@ -325,18 +324,19 @@ class KITTI360Dataset(Dataset):
         
         # remove the duplication
         if input_c2ws.shape[0]>2:
-            input_c2ws_for_output = input_c2ws[:2]
-            input_fovxs_for_output = input_fovxs[:2]
-            input_fovys_for_output = input_fovys[:2]
-            input_fxs_for_output = input_fxs[:2]
-            input_fys_for_output = input_fys[:2]
-            input_cxs_for_output = input_cxs[:2]
-            input_cys_for_output = input_cys[:2]
-            input_imgs_for_output = input_imgs[:2]
-            input_depths_for_output = input_depths[:2]
-            input_depths_m_for_output = input_depths_m[:2]
-            input_confs_m_for_output = input_confs_m[:2]
-            input_sparse_gt_depth_for_output = input_sparse_gt_depth[:2]
+            input_selection = [0,3]
+            input_c2ws_for_output = input_c2ws[input_selection]
+            input_fovxs_for_output = input_fovxs[input_selection]
+            input_fovys_for_output = input_fovys[input_selection]
+            input_fxs_for_output = input_fxs[input_selection]
+            input_fys_for_output = input_fys[input_selection]
+            input_cxs_for_output = input_cxs[input_selection]
+            input_cys_for_output = input_cys[input_selection]
+            input_imgs_for_output = input_imgs[input_selection]
+            input_depths_for_output = input_depths[input_selection]
+            input_depths_m_for_output = input_depths_m[input_selection]
+            input_confs_m_for_output = input_confs_m[input_selection]
+            input_sparse_gt_depth_for_output = input_sparse_gt_depth[input_selection]
         else:
             input_c2ws_for_output = input_c2ws
             input_fovxs_for_output = input_fovxs
@@ -350,7 +350,6 @@ class KITTI360Dataset(Dataset):
             input_depths_m_for_output = input_depths_m
             input_confs_m_for_output = input_confs_m
             input_sparse_gt_depth_for_output = input_sparse_gt_depth
-
 
 
         # add input data to output

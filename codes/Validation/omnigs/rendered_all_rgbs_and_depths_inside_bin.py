@@ -5,15 +5,12 @@ from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
-
 import mmcv
 import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
-
 from tqdm import tqdm
-
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
@@ -106,8 +103,6 @@ def main(args):
     
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
-
-
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -140,7 +135,9 @@ def main(args):
     elif args.dataset_type=="First_LiDAR":
         import sys
         sys.path.append("..")
-        import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
+
+        # import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
+        import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
     else:
         raise NotImplementedError
     
@@ -161,12 +158,14 @@ def main(args):
         "resolution":dataset_config.resolution, 
         "split":"val",
         "sequence":dataset_config.sequence,
-        "supp_view_nums": 3,
+        "use_center":dataset_config.use_center,
+        "use_first": dataset_config.use_first,
+        "use_last": dataset_config.use_last,
+        "supp_view_nums": "all",
         "depth_info_dict":dataset_config.depth_info_params,
-        "camera_model": dataset_config.camera_model,
-        "pair_images": dataset_config.pair_images
+        "camera_model": dataset_config.camera_model
     }
-    
+
     val_dataset = dataset(**val_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
@@ -180,7 +179,6 @@ def main(args):
     my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
     
     
-
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
         cfg.pretrained_model_path = args.pretrained_model_path
@@ -188,7 +186,6 @@ def main(args):
         path = cfg.pretrained_model_path
     else:
         path = None
-
 
     if path:
         accelerator.print(f"Loading from checkpoint {path}")
@@ -199,107 +196,82 @@ def main(args):
 
 
 
-    meter_rendered_results_dict = {
-        "center_l": Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        'center_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        'first_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        'first_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        'last_l': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        'last_r': Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        "all_avg_l":Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-        "all_avg_r":Basic_Meter(psnr=0,ssim=0,mae=0,mse=0),
-    }
+    evaluate_results_average_dict_rgb = {
+        "first_view_psnr_left": 0,
+        "first_view_ssim_left": 0,
+        "first_view_psnr_right": 0,
+        "first_view_ssim_right": 0,
+        "center_view_psnr_left": 0,
+        "center_view_ssim_left": 0,
+        "center_view_psnr_right": 0,
+        "center_view_ssim_right": 0,
+        "last_view_psnr_left": 0,
+        "last_view_ssim_left": 0,
+        "last_view_psnr_right": 0,
+        "last_view_ssim_right": 0,
+        "all_view_psnr_left": 0,
+        "all_view_ssim_left": 0,
+        "all_view_psnr_right": 0,
+        "all_view_ssim_right": 0,
 
+    }
+    
+    evaluate_results_average_dict_depth = {
+        "first_view_left_mae": 0,
+        "first_view_left_mse": 0,
+        "first_view_right_mae": 0,
+        "first_view_right_mse": 0,
+        "center_view_left_mae": 0,
+        "center_view_left_mse": 0,
+        "center_view_right_mae": 0,
+        "center_view_right_mse": 0,
+        "last_view_left_mae": 0,
+        "last_view_left_mse": 0,
+        "last_view_right_mae": 0,
+        "last_view_right_mse": 0,
+        "all_view_left_mae": 0,
+        "all_view_left_mse": 0,
+        "all_view_right_mae": 0,
+        "all_view_right_mse": 0,
+    }
 
 
     with torch.no_grad():
         my_model.eval()
+        batch_idx = 0
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-            
-            rendered_left_images_list,rendered_right_images_list,rendered_left_depth_list,rendered_right_depth_list, \
-            left_psnr_list,left_ssim_list,right_psnr_list,right_ssim_list,left_depth_mae_list,left_depth_mse_list,right_depth_mae_list,right_depth_mse_list= my_model.validation_complete_with_bin_tokens(batch,
+
+            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
                                             args.output_folder,
                                             bin_token_list,
-                                            saved_label=args.output_vis
-                                                         )
+                                            cfg=cfg,
+                                            vis=args.output_vis)
             
-            left_psnr_first,left_psnr_center,left_psnr_last = left_psnr_list[:3]
-            left_ssim_first, left_ssim_center,left_ssim_last = left_ssim_list[:3]
-            right_psnr_first,right_psnr_center,right_psnr_last = right_psnr_list[:3]
-            right_ssim_first,right_ssim_center,right_ssim_last = right_ssim_list[:3]
+            current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
+            current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
             
-            left_mae_first,left_mae_center,left_mae_last = left_depth_mae_list[:3]
-            left_mse_first,left_mse_center,left_mse_last = left_depth_mse_list[:3]
+            for key in current_evaluate_results_dict_rgb.keys():
+                evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
+            for key in current_evaluate_results_dict_depth.keys():
+                evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
+            batch_idx += 1
+           
+        for key in evaluate_results_average_dict_rgb.keys():
+            evaluate_results_average_dict_rgb[key] /= batch_idx
+        for key in evaluate_results_average_dict_depth.keys():
+            evaluate_results_average_dict_depth[key] /= batch_idx
             
-            right_mae_first,right_mae_center,right_mae_last = right_depth_mae_list[:3]
-            right_mse_first,right_mse_center,right_mse_last = right_depth_mse_list[:3]
-            
-            
-            meter_rendered_results_dict["first_l"].update(psnr=left_psnr_first.data.item(),
-                                                          ssim=left_ssim_first.data.item(),
-                                                          mae=left_mae_first.data.item(),
-                                                          mse=left_mse_first.data.item()
-                                                          )
-            meter_rendered_results_dict["first_r"].update(psnr=right_psnr_first.data.item(),
-                                                          ssim=right_ssim_first.data.item(),
-                                                          mae=right_mae_first.data.item(),
-                                                          mse=right_mse_first.data.item()
-                                                          )
-            
-            meter_rendered_results_dict["center_l"].update(
-                                                        psnr=left_psnr_center.data.item(),
-                                                        ssim=left_ssim_center.data.item(),
-                                                        mae=left_mae_center.data.item(),
-                                                        mse=left_mse_center.data.item())
-            
-            meter_rendered_results_dict["center_r"].update(
-                                                        psnr=right_psnr_center.data.item(),
-                                                        ssim=right_ssim_center.data.item(),
-                                                        mae=right_mae_center.data.item(),
-                                                        mse=right_mse_center.data.item())
-            
-            meter_rendered_results_dict["last_l"].update(
-                                                        psnr=left_psnr_last.data.item(),
-                                                        ssim=left_ssim_last.data.item(),
-                                                        mae=left_mae_last.data.item(),
-                                                        mse=left_mse_last.data.item())
-            
-            meter_rendered_results_dict["last_r"].update(
-                                                        psnr = right_psnr_last.data.item(),
-                                                        ssim = right_ssim_last.data.item(),
-                                                        mae = right_mae_last.data.item(),
-                                                        mse = right_mse_last.data.item())
-            
-            meter_rendered_results_dict["all_avg_l"].update(
-                                        psnr=get_mean(left_psnr_list).data.item(),
-                                        ssim =get_mean(left_ssim_list).data.item(),
-                                        mae = get_mean(left_depth_mae_list).data.item(),
-                                        mse= get_mean(left_depth_mse_list).data.item()
-                )
-            
-            meter_rendered_results_dict["all_avg_r"].update(
-                                        psnr=get_mean(right_psnr_list).data.item(),
-                                        ssim =get_mean(right_ssim_list).data.item(),
-                                        mae = get_mean(right_depth_mae_list).data.item(),
-                                        mse= get_mean(right_depth_mse_list).data.item()
-            )
-            
-        
         results_dict = {
-            'first_l': meter_rendered_results_dict['first_l'].get_stats(),
-            'first_r': meter_rendered_results_dict['first_r'].get_stats(),
-            "center_l": meter_rendered_results_dict['center_l'].get_stats(),
-            'center_r': meter_rendered_results_dict['center_r'].get_stats(),
-            'last_l': meter_rendered_results_dict['last_l'].get_stats(),
-            'last_r': meter_rendered_results_dict['last_r'].get_stats(),
-            "all_avg_l":meter_rendered_results_dict['all_avg_l'].get_stats(),
-            "all_avg_r":meter_rendered_results_dict['all_avg_r'].get_stats(),
+            "rgb": evaluate_results_average_dict_rgb,
+            "depth": evaluate_results_average_dict_depth,
         }
+        
         if not args.output_vis:
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
+
                         
 def get_mean(list):
     return sum(list)*1.0/len(list)
