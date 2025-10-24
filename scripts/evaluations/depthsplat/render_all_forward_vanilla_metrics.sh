@@ -2,17 +2,17 @@ Get_Rendered_RGBS_Depths_Metrics(){
 cd ../../..
 cd /home/zliu/Project2025/FeedStereoGS/codes/Validation
 
-configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omnigs_vanilla_first_LiDAR_as_reference.py"
-output_folder="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/OmniGS/2Views/First_LiDAR_As_Ref/MetricV2/"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/DepthSplat/eval/depthsplat_vanilla_first_lidar.py"
+output_folder="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/DepthSplat/2Views/First_LiDAR_As_Ref/NMRFStereo/"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
-ablation_type="MetricV2" # "MetricV2" or "NMRFStereo"
+ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR"
-pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/OmniScene/checkpoint-60000/"
+pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/DepthSplat/checkpoint-153000/"
 
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml omnigs/rendered_all_rgbs_and_depths_inside_bin.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml depthsplat/rendered_all_forward_views_vanilla.py \
     --config_path  $configs_path \
     --output_folder $output_folder \
     --val_filelist $val_filelist \

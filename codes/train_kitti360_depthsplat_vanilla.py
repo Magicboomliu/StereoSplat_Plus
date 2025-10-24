@@ -210,8 +210,6 @@ def main(args):
                             unimatch_weight = cfg.unimatch_weights_path
                             )
     
-    
-
 
     n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
     if logger is not None:
