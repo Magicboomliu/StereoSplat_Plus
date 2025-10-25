@@ -24,9 +24,9 @@ cv2.ocl.setUseOpenCL(False)
 
 import sys
 sys.path.append("../..")
-from model.utils.image import resize_image, HWC3
+# from model.utils.image import resize_image, HWC3
 from model.utils.typing import *
-from model.utils.camera import get_camera, rescale_intrisic
+# from model.utils.camera import get_camera, rescale_intrisic
 from model.utils.ops import get_cam_info_gaussian, get_ray_directions, get_rays
 from data.KITTI360_CenterCam_Ref.transforms.loading import load_info,load_conditions
 

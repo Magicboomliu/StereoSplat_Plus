@@ -6,9 +6,7 @@ from einops import rearrange
 from diffusers.optimization import get_scheduler
 import math
 
-import mmcv
 import mmengine
-from mmengine import MMLogger
 from mmengine.config import Config
 import logging
 
@@ -63,7 +61,6 @@ def main(args):
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
     
-    logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
         project_dir=cfg.work_dir, 
