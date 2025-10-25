@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import PIL
 from PIL import Image
 from model.utils.image import resize_image, HWC3
-from mmdet3d.structures.points import LiDARPoints, BasePoints, get_points_type
+# from mmdet3d.structures.points import LiDARPoints, BasePoints, get_points_type
 from typing import List, Optional, Union
 import cv2
 import os.path as osp
