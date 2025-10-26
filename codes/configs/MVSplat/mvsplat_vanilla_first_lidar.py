@@ -26,7 +26,7 @@ mixed_precision = "no"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
-seed=42
+seed=1024
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
@@ -96,24 +96,34 @@ camera_args = dict(
 )
 train_depth_only=False
 return_depth=True
-max_depth=100
-min_depth=0.3
+max_depth=1000
+min_depth=0.01
 
 
 
 # MVSplat Model Architecture Here
 unimatch_weights_path = "/home/zliu/Project2025/mvsplat/checkpoints/gmdepth-scale1-resumeflowthings-scannet-5d9d7964.pth"
 num_of_context_views = 2
+multiview_trans_attn_split=2
+gaussians_per_pixel=1
+num_surfaces=1
+
+
+opacity_mapping = dict(
+    initial=0.0,
+    final=0.0,
+    warm_up=1.0
+)
+
+
 
 model = dict(
     type='MVSplatModel',  # 假设你的顶层模型名叫这个
-    
     encoder=dict(
         type='MVSplatEncoder',  # 原来的主类名
         name='mvsplat_encoder',
         feature_channels=128,
         downscale_factor=4,
-        multiview_trans_attn_split=2,
         no_cross_attn = False,
         use_epipolar_trans = False,
         unimatch_weights_path = unimatch_weights_path,
@@ -146,8 +156,17 @@ model = dict(
             sh_degree=4,
         ),
     ),
+)
 
 
+loss_settings_dict = dict(
+    depth_estimator_supervision=True,
+    depth_estimator_suppervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
+    rendered_depth_supervision=True,
+    rendered_depth_supervision_type='sparse_gt_pseudo', # 'sparse_gt', 'pseudo', 'sparse_gt_pseudo'
     
-    
+    rendered_rgb_supervision=True,
+    rendered_rgb_supervison_type="MSE_LPIPS",
+    lpips_alpha=0.05,
+    rendered_depth_weight=0.15,
 )

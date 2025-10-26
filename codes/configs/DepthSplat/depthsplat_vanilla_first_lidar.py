@@ -98,11 +98,11 @@ train_depth_only=False
 return_depth=True
 max_depth=100
 min_depth=0.3
+gaussians_per_pixel=1
 
 # Define the Models
 model = dict(
     type='DepthSplat',  # 假设你的顶层模型名叫这个
-    
     encoder=dict(
         type='DepthSplatEncoder',  # 原来的主类名
         name='depthsplat_encoder',
