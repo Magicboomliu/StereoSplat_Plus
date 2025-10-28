@@ -5,7 +5,7 @@ _base_ = [
 
 
 exp_name = "pixelsplat_vanilla"
-output_dir ="/data/zliu/feedforward_outputs_revision/MVSplat_2Views/First_LiDAR_As_Ref/visualization"
+output_dir ="/data/zliu/feedforward_outputs_revision/PixelSplat_2Views/First_LiDAR_As_Ref/visualization"
 validation_vis_progress=True
 
 # learning rate setiing
