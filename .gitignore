@@ -9,3 +9,7 @@ temp
 codes/HiSplat/checkpoints/
 *.pth
 
+
+# ignore model checkpoints
+codes/HiSplat/checkpoints/
+*.pth
