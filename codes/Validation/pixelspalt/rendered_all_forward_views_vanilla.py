@@ -24,19 +24,12 @@ warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
 import json
 
-import warnings
-warnings.filterwarnings("ignore")
-torch.autograd.set_detect_anomaly(True)
 
 import sys
 sys.path.append("..")
-
-from depthsplat.vanilla.models.encoder.unimatch.mv_unimatch import MultiViewUniMatch
-from depthsplat.vanilla.models.encoder.unimatch.dpt_head import DPTHead
-from depthsplat.vanilla.models.encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
-from depthsplat.vanilla.models.decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
-from depthsplat.vanilla.models.model_warpper_splat import ModelWarpper
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
+# import the model here
+from pixelsplat.src.model.pixelsplat import PixelSplatModel
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -124,7 +117,8 @@ class DecoderCFG(object):
 
 
 def main(args):
-    
+
+
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
@@ -192,53 +186,9 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
     
-
-    '''     Model Configuration   '''
-    encoder_cfg = cfg.model.encoder
     
-    # depth unimatch model
-    depth_estimator_unimatch = MultiViewUniMatch(
-            num_scales=encoder_cfg.num_scales, # default is 1
-            upsample_factor=encoder_cfg.upsample_factor, # upsample factor is 4
-            lowest_feature_resolution=encoder_cfg.lowest_feature_resolution, # 4
-            vit_type=encoder_cfg.monodepth_vit_type, # 'vits'
-            unet_channels=encoder_cfg.depth_unet_channels, # 128
-            grid_sample_disable_cudnn=encoder_cfg.grid_sample_disable_cudnn, # False, Grid Sampling 
-        )
-    
-    # 3dgs head: define the the gaussain head
-    gaussian_adapter_config = cfg.model.encoder.gaussian_adapter
-    # color branch
-    gaussain_color_branch_config = {
-            "large_gaussian_head": cfg.model.encoder.large_gaussian_head,
-            "color_large_unet": cfg.model.encoder.color_large_unet,
-            "init_sh_input_img": cfg.model.encoder.init_sh_input_img,
-            "feature_upsampler_channels": cfg.model.encoder.feature_upsampler_channels,
-            "gaussian_regressor_channels": cfg.model.encoder.gaussian_regressor_channels,
-            "num_surfaces":cfg.model.encoder.num_surfaces}
-    
-    # gaussain head estimation
-    gaussain_head = Gaussains_Estimator_Head(monodepth_vit_type=cfg.model.encoder.monodepth_vit_type,
-                                             upsample_factor=cfg.model.encoder.upsample_factor,
-                                             num_scales=cfg.model.encoder.num_scales,
-                                             gaussian_head_settings_dict=gaussian_adapter_config,
-                                             gaussians_color_branch_dict=gaussain_color_branch_config)
-    
-    dataset_config = DecoderCFG(background_color=cfg.background_color)
-    depthsplattercuda_decoder = DecoderSplattingCUDA(dataset_cfg=dataset_config)
-    
-    
-    my_model = ModelWarpper(depth_estimator=depth_estimator_unimatch,
-                            gaussain_head=gaussain_head,
-                            decoder_branch=depthsplattercuda_decoder,
-                            unimatch_weight = cfg.unimatch_weights_path
-                            )
-    
-
-    n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
-    
-    print("Number of params: ",n_parameters)
-
+    # declare the model achitecture here
+    my_model = PixelSplatModel()
 
     # move to the accelerate
     my_model,val_dataloader = accelerator.prepare(
@@ -259,6 +209,8 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
+    
+    
 
     evaluate_results_average_dict_rgb = {
         "first_view_psnr_left": 0,
@@ -307,7 +259,7 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat =my_model.validation_complete_with_bin_tokens(batch,
+            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
                                                         args.output_folder,
                                                         bin_token_list,
                                                         cfg=cfg,
@@ -338,6 +290,10 @@ def main(args):
                                 path=os.path.join(args.output_folder,"metric.json"))
 
 
+
+
+
+
 def get_mean(list):
     return sum(list)*1.0/len(list)
     
@@ -363,3 +319,4 @@ if __name__ == '__main__':
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
     main(args)
+

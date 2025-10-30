@@ -1,3 +1,15 @@
 outputs
 codes/outputs
 temp
+*.pth
+*.png
+*.jpg
+
+# model checkpoints
+codes/HiSplat/checkpoints/
+*.pth
+
+
+# ignore model checkpoints
+codes/HiSplat/checkpoints/
+*.pth
