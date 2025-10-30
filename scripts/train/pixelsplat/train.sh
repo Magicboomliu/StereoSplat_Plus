@@ -3,7 +3,7 @@ cd ../../..
 cd codes
 configs_path="/home/Project2025/FeedStereoGS/codes/configs/PixelSplat/pixelsplat_vanilla_first_lidar.py"
 work_dir="/data/zliu/feedforward_outputs_revision/PixelSplat_2Views/First_LiDAR_As_Ref/saved_models"
-resume_from="None"
+resume_from="/data/zliu/feedforward_outputs_revision/PixelSplat_2Views/First_LiDAR_As_Ref/saved_models/checkpoint-60000/"
 
 #configs 
 # - Single GPU YAML: accelerate_config_singleGPU.yaml
