@@ -4,3 +4,8 @@ temp
 *.pth
 *.png
 *.jpg
+
+# model checkpoints
+codes/HiSplat/checkpoints/
+*.pth
+
