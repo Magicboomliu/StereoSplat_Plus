@@ -177,15 +177,11 @@ class KITTI360Dataset(Dataset):
         else:
             if len(bin_info["sensor_info"]["CAM_LEFT"]) >= 2:
                 # For Trainig
-                # input_view_indices = sample_three(list(range(len(bin_info["sensor_info"]["CAM_LEFT"]))))
+                if self.split=="train":
+                    input_view_indices = sample_three(list(range(len(bin_info["sensor_info"]["CAM_LEFT"]))))
+                else:
+                    input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
                 
-                # Debug Here
-                input_view_indices = [1, 0, 2] # 0 is center, 1 is first, 2 is last
-                
-                # # #FIXME： Debug Only
-                # # input_view_indices = [1, 3, 4]
-            
-
                 
         # =================== Input views of this bin ===================== #
         input_img_paths, input_c2ws, input_w2cs = [], [], []
