@@ -36,6 +36,8 @@ import wandb
 from PIL import Image
 import time
 
+import skimage.io
+
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -568,6 +570,7 @@ class VolumeFusionRevision(BaseModule):
         
         
         img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        
         
         height,width = img.shape[-2:]
         bs = img.shape[0]

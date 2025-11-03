@@ -1,27 +1,34 @@
-# FeedStereoGS
-Feed-Forward 3D Gaussain Splatting 
+# VolumeFusion Ablation Studies
+
+In this experiemnts, we conduct the following ablation studies.
 
 
-## Dependency  
+- 1. Without using the Diffix 3D for image quality enhancement.
+    - Exp 1: cost volume branch only version.
+    - Exp 2: triplane branch only version.
+    - Exp 3: volumefusion version.
+    - Exp 4: volumefusion with randomly sampling and randomly stereo pairs.
+
+- 2. With using the Diffix3D for image quality enhancement.
+    - Exp 5: using progressive 2 times, 2 views ----> 6 views.
+    - Exp 6: using progressive 3 times, 2 views ---> 4 views ---> 6 views.
+
+
+### Pretrained Models 
+- [Exp 4 Models Weight](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
+
+
+
+### Training & Inference & Visualizations
+
+- **Exp 4**:  volumefusion with randomly sampling and randomly stereo 
+
 ```
-conda create -n stereogs python=3.10.0 
-pip install -r requirements.txt
+#(1) training the models
+cd scripts/train/ablations
+sh train_volumefusion_randomly.sh
+
+# (2) inference and visualizations
+cd scripts/evaluations/ablations
+sh volumefusion_train_random_2_views.sh
 ```
-install `diffusers` by-hand if encounter error. [Link](https://huggingface.co/docs/diffusers/training/text2image)  
-
-
-## Data Preprocessing 
-- [KITTI360](docs/preprocessing/kitti360.md)  
-
-
-## Training 
-- Traning on KITTI-360 with single or multiple GPUs
-```
-cd  scripts/train/
-
-sh train_kitti360_stereo.sh
-```
-
-## Acknowledgments
-
-Code is based on [mmdetection3d]((https://github.com/open-mmlab/mmdetection3d)). It is also greatly inspired by the following outstanding contributions to the open-source community: [TPVFormer](https://github.com/wzzheng/TPVFormer), [BEVFormer](https://github.com/fundamentalvision/BEVFormer), [MVSplat](https://github.com/donydchen/mvsplat), [pixelSplat](https://github.com/dcharatan/pixelsplat), [Metric3D-v2](https://github.com/YvanYin/Metric3D) and [MagicDrive](https://github.com/cure-lab/MagicDrive) and [Omni-Scnce](https://github.com/WU-CVGL/Omni-Scene/tree/main) and [depthsplat](https://github.com/cvg/depthsplat).
