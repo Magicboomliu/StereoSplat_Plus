@@ -2494,7 +2494,7 @@ class VolumeFusionRevision(BaseModule):
             rendered_center_frame = enhanced_rendered_center_frame
             
             # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.66 + gt_center_frame * 0.34
+            fusion_rendered_center_frame = rendered_center_frame * 0.68 + gt_center_frame * 0.32
             fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
             rendered_center_frame = fusion_rendered_center_frame
 
@@ -3127,7 +3127,7 @@ class VolumeFusionRevision(BaseModule):
             
 
             # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.70 + gt_center_frame * 0.30
+            fusion_rendered_center_frame = rendered_center_frame * 0.64 + gt_center_frame * 0.36
             fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
             rendered_center_frame = fusion_rendered_center_frame
 

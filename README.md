@@ -18,7 +18,7 @@ In this experiemnts, we conduct the following ablation studies.
 
 - [Exp 3](https://drive.google.com/drive/folders/1MX-MfpihcIPHwFj6T15HTwMK9kfek2hh?usp=sharing)
 - [Exp 4 ](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
-
+- [Exp 5,6 Diffusion](https://drive.google.com/file/d/1VnynCkjq_SqQD2z6I-LvtDh-8CSbIiLB/view?usp=sharing)
 
 ### Training & Inference & Visualizations
 
@@ -44,4 +44,18 @@ sh train_volumefusion_randomly.sh
 # (2) inference and visualizations
 cd scripts/evaluations/ablations
 sh volumefusion_train_random_2_views.sh
+```
+
+- **Exp 5**:  using progressive 2 times, 2 views ----> 6 views, note to select `Progressive_Twice_Diffix3D_Once`
+
+```
+cd scripts/evaluations/ablations
+sh volumefusion_progressive_with_diffix3d.sh 
+```
+
+- **Exp 6**:  using progressive 3 times, 2 views ---> 4 views ---> 6 views. note to select `Progressive_Three_Diffix3D_Twice`
+
+```
+cd scripts/evaluations/ablations
+sh volumefusion_progressive_with_diffix3d.sh 
 ```
