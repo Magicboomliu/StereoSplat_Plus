@@ -14,12 +14,25 @@ In this experiemnts, we conduct the following ablation studies.
     - Exp 6: using progressive 3 times, 2 views ---> 4 views ---> 6 views.
 
 
-### Pretrained Models 
-- [Exp 4 Models Weight](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
+### Pretrained Models (Weights Google Drive) 
 
+- [Exp 3](https://drive.google.com/drive/folders/1MX-MfpihcIPHwFj6T15HTwMK9kfek2hh?usp=sharing)
+- [Exp 4 ](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
 
 
 ### Training & Inference & Visualizations
+
+- **Exp 3**: volumefusion trained with first stereo images only.
+```
+#(1) training the models
+cd scripts/train/ablations
+sh train_volumefusion_first_2_view.sh
+
+# (2) inference and visualizations
+cd scripts/evaluations/ablations
+sh volumefusion_train_first_2_views.sh
+```
+
 
 - **Exp 4**:  volumefusion with randomly sampling and randomly stereo 
 

@@ -6,7 +6,7 @@ _base_ = [
 # exp name
 # output directionary
 exp_name = "volumefusion"
-output_dir = "/data1/zliu/feedforward_outputs_ablations/Random_Sampling_Camera_Nums/visualization"
+output_dir = "/data1/zliu/feedforward_outputs_ablations/Training_2_Views/visualization"
 dino_resnet50_pretrain_path="/home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/pretrained/dino_resnet50_pretrain.pth"
 validation_vis_progress=True
 
@@ -47,7 +47,6 @@ unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x
 #unimatch_weights_path=None
 camera_model='OpenCV' # select from openCV and openGL
 used_3D_offset=True
-
 
 depth_info_params = dict(
     use_pseudo_depth=True,
@@ -96,7 +95,6 @@ train_depth_only=False
 return_depth=True
 max_depth=100
 min_depth=0.3
-
 
 # Volume Branch Parameterization
 pc_range = point_cloud_range # [-50.0, -50.0, -3.0, 50.0, 50.0, 12.0]
@@ -196,7 +194,6 @@ loss_args = dict(
     use_fusion=True,
     use_cv=False,
     perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
-    
     gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
     
     depth_est_sup_dict= dict(
@@ -275,9 +272,7 @@ model = dict(
                 downscale_factor=4,
                 shim_patch_size=4,
                 local_mv_match=2,
-
                 monodepth_vit_type='vitb',
-
                 supervise_intermediate_depth=True,
                 return_depth=True,
 
@@ -338,7 +333,6 @@ model = dict(
             scale_max=[2 * pc_xrange / (tpv_h_*scale_h), 2 * pc_yrange / (tpv_w_*scale_w), 2 * pc_zrange / (tpv_z_*scale_z)]
         )
     ),
-    
     
     losses_params=loss_args,
     camera_args=camera_args,
