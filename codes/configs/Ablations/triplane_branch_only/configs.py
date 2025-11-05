@@ -35,7 +35,7 @@ resolution = [112, 544]
 point_cloud_range = [-3.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 background_color=[0.0, 0.0, 0.0]
 datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/all_2013_05_28_drive_0000_sync.txt"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/train_2013_05_28_drive_0000_sync.txt"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt"
 sequence='2013_05_28_drive_0000_sync'
@@ -188,10 +188,7 @@ return_types = ["gs",'depth','feature']
 use_checkpoint = True
 
 loss_args = dict(
-    use_volume=True,
     depth_estimation=True,
-    use_fusion=True,
-    use_cv=False,
     perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
     gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
     
@@ -257,40 +254,7 @@ model = dict(
         add_extra_convs='on_input',
         num_outs=4),
     
-    # depthsplat-like: cost-volume-based
-    costvolume_gs = dict(
-        depth_estimator_kwargs = dict(
-                unimatch_weights_path=unimatch_weights_path,
-                multiview_trans_attn_split=2,
-                costvolume_unet_feat_dim=128,
-                costvolume_unet_channel_mult=[1, 1, 1],
-                costvolume_unet_attn_res=[],
-                depth_unet_feat_dim=64,
-                depth_unet_attn_res=[],
-                depth_unet_channel_mult=[1, 1, 1],
-                downscale_factor=4,
-                shim_patch_size=4,
-                local_mv_match=2,
-                monodepth_vit_type='vitb',
-                supervise_intermediate_depth=True,
-                return_depth=True,
 
-                num_scales=1,
-                upsample_factor=4,
-                lowest_feature_resolution=4,
-                depth_unet_channels=128,
-                grid_sample_disable_cudnn=False,
-                
-        ),
-
-        gaussain_head_kwargs = dict(
-            monodepth_vit_type='vitb',
-            upsample_factor=4,
-            num_scales=1,
-            gaussian_regressor_channels=64
-        ),
-    ),
-    
     volume_gs=dict(
         use_checkpoint=use_checkpoint,
         
