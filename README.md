@@ -14,13 +14,23 @@ In this experiemnts, we conduct the following ablation studies.
     - Exp 6: using progressive 3 times, 2 views ---> 4 views ---> 6 views.
 
 
-### Pretrained Models (Weights Google Drive) 
+### Pretrained Models (Weights Google Drive)
 
+- [Pretrained Unimatch Weight(Depth Estimator)](https://drive.google.com/drive/folders/1tTp0PS7RceQr5mbDpuo-S7Jw4BgtUS1S?usp=sharing)
 - [Exp 3](https://drive.google.com/drive/folders/1MX-MfpihcIPHwFj6T15HTwMK9kfek2hh?usp=sharing)
 - [Exp 4 ](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
 - [Exp 5,6 Diffusion](https://drive.google.com/file/d/1VnynCkjq_SqQD2z6I-LvtDh-8CSbIiLB/view?usp=sharing)
 
 ### Training & Inference & Visualizations
+
+- **Exp 1**: cost volume branch only version.
+```
+#(1) training the models
+cd scripts/train/ablations
+sh train_cost_volume_branch_only.sh
+
+```
+
 
 - **Exp 3**: volumefusion trained with first stereo images only.
 ```
