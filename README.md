@@ -34,6 +34,13 @@ cd scripts/train/ablations
 sh train_cost_volume_branch_only.sh
 
 ```
+- **Exp 2**: triplane branch only version.
+```
+#(1) training the models
+cd scripts/train/ablations
+sh train_volume3D_branch_only.sh 
+
+```
 
 
 - **Exp 3**: volumefusion trained with first stereo images only.
