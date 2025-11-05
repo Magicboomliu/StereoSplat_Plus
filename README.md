@@ -14,6 +14,10 @@ In this experiemnts, we conduct the following ablation studies.
     - Exp 6: using progressive 3 times, 2 views ---> 4 views ---> 6 views.
 
 
+### Tools Networks Pretrained Weights (Google Drive)
+- [Pretrained Unimatch Weight(Depth Estimator)](https://drive.google.com/drive/folders/1tTp0PS7RceQr5mbDpuo-S7Jw4BgtUS1S?usp=sharing)
+- [Dino Resnet50](https://drive.google.com/file/d/1-jyND6h0zfd9_dB6FgnD9DEpNm7DC5u3/view?usp=sharing)
+
 ### Pretrained Models (Weights Google Drive)
 
 - [Pretrained Unimatch Weight(Depth Estimator)](https://drive.google.com/drive/folders/1tTp0PS7RceQr5mbDpuo-S7Jw4BgtUS1S?usp=sharing)
