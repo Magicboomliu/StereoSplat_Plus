@@ -37,6 +37,8 @@ from PIL import Image
 import time
 
 import skimage.io
+import math
+
 
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
@@ -258,9 +260,6 @@ def interleave_left_right_pose(x: torch.Tensor) -> torch.Tensor:
     y[:, 1::2] = right
     return torch.cat((y,first_left_right),dim=1)
 
-
-
-import math
 
 def add_local_pitch(c2w: torch.Tensor, deg: float):
     """绕相机自身X轴(右轴)旋转deg度，低头用负角度"""
@@ -1450,8 +1449,6 @@ class VolumeFusionRevision(BaseModule):
                 video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
                 clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
                 clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
-        
-        
         
         return evaluation_results_stat
     
