@@ -20,7 +20,8 @@ In this experiemnts, we conduct the following ablation studies.
 
 ### Pretrained Models (Weights Google Drive)
 
-- [Pretrained Unimatch Weight(Depth Estimator)](https://drive.google.com/drive/folders/1tTp0PS7RceQr5mbDpuo-S7Jw4BgtUS1S?usp=sharing)
+- [Exp 1](https://drive.google.com/drive/folders/1B4SbPgIH6EQiJQu86-arf4HSOHUQwd_x?usp=sharing)  
+- [Exp 2](https://drive.google.com/drive/folders/1VRVPboAyZnzlvjZyms5jP_204_Vn3MV3?usp=sharing)
 - [Exp 3](https://drive.google.com/drive/folders/1MX-MfpihcIPHwFj6T15HTwMK9kfek2hh?usp=sharing)
 - [Exp 4 ](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
 - [Exp 5,6 Diffusion](https://drive.google.com/file/d/1VnynCkjq_SqQD2z6I-LvtDh-8CSbIiLB/view?usp=sharing)
@@ -33,12 +34,19 @@ In this experiemnts, we conduct the following ablation studies.
 cd scripts/train/ablations
 sh train_cost_volume_branch_only.sh
 
+# (2) inference and visualizations
+cd scripts/evaluations/ablations
+sh volumefusion_cost_volume_branch_only.sh
 ```
 - **Exp 2**: triplane branch only version.
 ```
 #(1) training the models
 cd scripts/train/ablations
 sh train_volume3D_branch_only.sh 
+
+# (2) inference and visualizations
+cd scripts/evaluations/ablations
+sh volumefusion_volume3d_branch_only.sh
 ```
 
 - **Exp 3**: volumefusion trained with first stereo images only.
