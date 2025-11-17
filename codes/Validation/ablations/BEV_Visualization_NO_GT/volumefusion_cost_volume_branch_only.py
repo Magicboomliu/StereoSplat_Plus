@@ -197,7 +197,9 @@ def main(args):
                                             cfg=cfg,
                                             view_num=view_num,
                                             matching_nums=matching_nums,
-                                            vis=args.output_vis)
+                                            vis=args.output_vis,
+                                            rescale_h=3.0,
+                                            rescale_w=1.0)
             
 
             

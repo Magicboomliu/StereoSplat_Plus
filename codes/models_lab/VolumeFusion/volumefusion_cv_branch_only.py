@@ -1424,7 +1424,11 @@ class VolumeFusionRevision_CV_Branch_Only(BaseModule):
                                         view_num=2,
                                         matching_nums=2,
                                         cfg=None,
-                                        vis=False):
+                                        vis=False,
+                                        rescale_h=2.0,
+                                        rescale_w=1.0,
+                                        
+                                        ):
       
         # get the input and the reference input
         input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
@@ -1433,6 +1437,9 @@ class VolumeFusionRevision_CV_Branch_Only(BaseModule):
         bin_token_name = input_batch_dict['bin_token_name'][0][:-4]    
         img =input_batch_dict["imgs"] #[B,6,3,H,W]
         
+        current_resolution = [img.shape[-2], img.shape[-1]]
+        
+
         
         height,width = img.shape[-2:]
         bs = img.shape[0]
@@ -1527,14 +1534,31 @@ class VolumeFusionRevision_CV_Branch_Only(BaseModule):
         
         rendered_bev_fovxs = render_fovxs[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
         rendered_bev_fovys = render_fovys[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
+
+
         
-        render_pkg_fuse = self.renderer.render(
+
+        intrinsics_info = intrinsics[0,0,:,:]
+        current_cx = intrinsics_info[0,2]
+        current_cy = intrinsics_info[1,2]
+        current_fx = intrinsics_info[0,0]
+        current_fy = intrinsics_info[1,1]
+        
+
+
+        rendered_bev_fovxs = 2 * torch.arctan(rescale_w*current_cx  / current_fx).to(self.device).unsqueeze(0).repeat(1,rendered_bev_novel_views_c2w.shape[1])
+        rendered_bev_fovys = 2 * torch.arctan(rescale_h*current_cy / current_fy).to(self.device).unsqueeze(0).repeat(1,rendered_bev_novel_views_c2w.shape[1])
+
+        rendered_resolution = [int(current_resolution[0]*rescale_h), int(current_resolution[1]*rescale_w)]
+        
+        render_pkg_fuse = self.renderer.render_customized_resolution(
             gaussians=gaussians_all,
             c2w=rendered_bev_novel_views_c2w,
             fovx=rendered_bev_fovxs,
             fovy=rendered_bev_fovys,
             rays_o=None,
-            rays_d=None
+            rays_d=None,
+            new_resolution=rendered_resolution 
         )
 
         rendered_results_fuse = render_pkg_fuse
