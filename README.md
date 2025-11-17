@@ -86,3 +86,6 @@ sh volumefusion_progressive_with_diffix3d.sh
 cd scripts/evaluations/ablations
 sh volumefusion_progressive_with_diffix3d.sh 
 ```
+
+#### Generating Diffix3D Training Dataset with `image` `target_image`, `ref_image` and fixed prompt of `""remove degradation""`
+
