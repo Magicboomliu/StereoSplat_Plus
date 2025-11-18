@@ -16,6 +16,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
+
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
@@ -24,10 +25,14 @@ from torch import Tensor,nn
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
-from models_lab.VolumeFusion.volumefusion_cv_branch_only import VolumeFusionRevision_CV_Branch_Only
+# define the models
+from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
+from models_lab.diffix3D.model import Difix
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+import skimage.io
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -80,6 +85,11 @@ def kitti_colormap(disparity, maxval=-1):
 def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
+    
+    cfg.prompt = args.prompt
+    
+    cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
+
 
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -105,10 +115,8 @@ def main(args):
     if accelerator.is_main_process:
         os.makedirs(args.output_folder, exist_ok=True)
         cfg.dump(osp.join(args.output_folder, osp.basename(args.config_path)))
-        
-        
     
-    if cfg.world_center is not None:    
+    if cfg.world_center is not None:
         if cfg.world_center=="Center_LiDAR":
             import data.KITTI360_CenterCam_Ref.dataloader as datasets
         elif cfg.world_center=="First_Cam0":
@@ -152,14 +160,28 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
 
+
     # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusionRevision_CV_Branch_Only(backbone=cfg.model.backbone,
+    my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
                                     costvolume_gs=cfg.model.costvolume_gs,
+                                    volume_gs=cfg.model.volume_gs,
                                     losses_params=cfg.model.losses_params,
                                     camera_args=cfg.camera_args,
                                     dataset_params=cfg.dataset_params,
                                     use_checkpoint=cfg.use_checkpoint)
+    
+    # loading the pretrained diffix3d models.
+    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
+
+    pretrained_diffix_model = Difix(
+        pretrained_name=None,
+        pretrained_path=args.pretrained_diffix_model_path,
+        timestep=args.timestep,
+        mv_unet=args.use_ref)
+    
+    pretrained_diffix_model.set_eval()
+
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
@@ -181,26 +203,31 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
         
-    view_num = 2
-    matching_nums = 2
+    pretrained_diffix_model.to(accelerator.device)
     
+
+
 
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
             # process the current folder
-            bin_token_list = batch['bin_token']            
-            my_model.get_additional_bev_novel_views(batch,
+            bin_token_list = batch['bin_token']
+            
+            my_model.get_additional_bev_novel_views_progressive_iter_twice(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
-                                            view_num=view_num,
-                                            matching_nums=matching_nums,
+                                            start_images_views=2,
+                                            use_diffix3d=args.use_diffix3d,
+                                            diffix3d_network=pretrained_diffix_model,
+                                            use_ref=args.use_ref,
                                             vis=args.output_vis,
                                             rescale_h=3.0,
                                             rescale_w=1.0)
-            
+
+ 
 
 def get_mean(list):
     return sum(list)*1.0/len(list)
@@ -213,9 +240,15 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
-    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
+    
+    parser.add_argument('--pretrained_diffix_model_path', type=str, default="")
+    parser.add_argument('--timestep', type=int, default=199)
+    parser.add_argument('--prompt', type=str, default="remove degradation")
+    parser.add_argument('--use_ref', action='store_true', default=False)
+    parser.add_argument('--use_diffix3d', action='store_true', default=False)
+    parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
 
     parser.add_argument(
         "--output_vis",
@@ -226,6 +259,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
+
     main(args)
-    
-    
