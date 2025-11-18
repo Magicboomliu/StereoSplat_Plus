@@ -16,6 +16,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
+
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
@@ -24,10 +25,14 @@ from torch import Tensor,nn
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
-from models_lab.VolumeFusion.volumefusion_cv_branch_only import VolumeFusionRevision_CV_Branch_Only
+
+# define the models
+from models_lab.VolumeFusion.volumefusion_volume3d_branch_only import VolumeFusionRevision_Volume3D_Branch_Only
+
+
+
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
-
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -75,7 +80,6 @@ def kitti_colormap(disparity, maxval=-1):
 	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
-
 
 def main(args):
     cfg = Config.fromfile(args.config_path)
@@ -153,9 +157,9 @@ def main(args):
     )
 
     # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusionRevision_CV_Branch_Only(backbone=cfg.model.backbone,
+    my_model = VolumeFusionRevision_Volume3D_Branch_Only(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
-                                    costvolume_gs=cfg.model.costvolume_gs,
+                                    volume_gs=cfg.model.volume_gs,
                                     losses_params=cfg.model.losses_params,
                                     camera_args=cfg.camera_args,
                                     dataset_params=cfg.dataset_params,
@@ -185,12 +189,16 @@ def main(args):
     matching_nums = 2
     
 
+
+
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
             # process the current folder
-            bin_token_list = batch['bin_token']            
+            bin_token_list = batch['bin_token']
+            
+
             my_model.get_additional_bev_novel_views(batch,
                                             args.output_folder,
                                             bin_token_list,
@@ -202,6 +210,9 @@ def main(args):
                                             rescale_w=1.0)
             
             
+            
+
+        
 
 def get_mean(list):
     return sum(list)*1.0/len(list)

@@ -1572,12 +1572,7 @@ class VolumeFusionRevision_CV_Branch_Only(BaseModule):
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
         
-        
-        
-
-
-
-
+    
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
             os.makedirs(saved_folder_for_visualization,exist_ok=True)
