@@ -241,7 +241,7 @@ def main(args):
 
 
     # move to the accelerate
-    my_modelval_dataloader = accelerator.prepare(
+    my_model,val_dataloader = accelerator.prepare(
         my_model,  val_dataloader
     )
 
@@ -307,7 +307,7 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat =my_model.validation_complete_with_bin_tokens(batch,
+            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
                                                         args.output_folder,
                                                         bin_token_list,
                                                         cfg=cfg,

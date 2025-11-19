@@ -6,3 +6,4 @@ scene2013_05_28_drive_0000_sync_bin008.pkl
 scene2013_05_28_drive_0000_sync_bin010.pkl
 scene2013_05_28_drive_0000_sync_bin2572.pkl
 scene2013_05_28_drive_0000_sync_bin014.pkl
+scene2013_05_28_drive_0000_sync_bin5879.pkl

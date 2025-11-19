@@ -1,27 +1,79 @@
 # FeedStereoGS
-Feed-Forward 3D Gaussain Splatting 
+Diff-VolumeFusion: Progressive Input-Invariant Feed-Forward 3D Gaussian Splatting using Stereo Images
 
 
-## Dependency  
+
+### Performance Evaluations
+
+- [PixelSplat (CVPR 2024)](https://github.com/dcharatan/pixelsplat)
+- [MVSplat (ECCV 2024)](https://github.com/donydchen/mvsplat)
+- [OmniScene (CVPR 2025)](https://github.com/WU-CVGL/Omni-Scene)
+- [DepthSplat (CVPR2025)](https://github.com/cvg/depthsplat)
+---
+- Ours1: Input-Invariant VolumeFusion
+- Ours2: Diff-VolumeFusion Iter = 2
+- Ours3: Diff-VolumeFusion Iter = 3
+
+
+
+### Pretrained-Weights (Google Drive)
+- [PixelSplat](https://drive.google.com/drive/folders/1v4D0LzJ-p4afuoro-CSr96s3QOkiaGmC?usp=sharing)
+- [MVSplat](https://drive.google.com/drive/folders/1l7nbn-aJx2s_107SKyRGpoYo17AaOmvb?usp=sharing)
+- [OmniScene](https://drive.google.com/drive/folders/1t_ba6d0S0FqlaRHJBXw1XFue8moxWzyY?usp=sharing)
+- [DepthSplat](https://drive.google.com/drive/folders/1ntWepSwW1NevE1eFsvtwCCeYXh9kfwwc?usp=sharing)
+- [VolumeFusion](https://drive.google.com/drive/folders/1sLbprywWeUzXHJkdqplX5rZ3-omQfeFc?usp=sharing)
+- [Diffix3D Pretrained Weight](https://drive.google.com/file/d/1qOHlj0gSmYu_YXbcHGRrCdj-ck2sIQm1/view?usp=sharing)
+
+
+### Training 
+
+(1) PixelSplat
+
 ```
-conda create -n stereogs python=3.10.0 
-pip install -r requirements.txt
+cd scripts/train/pixelsplat
+sh train.sh
 ```
-install `diffusers` by-hand if encounter error. [Link](https://huggingface.co/docs/diffusers/training/text2image)  
+(2) MVSplat
 
-
-## Data Preprocessing 
-- [KITTI360](docs/preprocessing/kitti360.md)  
-
-
-## Training 
-- Traning on KITTI-360 with single or multiple GPUs
 ```
-cd  scripts/train/
+cd scripts/train/mvsplat
+sh train.sh
+```
+(3) depthsplat
 
-sh train_kitti360_stereo.sh
+```
+cd scripts/train/depthsplat
+sh train.sh
+```
+(4) omniscene
+```
+cd scripts/train/omnigs
+sh train.sh
 ```
 
-## Acknowledgments
+(5) VolumeFusion
+```
+cd scripts/train/volumefusion
+sh train_revision.sh
+```
 
-Code is based on [mmdetection3d]((https://github.com/open-mmlab/mmdetection3d)). It is also greatly inspired by the following outstanding contributions to the open-source community: [TPVFormer](https://github.com/wzzheng/TPVFormer), [BEVFormer](https://github.com/fundamentalvision/BEVFormer), [MVSplat](https://github.com/donydchen/mvsplat), [pixelSplat](https://github.com/dcharatan/pixelsplat), [Metric3D-v2](https://github.com/YvanYin/Metric3D) and [MagicDrive](https://github.com/cure-lab/MagicDrive) and [Omni-Scnce](https://github.com/WU-CVGL/Omni-Scene/tree/main) and [depthsplat](https://github.com/cvg/depthsplat).
+### Evaluations
+
+(1) Pixelsplat 
+
+```
+
+```
+
+(2) DepthSplat
+- evaluations feedforward
+```
+cd scripts/evaluations/depthsplat
+sh render_all_forward_vanilla_metrics.sh
+```
+
+- evaluations bev views
+```
+cd scripts/evaluations/BEV_Visualizations
+sh render_views_with_depthsplat.sh
+```

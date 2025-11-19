@@ -20,7 +20,6 @@ from .encoder.unimatch.mv_unimatch import MultiViewUniMatch
 from .encoder.unimatch.dpt_head import DPTHead
 import numpy as np
 from .encoder.heads.gaussains_head import Gaussains_Estimator_Head,GaussianAdapterCfg
-from torch import Tensor, nn
 # Decoder Here
 from .decoder.decoder_splatting_head_cuda import DecoderSplattingCUDA
 from safetensors.torch import load_file
@@ -44,6 +43,8 @@ from PIL import Image
 import time
 import random
 import os.path as osp
+
+import copy
 
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
@@ -320,6 +321,29 @@ def compute_depth_stereo_mae_mse(depth_pred, depth_gt,valid_min=0.0,valid_max=15
     mse = sq_error.mean()
 
     return mae, mse
+
+
+def add_local_pitch(c2w: torch.Tensor, deg: float):
+    """绕相机自身X轴(右轴)旋转deg度，低头用负角度"""
+    theta = math.radians(deg)
+    c, s = math.cos(theta), math.sin(theta)
+    Rloc = torch.tensor([[1, 0, 0, 0],
+                         [0, c,-s, 0],
+                         [0, s, c, 0],
+                         [0, 0, 0, 1]], dtype=c2w.dtype, device=c2w.device)
+    return c2w @ Rloc  # 后乘=局部旋转
+
+def add_local_yaw_about_camZ(c2w: torch.Tensor, deg: float):
+    """绕相机自身Z轴(前轴)旋转deg度"""
+    theta = math.radians(deg)
+    c, s = math.cos(theta), math.sin(theta)
+    Rloc = torch.tensor([[ c,-s, 0, 0],
+                         [ s, c, 0, 0],
+                         [ 0, 0, 1, 0],
+                         [ 0, 0, 0, 1]], dtype=c2w.dtype, device=c2w.device)
+    return c2w @ Rloc  # 后乘=局部旋转
+
+
 
 @dataclass
 class OptimizerCfg:
@@ -1307,7 +1331,6 @@ class ModelWarpper(nn.Module):
     
         return input_batch_dict,output_batch_dict
 
-
     # rendered video for KITTI-360
     def forward_video_kitti360(self, batch,cfg=None):
         bin_token_name = batch['bin_token']
@@ -1540,7 +1563,6 @@ class ModelWarpper(nn.Module):
         return preds,bin_token_name
     
 
-    
     def validation_complete_with_bin_tokens(self, batch, val_result_savedir,bin_token_list,cfg=None,vis=False):
         
         
@@ -1573,7 +1595,6 @@ class ModelWarpper(nn.Module):
         
         min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
         max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
-        
         height, width = input_images.shape[3:]
         
         # debug here
@@ -1807,40 +1828,273 @@ class ModelWarpper(nn.Module):
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
             
             
-            # rendered videos
-            saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
-            os.makedirs(saved_videos_path,exist_ok=True)
+            # # rendered videos
+            # saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
+            # os.makedirs(saved_videos_path,exist_ok=True)
             
-            preds, saved_video_name = self.forward_video_kitti360(batch=batch,cfg=cfg)
+            # preds, saved_video_name = self.forward_video_kitti360(batch=batch,cfg=cfg)
             
-            bs = preds["img"].shape[0]  
-            pred_imgs = preds["img"] #(4,960,3,224,400)
-            pred_depths = preds["depth"] #(4,960,3,224,400)
+            # bs = preds["img"].shape[0]  
+            # pred_imgs = preds["img"] #(4,960,3,224,400)
+            # pred_depths = preds["depth"] #(4,960,3,224,400)
             
             
-            # saved the results with batch
-            for b in range(bs):
-                bin_token = saved_video_name[b]
-                # dump rgb view
-                dump_path = osp.join(saved_videos_path, "{}_rgb.mp4".format(bin_token))
-                video = (pred_imgs[b].clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
-                video_rec = wandb.Video(video[None], fps=30, format="mp4")
-                video_tensor = video_rec._prepare_video(video_rec.data)
-                clip = mpy.ImageSequenceClip(list(video_tensor), fps=30)
-                clip.write_videofile(dump_path, codec='libx264', preset='medium', logger=None)
+            # # saved the results with batch
+            # for b in range(bs):
+            #     bin_token = saved_video_name[b]
+            #     # dump rgb view
+            #     dump_path = osp.join(saved_videos_path, "{}_rgb.mp4".format(bin_token))
+            #     video = (pred_imgs[b].clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
+            #     video_rec = wandb.Video(video[None], fps=30, format="mp4")
+            #     video_tensor = video_rec._prepare_video(video_rec.data)
+            #     clip = mpy.ImageSequenceClip(list(video_tensor), fps=30)
+            #     clip.write_videofile(dump_path, codec='libx264', preset='medium', logger=None)
                 
-                # dump depth view
-                dump_path_dpt = osp.join(saved_videos_path, "{}_depth.mp4".format(bin_token))
-                pred_depth = pred_depths[b].clamp(0.0, 100.0)
-                max_val = float(pred_depth.max())
-                video_dpt = depths_to_colors(pred_depths[b], concat="frame", max_val=max_val)
-                video_dpt = video_dpt.transpose((0, 3, 1, 2))
-                video_rec_dpt = wandb.Video(video_dpt[None], fps=30, format="mp4")
-                video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
-                clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
-                clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
+            #     # dump depth view
+            #     dump_path_dpt = osp.join(saved_videos_path, "{}_depth.mp4".format(bin_token))
+            #     pred_depth = pred_depths[b].clamp(0.0, 100.0)
+            #     max_val = float(pred_depth.max())
+            #     video_dpt = depths_to_colors(pred_depths[b], concat="frame", max_val=max_val)
+            #     video_dpt = video_dpt.transpose((0, 3, 1, 2))
+            #     video_rec_dpt = wandb.Video(video_dpt[None], fps=30, format="mp4")
+            #     video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
+            #     clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
+            #     clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
         
         
         return evaluation_results_stat        
 
 
+
+
+
+    def get_rgbs_bev_novel_view(self, batch, val_result_savedir,bin_token_list,cfg=None,vis=False,
+                                rescale_h=3.0,rescale_w=1.0):
+        
+        
+        bin_token_name = bin_token_list[0][:-4]
+
+        input_batch_dict,output_batch_dict = self.prepare_input_multiviews(batch=batch)
+        
+        return_depth = cfg.return_depth
+        iter_end = cfg.max_train_steps 
+        depth_max_value = cfg.max_depth # 100
+        depth_min_value = cfg.min_depth # 0.3 
+        
+        # inputs information
+        input_images = input_batch_dict['imgs'] # [B,V,3,H,W]
+        intrinsics = input_batch_dict['intrinsics'] # [B,V,3,3]
+        input_extrinsics = input_batch_dict['extrinsics'] # [B,V,4,4]
+        input_nn_matrix = input_batch_dict['nn_matrix'] #[B,V,K]
+        bs = input_images.shape[0]
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+
+        mask = input_sparse_gt_depth > 0
+        mask = mask.float()
+        input_nn_matrix = input_nn_matrix.long()
+        
+        
+        current_resolution = [input_images.shape[-2], input_images.shape[-1]]
+
+
+        num_of_cameras = input_images.shape[1]
+        min_depth=1.0 / depth_max_value  # inverse depth range
+        max_depth=1.0 / depth_min_value
+        
+        min_depth = torch.from_numpy(np.array(min_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        max_depth = torch.from_numpy(np.array(max_depth)).unsqueeze(0).repeat(bs,num_of_cameras).type_as(input_images)
+        height, width = input_images.shape[3:]
+        
+        # debug here
+        # intrinsics[:,:,0,2] = intrinsics[:,:,0,2] + 13
+        # intrinsics[:,:,1,2] = intrinsics[:,:,1,2] - 30
+        intrinsics = intrinsics.clone()
+        # Normalized the instrinsics -----> Maybe not neccssary
+        intrinsics[:, :, 0] = intrinsics[:, :, 0]*1.0/width
+        intrinsics[:, :, 1] = intrinsics[:, :, 1]*1.0/height
+        
+        results_dict = self.depth_estimator(
+            images=input_images,
+            attn_splits_list=[2],
+            intrinsics=intrinsics,
+            min_depth=min_depth,  # inverse depth range
+            max_depth=max_depth,
+            num_depth_candidates=192, # here I set it to 192
+            extrinsics=input_extrinsics,
+            nn_matrix=input_nn_matrix
+        )
+        
+        predicted_input_depth = results_dict['depth_preds'][0]
+        
+        estimated_raw_gaussains_dict = self.gaussains_estimation_head(imgs=input_images,
+                                           extrinsics=input_extrinsics,
+                                           intrinsics = intrinsics,
+                                           results_dict=results_dict,
+                                           return_depth=return_depth)
+        
+        # return values
+        if len(estimated_raw_gaussains_dict.keys())>1:
+            pred_depths = estimated_raw_gaussains_dict["depths"]
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+        else:
+            gaussians = estimated_raw_gaussains_dict["gaussians"]
+            pred_depths = None
+        
+        
+        #first 2 dimension is the novel final ,final dimension is the input view
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        z_near_batch = torch.from_numpy(np.array([cfg.near])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+        z_far_batch = torch.from_numpy(np.array([cfg.far])).unsqueeze(0).repeat(render_c2w.shape[0],render_c2w.shape[1]).type_as(render_c2w)
+
+        
+        rendered_resolution = [int(current_resolution[0]*rescale_h), int(current_resolution[1]*rescale_w)]
+        
+        
+        num_of_views_all = render_c2w.shape[1]
+        rest_of_views_all = num_of_views_all - 2
+        rest_besides_first_c2w = render_c2w[:,:-2,:,:]
+        
+        half_rest_of_views_all = rest_of_views_all // 2
+        center_view_c2w_left_index = half_rest_of_views_all -2
+        last_view_c2w_left_index = half_rest_of_views_all -1
+        
+        center_view_c2w_right_index = rest_of_views_all - 2
+        last_view_c2w_right_index = rest_of_views_all - 1
+        
+    
+        first_view_c2w_left = render_c2w[:,-2:-1,:,:]
+        first_view_c2w_right = render_c2w[:,-1:,:,:]
+        
+        center_view_c2w_left = rest_besides_first_c2w[:,center_view_c2w_left_index,:,:].unsqueeze(1)
+        last_view_c2w_left = rest_besides_first_c2w[:,last_view_c2w_left_index,:,:].unsqueeze(1)
+        center_view_c2w_right = rest_besides_first_c2w[:,center_view_c2w_right_index,:,:].unsqueeze(1)
+        last_view_c2w_right = rest_besides_first_c2w[:,last_view_c2w_right_index,:,:].unsqueeze(1)
+        
+
+        
+        # novel view 1 
+        rendered_c2w_center_bev_view1 = copy.deepcopy(center_view_c2w_left)
+        rendered_c2w_center_bev_view1[0][0][2,3] = rendered_c2w_center_bev_view1[0][0][2,3] + 3
+        rendered_c2w_center_bev_view1[0][0] = add_local_pitch(rendered_c2w_center_bev_view1[0][0], deg=-45.0)
+        
+        # novel view 2
+        rendered_c2w_center_bev_view2 = copy.deepcopy(center_view_c2w_left)
+        rendered_c2w_center_bev_view2[0][0][2,3] = rendered_c2w_center_bev_view2[0][0][2,3] + 3
+        rendered_c2w_center_bev_view2[0][0] = add_local_pitch(rendered_c2w_center_bev_view2[0][0], deg=-30.0)
+        
+
+        # novel view 3
+        rendered_c2w_center_bev_view3 = copy.deepcopy(center_view_c2w_right)
+        rendered_c2w_center_bev_view3[0][0][2,3] = rendered_c2w_center_bev_view3[0][0][2,3] + 3
+        rendered_c2w_center_bev_view3[0][0] = add_local_pitch(rendered_c2w_center_bev_view3[0][0], deg=-45.0)
+        
+        # novel view 4
+        rendered_c2w_center_bev_view4 = copy.deepcopy(center_view_c2w_right)
+        rendered_c2w_center_bev_view4[0][0][2,3] = rendered_c2w_center_bev_view4[0][0][2,3] + 3
+        rendered_c2w_center_bev_view4[0][0] = add_local_pitch(rendered_c2w_center_bev_view4[0][0], deg=-30.0)
+        
+        
+        t_short = torch.linspace(0, 1, 31, dtype=torch.float32, device=self.device)
+        center_view_center_c2w = interpolate_extrinsics(center_view_c2w_left,
+                                            center_view_c2w_right,
+                                            t_short)[:,:,15,:,:]
+        
+        # novel view 5
+        rendered_c2w_center_bev_view5 = copy.deepcopy(center_view_center_c2w)
+        rendered_c2w_center_bev_view5[0][0][2,3] = rendered_c2w_center_bev_view5[0][0][2,3] + 3
+        rendered_c2w_center_bev_view5[0][0] = add_local_pitch(rendered_c2w_center_bev_view5[0][0], deg=-30.0)
+
+        
+        # center_left_plus_3_d45, center_left_plus_3_d30, center_right_plus_3_d45, center_right_plus_3_d30, center_plus_3_d30
+        rendered_bev_novel_views_c2w = torch.cat([rendered_c2w_center_bev_view1,rendered_c2w_center_bev_view2,
+                                                  rendered_c2w_center_bev_view3,rendered_c2w_center_bev_view4,
+                                                  rendered_c2w_center_bev_view5],dim=1)
+        
+        
+        recovered_intrinsic = output_intrinsics[0,0,:,:].clone()
+        recovered_intrinsic[0] = recovered_intrinsic[0]*1.0 * width
+        recovered_intrinsic[1] = recovered_intrinsic[1]*1.0 *height
+        
+        recovered_intrinsic[0,2] = recovered_intrinsic[0,2] * rescale_w
+        recovered_intrinsic[1,2] = recovered_intrinsic[1,2] * rescale_h
+        
+        recovered_intrinsics = recovered_intrinsic.unsqueeze(0).unsqueeze(0).repeat(1,rendered_bev_novel_views_c2w.shape[1],1,1)
+        recovered_intrinsics[:, :, 0] = recovered_intrinsics[:, :, 0]*1.0/rendered_resolution[1]
+        recovered_intrinsics[:, :, 1] = recovered_intrinsics[:, :, 1]*1.0/rendered_resolution[0]
+        
+        z_far_batch = z_far_batch[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
+        z_near_batch = z_near_batch[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
+        
+        
+
+        
+
+        rendered_results = self.decoder_branch(gaussians=estimated_raw_gaussains_dict["gaussians"],
+                                               extrinsics= rendered_bev_novel_views_c2w,
+                                               intrinsics = recovered_intrinsics,
+                                               near = z_near_batch,
+                                               far = z_far_batch,
+                                               image_shape=(rendered_resolution[0],rendered_resolution[1]),
+                                               depth_mode = 'depth'
+                                               )
+
+        rendered_color = rendered_results['color'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth = rendered_results['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha = rendered_results['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth = rendered_depth.squeeze(2)
+        rendered_alpha = rendered_alpha.squeeze(2)
+        
+        rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+        rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+        
+        
+        rendered_color_fuse = rendered_color 
+        rendered_depth_fuse = rendered_depth
+        
+
+        if vis:
+            saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
+            os.makedirs(saved_folder_for_visualization,exist_ok=True)
+            
+            rendered_images_folder_path = os.path.join(saved_folder_for_visualization,'rendered_images')
+            rendered_depth_folder_path = os.path.join(saved_folder_for_visualization,'rendered_depth')
+            
+            os.makedirs(rendered_images_folder_path,exist_ok=True)
+            os.makedirs(rendered_depth_folder_path,exist_ok=True)
+            
+            
+            # center_left_plus_3_d45, center_left_plus_3_d30, center_right_plus_3_d45, center_right_plus_3_d30, center_plus_3_d30
+            
+            
+            center_left_plus_3_d45 = rendered_color_fuse[:,0,:,:,:]
+            center_left_plus_3_d30 = rendered_color_fuse[:,1,:,:,:]
+            center_right_plus_3_d45 = rendered_color_fuse[:,2,:,:,:]
+            center_right_plus_3_d30 = rendered_color_fuse[:,3,:,:,:]
+            center_plus_3_d30 = rendered_color_fuse[:,4,:,:,:]
+
+            skimage.io.imsave(os.path.join(rendered_images_folder_path,'center_left_plus_3_d45.png'),(center_left_plus_3_d45.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            skimage.io.imsave(os.path.join(rendered_images_folder_path,'center_left_plus_3_d30.png'),(center_left_plus_3_d30.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            skimage.io.imsave(os.path.join(rendered_images_folder_path,'center_right_plus_3_d45.png'),(center_right_plus_3_d45.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            skimage.io.imsave(os.path.join(rendered_images_folder_path,'center_right_plus_3_d30.png'),(center_right_plus_3_d30.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            skimage.io.imsave(os.path.join(rendered_images_folder_path,'center_plus_3_d30.png'),(center_plus_3_d30.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+            
+            
+            rendered_depth_center_left_plus_3_d45 = rendered_depth_fuse[:,0,:,:].squeeze(0).cpu().numpy()
+            rendered_depth_center_left_plus_3_d30 = rendered_depth_fuse[:,1,:,:].squeeze(0).cpu().numpy()
+            rendered_depth_center_right_plus_3_d45 = rendered_depth_fuse[:,2,:,:].squeeze(0).cpu().numpy()
+            rendered_depth_center_right_plus_3_d30 = rendered_depth_fuse[:,3,:,:].squeeze(0).cpu().numpy()
+            rendered_depth_center_plus_3_d30 = rendered_depth_fuse[:,4,:,:].squeeze(0).cpu().numpy()
+            
+            rendered_depth_center_left_plus_3_d45_vis = convert_depth_to_disp(depth=rendered_depth_center_left_plus_3_d45)
+            rendered_depth_center_left_plus_3_d30_vis = convert_depth_to_disp(depth=rendered_depth_center_left_plus_3_d30)
+            rendered_depth_center_right_plus_3_d45_vis = convert_depth_to_disp(depth=rendered_depth_center_right_plus_3_d45)
+            rendered_depth_center_right_plus_3_d30_vis = convert_depth_to_disp(depth=rendered_depth_center_right_plus_3_d30)
+            rendered_depth_center_plus_3_d30_vis = convert_depth_to_disp(depth=rendered_depth_center_plus_3_d30)
+
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_left_plus_3_d45_depth.png'),rendered_depth_center_left_plus_3_d45_vis)
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_left_plus_3_d30_depth.png'),rendered_depth_center_left_plus_3_d30_vis)
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d45_depth.png'),rendered_depth_center_right_plus_3_d45_vis)
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d30_depth.png'),rendered_depth_center_right_plus_3_d30_vis)
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_plus_3_d30_depth.png'),rendered_depth_center_plus_3_d30_vis)
