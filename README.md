@@ -61,8 +61,15 @@ sh train_revision.sh
 
 (1) Pixelsplat 
 
+- evaluations feedforward
 ```
-
+cd scripts/evaluations/pixelsplat
+sh render_all_forward_vanilla_metrics.sh
+```
+- evaluations bev views
+```
+cd scripts/evaluations/BEV_Visualizations
+sh render_views_with_pixelsplat.sh
 ```
 
 (2) DepthSplat
