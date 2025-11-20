@@ -59,6 +59,8 @@ sh train_revision.sh
 
 ### Evaluations
 
+#### Others Methods
+
 (1) Pixelsplat 
 
 - evaluations feedforward
@@ -97,3 +99,18 @@ sh render_all_forward_vanilla_metrics.sh
 cd scripts/evaluations/BEV_Visualizations
 sh render_views_with_mvsplat.sh
 ```
+
+(4) Omniscene
+- evaluations feedforward
+```
+cd scripts/evaluations/omnigs
+sh render_all_rgb_depth_metrics.sh
+```
+- evaluations bev views
+```
+cd scripts/evaluations/BEV_Visualizations
+sh render_views_with_omnigs.sh
+```
+---
+
+### Our Proposed Methods

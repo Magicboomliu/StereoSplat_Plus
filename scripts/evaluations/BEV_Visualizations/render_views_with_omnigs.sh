@@ -3,7 +3,7 @@ cd ../../..
 cd codes/Validation
 
 configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omnigs_vanilla_first_LiDAR_as_reference.py"
-output_folder="/data1/zliu/forward_outputs_compared_with_others/omnigs/forward_views"
+output_folder="/data1/zliu/forward_outputs_compared_with_others/omnigs/bev_views"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="MetricV2" # "MetricV2" or "NMRFStereo"
@@ -12,7 +12,7 @@ pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performan
 
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml omnigs/rendered_all_rgbs_and_depths_inside_bin.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml omnigs/rendered_novel_bev_views.py \
     --config_path  $configs_path \
     --output_folder $output_folder \
     --val_filelist $val_filelist \

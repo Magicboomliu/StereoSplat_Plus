@@ -24,38 +24,6 @@ def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
 
-class Basic_Meter(object):
-    def __init__(self,psnr,ssim,mae,mse):
-        self.psnr = psnr
-        self.ssim = ssim
-        self.mae = mae
-        self.mse = mse
-        self.counter = 0
-    
-    def update(self,psnr,ssim,mae,mse):
-        self.psnr +=psnr
-        self.ssim +=ssim
-        self.mae +=mae
-        self.mse +=mse
-        self.counter = self.counter+1
-    
-    def get_stats(self):
-        if self.counter ==0:
-            return{
-            "psnr": 0,
-            "ssim": 0,
-            "mae": 0,
-            "mse":0
-                
-            }
-        else:
-            return {
-                "psnr": self.psnr/self.counter,
-                "ssim": self.ssim/self.counter,
-                "mae": self.mae/self.counter,
-                "mse":self.mse/self.counter
-            }
-
 def convert_depth_to_disp(factor=328.318735,depth=None):
     
     mask = depth>0
@@ -98,6 +66,7 @@ def kitti_colormap(disparity, maxval=-1):
 	colored_disp[:,:,0] = (w*colormap[index][:,:,2] + (1.-w)*colormap[index+1][:,:,2])
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
+
 
 def main(args):
     
@@ -197,81 +166,20 @@ def main(args):
 
 
 
-    evaluate_results_average_dict_rgb = {
-        "first_view_psnr_left": 0,
-        "first_view_ssim_left": 0,
-        "first_view_psnr_right": 0,
-        "first_view_ssim_right": 0,
-        "center_view_psnr_left": 0,
-        "center_view_ssim_left": 0,
-        "center_view_psnr_right": 0,
-        "center_view_ssim_right": 0,
-        "last_view_psnr_left": 0,
-        "last_view_ssim_left": 0,
-        "last_view_psnr_right": 0,
-        "last_view_ssim_right": 0,
-        "all_view_psnr_left": 0,
-        "all_view_ssim_left": 0,
-        "all_view_psnr_right": 0,
-        "all_view_ssim_right": 0,
-
-    }
-    
-    evaluate_results_average_dict_depth = {
-        "first_view_left_mae": 0,
-        "first_view_left_mse": 0,
-        "first_view_right_mae": 0,
-        "first_view_right_mse": 0,
-        "center_view_left_mae": 0,
-        "center_view_left_mse": 0,
-        "center_view_right_mae": 0,
-        "center_view_right_mse": 0,
-        "last_view_left_mae": 0,
-        "last_view_left_mse": 0,
-        "last_view_right_mae": 0,
-        "last_view_right_mse": 0,
-        "all_view_left_mae": 0,
-        "all_view_left_mse": 0,
-        "all_view_right_mae": 0,
-        "all_view_right_mse": 0,
-    }
-
-
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-
-            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
+        
+            my_model.get_rgbs_bev_novel_view(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
-                                            vis=args.output_vis)
-            
-            current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
-            current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
-            
-            for key in current_evaluate_results_dict_rgb.keys():
-                evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
-            for key in current_evaluate_results_dict_depth.keys():
-                evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
-            batch_idx += 1
-           
-        for key in evaluate_results_average_dict_rgb.keys():
-            evaluate_results_average_dict_rgb[key] /= batch_idx
-        for key in evaluate_results_average_dict_depth.keys():
-            evaluate_results_average_dict_depth[key] /= batch_idx
-            
-        results_dict = {
-            "rgb": evaluate_results_average_dict_rgb,
-            "depth": evaluate_results_average_dict_depth,
-        }
-        
-        if not args.output_vis:
-            saved_into_json(data_dict=results_dict,
-                                path=os.path.join(args.output_folder,"metric.json"))
+                                            vis=args.output_vis,
+                                            rescale_h=3.0,
+                                            rescale_w=1.0)
 
                         
 def get_mean(list):
