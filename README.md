@@ -87,3 +87,13 @@ sh render_views_with_depthsplat.sh
 
 (3) MVSplat
 
+- evaluations feedforward
+```
+cd scripts/evaluations/mvsplat
+sh render_all_forward_vanilla_metrics.sh
+```
+- evaluations bev veiws
+```
+cd scripts/evaluations/BEV_Visualizations
+sh render_views_with_mvsplat.sh
+```
