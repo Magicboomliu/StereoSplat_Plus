@@ -114,3 +114,9 @@ sh render_views_with_omnigs.sh
 ---
 
 ### Our Proposed Methods
+
+(1) Input-Invariant VolumeFusion
+- evaluations feedforward
+
+
+- evaluations bev views

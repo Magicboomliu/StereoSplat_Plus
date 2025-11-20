@@ -26,7 +26,6 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
-
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
@@ -34,38 +33,6 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
-
-class Basic_Meter(object):
-    def __init__(self,psnr,ssim,mae,mse):
-        self.psnr = psnr
-        self.ssim = ssim
-        self.mae = mae
-        self.mse = mse
-        self.counter = 0
-    
-    def update(self,psnr,ssim,mae,mse):
-        self.psnr +=psnr
-        self.ssim +=ssim
-        self.mae +=mae
-        self.mse +=mse
-        self.counter = self.counter+1
-    
-    def get_stats(self):
-        if self.counter ==0:
-            return{
-            "psnr": 0,
-            "ssim": 0,
-            "mae": 0,
-            "mse":0
-                
-            }
-        else:
-            return {
-                "psnr": self.psnr/self.counter,
-                "ssim": self.ssim/self.counter,
-                "mae": self.mae/self.counter,
-                "mse":self.mse/self.counter
-            }
 
 def convert_depth_to_disp(factor=328.318735,depth=None):
     
@@ -149,9 +116,9 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
+    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
-    
     
     dataset = getattr(datasets, dataset_config.dataset_name)
     
@@ -215,8 +182,8 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
         
-    view_num = 6
-    matching_nums = 4
+    view_num = 2
+    matching_nums = 2
     
 
     with torch.no_grad():
@@ -226,18 +193,16 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
 
-            
-            my_model.validation_on_the_novel_bev_views(batch,
+            my_model.get_additional_bev_novel_views_non_progressive(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
                                             view_num=view_num,
                                             matching_nums=matching_nums,
-                                            vis=args.output_vis)
+                                            vis=args.output_vis,
+                                            rescale_h=3.0,
+                                            rescale_w=1.0)
             
-            quit()
-            
-
 
 
 def get_mean(list):
