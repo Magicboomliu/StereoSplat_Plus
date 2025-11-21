@@ -116,7 +116,26 @@ sh render_views_with_omnigs.sh
 ### Our Proposed Methods
 
 (1) Input-Invariant VolumeFusion
+
+- evaluations feedforward
+```
+cd scripts/evaluations/volumefusion
+sh rendered_all_rgb_depths_metrics_with_offset.sh
+```
+- evaluations bev views
+```
+cd scripts/evaluations/BEV_Visualizations
+sh render_views_with_input_invariant_volumefusion.sh
+```
+
+(2) Diff-VolumeFusion Iter = 2
+- evaluations feedforward
+
+- evaluations bev views
+
+(3) Diff-VolumeFusion Iter = 3
+
 - evaluations feedforward
 
 
-- evaluations bev views
+- evaluatiosn bev views
