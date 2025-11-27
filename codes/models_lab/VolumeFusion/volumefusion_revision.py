@@ -3372,8 +3372,208 @@ class VolumeFusionRevision(BaseModule):
             
 
         elif total_iterations==2:
-            pass
+          # doing rendering here for the last frame stereo
+            render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+            interleave_render_c2w = interleave_left_right_pose(render_c2w)
+            
+            render_c2w = interleave_render_c2w[:,-6:-4,:,:]
+            intrinsics = input_batch_dict['intrinsics']
+            intrinsics = intrinsics.clone()     
+            output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+            render_fovxs = output_batch_dict["output_fovxs"][:,-6:-4]# [B,6*3]
+            render_fovys = output_batch_dict["output_fovys"][:,-6:-4] # [B,6*3]
+            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
+            gt_center_frame =gt_center_frame[:,-6:-4,:,:,:]
+
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )  
+
+            rendered_results_fuse = render_pkg_fuse
+            rendered_center_frame = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_center_frame = torch.clamp(rendered_center_frame,min=0,max=1.0)
         
+
+
+            '''second time inference'''
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=4,
+                                                                            matching_nums=3)
+            
+            input_batch_dict["imgs"][:,2:,:,:,:] = rendered_center_frame
+            
+
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+            gaussians_volume = self.volume_gs(
+                    [img_feats[0]],
+                    input_batch_dict['extrinsics'],
+                    gaussians_cv_mask,
+                    gaussians_feat_mask,
+                    input_batch_dict["img_metas"])
+
+            # Make Sure the estimate gaussains are valid
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+            
+            
+            gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+            bs = gaussians_all.shape[0] # batch size is 2
+
+
+
+            render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+            interleave_render_c2w = interleave_left_right_pose(render_c2w)
+            render_c2w = interleave_render_c2w[:,-4:-2,:,:]
+            intrinsics = input_batch_dict['intrinsics']
+            intrinsics = intrinsics.clone()     
+            output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+            render_fovxs = output_batch_dict["output_fovxs"][:,-4:-2]
+            render_fovys = output_batch_dict["output_fovys"][:,-4:-2]
+            gt_last_frame = interleave_left_right(output_batch_dict["output_imgs"])
+            gt_last_frame =gt_last_frame[:,-4:-2,:,:,:]
+            
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )  
+
+            rendered_results_fuse = render_pkg_fuse
+            rendered_last_frame = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_last_frame = torch.clamp(rendered_last_frame,min=0,max=1.0)
+
+
+
+            '''third time inference'''
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=6,
+                                                                            matching_nums=4)
+            
+            
+            input_batch_dict["imgs"][:,2:4,:,:,:] = rendered_center_frame
+            input_batch_dict["imgs"][:,4:,:,:,:] = rendered_last_frame 
+            
+            
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+            gaussians_volume = self.volume_gs(
+                    [img_feats[0]],
+                    input_batch_dict['extrinsics'],
+                    gaussians_cv_mask,
+                    gaussians_feat_mask,
+                    input_batch_dict["img_metas"])
+
+            # Make Sure the estimate gaussains are valid
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+                        
+            gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+            bs = gaussians_all.shape[0] # batch size is 2
+
+
+            render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+            interleave_render_c2w = interleave_left_right_pose(render_c2w)
+            
+            render_c2w = interleave_render_c2w
+            intrinsics = input_batch_dict['intrinsics']
+            intrinsics = intrinsics.clone()     
+            output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+            render_fovxs = output_batch_dict["output_fovxs"]# [B,6*3]
+            render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
+            gt_center_frame =gt_center_frame
+
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )  
+
+            rendered_results_fuse = render_pkg_fuse
+            rendered_frames = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_frames = torch.clamp(rendered_frames,min=0,max=1.0)
+            
+            target_frames = output_batch_dict["output_imgs"]
+            
+            for view_index in range(rendered_frames.shape[1]):
+                rendered_frame = rendered_frames[0,view_index,:,:,:].permute(1,2,0)        
+                rendered_frame_np = rendered_frame.cpu().numpy()*255.0
+                rendered_frame_np = rendered_frame_np.astype(np.uint8)
+                
+                target_frame = target_frames[0,view_index,:,:,:].permute(1,2,0)
+                target_frame_np = target_frame.cpu().numpy()*255.0
+                target_frame_np = target_frame_np.astype(np.uint8)
+                
+                
+                saved_rendered_frame_path = os.path.join(saved_input_images_path,
+                                                         bin_token_name+"_"+str(view_index)+".png"
+                                                         )
+                
+                saved_target_fname_path = os.path.join(saved_target_images_path,
+                                                         bin_token_name+"_"+str(view_index)+".png"
+                                                         )
+                
+                saved_ref_frame_path = os.path.join(saved_ref_images_path,
+                                                         bin_token_name+"_"+str(view_index)+".png"
+                                                         )
+                
+                skimage.io.imsave(saved_rendered_frame_path,rendered_frame_np)
+                skimage.io.imsave(saved_target_fname_path,target_frame_np)
+                skimage.io.imsave(saved_ref_frame_path,ref_image_np)
+
+
         
         else:
             raise NotImplementedError

@@ -172,6 +172,9 @@ def main(args):
         
     view_num = 2
     matching_nums = 2
+    
+    
+    total_iterations = int(args.iterations)
 
     with torch.no_grad():
         my_model.eval()
@@ -180,12 +183,13 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            my_model.generate_low_quality_gt_pairs_for_finetuning(batch,
+            if batch_idx%15==0:
+                my_model.generate_low_quality_gt_pairs_for_finetuning(batch,
                                                                 args.output_folder,
                                                                 bin_token_list,
                                                                 start_images_views=view_num,
                                                                 cfg=cfg,
-                                                                total_iterations=1)
+                                                                total_iterations=total_iterations)
             
             
 
@@ -211,6 +215,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_filelist', type=str, default='')    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
+    parser.add_argument('--iterations', type=int)
 
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
