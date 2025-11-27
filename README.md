@@ -1,91 +1,9 @@
-# VolumeFusion Ablation Studies
+# One Step Diffusion Training 
 
-In this experiemnts, we conduct the following ablation studies.
-
-
-- 1. Without using the Diffix 3D for image quality enhancement.
-    - Exp 1: cost volume branch only version.
-    - Exp 2: triplane branch only version.
-    - Exp 3: volumefusion version.
-    - Exp 4: volumefusion with randomly sampling and randomly stereo pairs.
-
-- 2. With using the Diffix3D for image quality enhancement.
-    - Exp 5: using progressive 2 times, 2 views ----> 6 views.
-    - Exp 6: using progressive 3 times, 2 views ---> 4 views ---> 6 views.
+In this repo, we finetune the original Difix3D for the KITTI360 Dataset for Diff-VolumeFusion.
 
 
-### Tools Networks Pretrained Weights (Google Drive)
-- [Pretrained Unimatch Weight(Depth Estimator)](https://drive.google.com/drive/folders/1tTp0PS7RceQr5mbDpuo-S7Jw4BgtUS1S?usp=sharing)
-- [Dino Resnet50](https://drive.google.com/file/d/1-jyND6h0zfd9_dB6FgnD9DEpNm7DC5u3/view?usp=sharing)
+### Step.1 Generating Pseudo-GT Pairs for finetuning.
 
-### Pretrained Models (Weights Google Drive)
-
-- [Exp 1](https://drive.google.com/drive/folders/1B4SbPgIH6EQiJQu86-arf4HSOHUQwd_x?usp=sharing)  
-- [Exp 2](https://drive.google.com/drive/folders/1VRVPboAyZnzlvjZyms5jP_204_Vn3MV3?usp=sharing)
-- [Exp 3](https://drive.google.com/drive/folders/1MX-MfpihcIPHwFj6T15HTwMK9kfek2hh?usp=sharing)
-- [Exp 4 ](https://drive.google.com/drive/folders/1o0_dbnNs01ytyxjguAe31GZ5KNe83Pqu?usp=sharing)
-- [Exp 5,6 Diffusion](https://drive.google.com/file/d/1VnynCkjq_SqQD2z6I-LvtDh-8CSbIiLB/view?usp=sharing)
-
-### Training & Inference & Visualizations
-
-- **Exp 1**: cost volume branch only version.
-```
-#(1) training the models
-cd scripts/train/ablations
-sh train_cost_volume_branch_only.sh
-
-# (2) inference and visualizations
-cd scripts/evaluations/ablations
-sh volumefusion_cost_volume_branch_only.sh
-```
-- **Exp 2**: triplane branch only version.
-```
-#(1) training the models
-cd scripts/train/ablations
-sh train_volume3D_branch_only.sh 
-
-# (2) inference and visualizations
-cd scripts/evaluations/ablations
-sh volumefusion_volume3d_branch_only.sh
-```
-
-- **Exp 3**: volumefusion trained with first stereo images only.
-```
-#(1) training the models
-cd scripts/train/ablations
-sh train_volumefusion_first_2_view.sh
-
-# (2) inference and visualizations
-cd scripts/evaluations/ablations
-sh volumefusion_train_first_2_views.sh
-```
-
-
-- **Exp 4**:  volumefusion with randomly sampling and randomly stereo 
-
-```
-#(1) training the models
-cd scripts/train/ablations
-sh train_volumefusion_randomly.sh
-
-# (2) inference and visualizations
-cd scripts/evaluations/ablations
-sh volumefusion_train_random_2_views.sh
-```
-
-- **Exp 5**:  using progressive 2 times, 2 views ----> 6 views, note to select `Progressive_Twice_Diffix3D_Once`
-
-```
-cd scripts/evaluations/ablations
-sh volumefusion_progressive_with_diffix3d.sh 
-```
-
-- **Exp 6**:  using progressive 3 times, 2 views ---> 4 views ---> 6 views. note to select `Progressive_Three_Diffix3D_Twice`
-
-```
-cd scripts/evaluations/ablations
-sh volumefusion_progressive_with_diffix3d.sh 
-```
-
-#### Generating Diffix3D Training Dataset with `image` `target_image`, `ref_image` and fixed prompt of `""remove degradation""`
+we default using [input-invariant volumefusion](https://drive.google.com/drive/folders/1sLbprywWeUzXHJkdqplX5rZ3-omQfeFc?usp=sharing) to generated different kinds of degradation levels.
 

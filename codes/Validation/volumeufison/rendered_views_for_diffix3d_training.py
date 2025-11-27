@@ -4,24 +4,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from einops import rearrange
 from diffusers.optimization import get_scheduler
-import math
-import mmcv
-import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
 from tqdm import tqdm
 from datetime import timedelta
 from accelerate import Accelerator
-from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
+from accelerate.utils import set_seed,ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
+
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
 import numpy as np
 from torch import Tensor,nn
-from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
@@ -33,39 +30,8 @@ def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
 
-class Basic_Meter(object):
-    def __init__(self,psnr,ssim,mae,mse):
-        self.psnr = psnr
-        self.ssim = ssim
-        self.mae = mae
-        self.mse = mse
-        self.counter = 0
-    
-    def update(self,psnr,ssim,mae,mse):
-        self.psnr +=psnr
-        self.ssim +=ssim
-        self.mae +=mae
-        self.mse +=mse
-        self.counter = self.counter+1
-    
-    def get_stats(self):
-        if self.counter ==0:
-            return{
-            "psnr": 0,
-            "ssim": 0,
-            "mae": 0,
-            "mse":0
-                
-            }
-        else:
-            return {
-                "psnr": self.psnr/self.counter,
-                "ssim": self.ssim/self.counter,
-                "mae": self.mae/self.counter,
-                "mse":self.mse/self.counter
-            }
-
 def convert_depth_to_disp(factor=328.318735,depth=None):
+    
     mask = depth>0
     mask = mask.astype(np.float32)
 
@@ -107,11 +73,11 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
+
 def main(args):
-    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
-    
+
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -146,22 +112,17 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
+    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
     
     dataset = getattr(datasets, dataset_config.dataset_name)
     
-    
-    if args.output_vis:
-        val_filelist = args.demo_filelist
-    else:
-        val_filelist = args.val_filelist
-    
-    val_params = {
+    dataset_params = {
         "datapath":dataset_config.datapath,
         "train_filelist":dataset_config.train_filelist,
-        "val_filelist":val_filelist,
-        "test_filelist":val_filelist,
+        "val_filelist":args.train_filelist,
+        "test_filelist":args.train_filelist,
         "data_version":dataset_config.data_version,
         "resolution":dataset_config.resolution, 
         "split":"val",
@@ -173,13 +134,13 @@ def main(args):
         "depth_info_dict":dataset_config.depth_info_params,
         "camera_model": dataset_config.camera_model
     }
-        
-    val_dataset = dataset(**val_params)
+
+    val_dataset = dataset(**dataset_params)
     val_dataloader = DataLoader(
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-    
+
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -191,8 +152,8 @@ def main(args):
                                     use_checkpoint=cfg.use_checkpoint)
 
     my_model, val_dataloader = accelerator.prepare(
-        my_model, val_dataloader
-    )
+        my_model, val_dataloader)
+
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -209,27 +170,34 @@ def main(args):
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
         
-    view_num = args.view_nums
-    matching_nums = args.matching_nums
-    
+    view_num = 2
+    matching_nums = 2
+
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
+            # process the current folder
+            bin_token_list = batch['bin_token']
             
-            if batch_idx%15==0:
-                bin_token_list = batch['bin_token']
-                my_model.generate_low_quality_gt_pairs(
-                                                batch,
-                                                args.output_folder,
-                                                bin_token_list,
-                                                cfg=cfg,
-                                                view_nums=view_num,
-                                                matching_nums=matching_nums)
-
-            batch_idx += 1
+            my_model.generate_low_quality_gt_pairs_for_finetuning(batch,
+                                                                args.output_folder,
+                                                                bin_token_list,
+                                                                start_images_views=view_num,
+                                                                cfg=cfg,
+                                                                total_iterations=1)
+            
             
 
+
+            # my_model.validation_on_the_forward_views(batch,
+            #                                 args.output_folder,
+            #                                 bin_token_list,
+            #                                 cfg=cfg,
+            #                                 view_num=view_num,
+            #                                 matching_nums=matching_nums,
+            #                                 vis=args.output_vis)
+            
 
 def get_mean(list):
     return sum(list)*1.0/len(list)
@@ -240,21 +208,10 @@ if __name__ == '__main__':
     parser.add_argument('--config_path')
     parser.add_argument('--output_folder', type=str)
     parser.add_argument('--pretrained_model_path', type=str, default='')
-    parser.add_argument('--val_filelist', type=str, default='')
-    parser.add_argument('--demo_filelist', type=str, default='')
-    
+    parser.add_argument('--train_filelist', type=str, default='')    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
-    
-    parser.add_argument('--view_nums', type=int, default=2)
-    parser.add_argument('--matching_nums', type=int, default=2)
 
-    parser.add_argument(
-        "--output_vis",
-        action="store_true",
-        help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
-    ) # visualize the outputs image
-    
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
