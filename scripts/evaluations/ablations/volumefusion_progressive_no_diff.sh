@@ -29,7 +29,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --timestep $timestep \
     --prompt "$prompt" \
     --use_ref \
-    # --output_vis
+    --output_vis
 }
 
 
@@ -65,12 +65,12 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --timestep $timestep \
     --prompt "$prompt" \
     --use_ref \
-    # --output_vis
+    --output_vis
     # --output_vis
 }
 
 
-# Progressive_No_Diff_Iter2
+Progressive_No_Diff_Iter2
 
 
-Progressive_No_Diff_Iter3
+# Progressive_No_Diff_Iter3

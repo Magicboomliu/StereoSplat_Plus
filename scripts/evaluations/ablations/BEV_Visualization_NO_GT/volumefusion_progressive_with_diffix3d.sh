@@ -4,7 +4,7 @@ cd ../../..
 cd /home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/Validation
 
 configs_path="/home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/configs/Ablations/volumefusion_train_randomly/configs.py"
-output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Progressive_No_Difix_Twice/Additional_BEV_Novel_View"
+output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Progressive_Three_Diffix3D_Twice/Additional_BEV_Novel_View"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -29,6 +29,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --timestep $timestep \
     --prompt "$prompt" \
     --use_ref \
+    --use_diffix3d \
     --output_vis
 }
 
@@ -40,7 +41,7 @@ cd ../../..
 cd /home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/Validation
 
 configs_path="/home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/configs/Ablations/volumefusion_train_randomly/configs.py"
-output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Progressive_No_Difix_Once/Additional_BEV_Novel_View"
+output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Progressive_Twice_Diffix3D_Once/Additional_BEV_Novel_View"
 val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -65,14 +66,12 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --timestep $timestep \
     --prompt "$prompt" \
     --use_ref \
+    --use_diffix3d \
     --output_vis
 }
 
 
 Get_additional_bev_novel_views_progressive_no_diff_iter3
 
-#Get_additional_bev_novel_views_progressive_no_diff_iter2
-
-# Get_additional_bev_novel_views_progressive_no_diff_iter3
-
 # Get_additional_bev_novel_views_progressive_no_diff_iter2
+

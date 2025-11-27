@@ -22,7 +22,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --ablation_type $ablation_type \
     --dataset_type $dataset_type \
     --pretrained_model_path $pretrained_model_path \
-    # --output_vis
+    --output_vis
 
 }
 

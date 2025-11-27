@@ -30,7 +30,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --prompt "$prompt" \
     --use_diffix3d \
     --use_ref \
-    # --output_vis
+    --output_vis
 }
 
 
@@ -68,10 +68,10 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --prompt "$prompt" \
     --use_diffix3d \
     --use_ref \
-    # --output_vis
+    --output_vis
     # --output_vis
 }
 
 Progressive_Twice_Diffix3D_Once
-
+# Progressive_Three_Diffix3D_Twice
 # Progressive_Twice_Diffix3D_Once
