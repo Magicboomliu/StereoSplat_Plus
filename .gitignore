@@ -4,6 +4,32 @@ temp
 *.pth
 *.png
 *.jpg
+*json
+*.txt
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.lz4
+*.tar.zstd
+
+*.pth
+*.pt
+*.pth.tar
+*.pth.tar.gz
+*.pth.tar.bz2
+*.pth.tar.xz
+*.pth.tar.lzma
+*.pth.tar.lz
+*.pth.tar.lz4
+*.pth.tar.zstd
+
+*.safetensors
+*.ckpt
+
 
 # model checkpoints
 codes/HiSplat/checkpoints/
