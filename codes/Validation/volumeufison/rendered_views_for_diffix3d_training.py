@@ -1,4 +1,6 @@
-import os, time, argparse, os.path as osp, numpy as np
+import os, argparse, os.path as osp, numpy as np
+import numpy as np
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -6,7 +8,6 @@ from einops import rearrange
 from diffusers.optimization import get_scheduler
 from mmengine import MMLogger
 from mmengine.config import Config
-import logging
 from tqdm import tqdm
 from datetime import timedelta
 from accelerate import Accelerator
@@ -26,9 +27,11 @@ from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
+
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
+
 
 def convert_depth_to_disp(factor=328.318735,depth=None):
     
@@ -41,6 +44,7 @@ def convert_depth_to_disp(factor=328.318735,depth=None):
     
     disparity = kitti_colormap(disparity)
     return disparity
+
 
 def kitti_colormap(disparity, maxval=-1):
 	"""
@@ -74,7 +78,10 @@ def kitti_colormap(disparity, maxval=-1):
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 
+
+
 def main(args):
+    
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
 
@@ -112,11 +119,12 @@ def main(args):
             import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
         elif cfg.world_center=="First_LiDAR_3_Uniform":
             import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    
     else:
         import data.KITTI360_CenterCam_Ref.dataloader as datasets
     
+    
     dataset = getattr(datasets, dataset_config.dataset_name)
+    
     
     dataset_params = {
         "datapath":dataset_config.datapath,
@@ -190,9 +198,8 @@ def main(args):
                                                                 start_images_views=view_num,
                                                                 cfg=cfg,
                                                                 total_iterations=total_iterations)
-            
-            
-
+                
+            batch_idx += 1
 
             # my_model.validation_on_the_forward_views(batch,
             #                                 args.output_folder,

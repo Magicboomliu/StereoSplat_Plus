@@ -3120,17 +3120,13 @@ class VolumeFusionRevision(BaseModule):
                                         ):
         
         bin_token_name = bin_token_list[0][:-4]
-        
-        
         if start_images_views == 2:
             view_num = 2
             matching_nums = 2
         else:
             raise NotImplementedError
         
-        
         # saved image path
-        
         saved_input_images_path = os.path.join(val_result_savedir,"image",str(total_iterations))
         saved_target_images_path = os.path.join(val_result_savedir,"target_image",str(total_iterations))
         saved_ref_images_path = os.path.join(val_result_savedir,"ref_image",str(total_iterations))
@@ -3139,21 +3135,20 @@ class VolumeFusionRevision(BaseModule):
         os.makedirs(saved_target_images_path,exist_ok=True)
         os.makedirs(saved_ref_images_path,exist_ok=True)
         
-        
         with torch.no_grad():
-            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,
+                                                                         view_num=view_num,
                                                                          matching_nums=matching_nums)        
             img =input_batch_dict["imgs"] #[B,6,3,H,W]
             ref_image = img[:,0,:,:,:][0].permute(1,2,0).cpu().numpy()*255.0
             ref_image_np = ref_image.astype(np.uint8)
             
-
             height,width = img.shape[-2:]
             bs = img.shape[0]   
             img_feats = self.extract_img_feat(img=img)
             gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
                                                             images_feat=img_feats[0])
-
+            
             # volume-gs prediction
             pc_range = self.dataset_params.pc_range
             x_start, y_start, z_start, x_end, y_end, z_end = pc_range
@@ -3196,8 +3191,7 @@ class VolumeFusionRevision(BaseModule):
             output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
             render_fovxs = output_batch_dict["output_fovxs"]# [B,6*3]
             render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
-            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
-            gt_center_frame =gt_center_frame
+            gt_frames = interleave_left_right(output_batch_dict["output_imgs"])
 
             render_pkg_fuse = self.renderer.render(
                 gaussians=gaussians_all,
@@ -3212,7 +3206,7 @@ class VolumeFusionRevision(BaseModule):
             rendered_frames = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
             rendered_frames = torch.clamp(rendered_frames,min=0,max=1.0)
             
-            target_frames = output_batch_dict["output_imgs"]
+            target_frames = gt_frames
             
             for view_index in range(rendered_frames.shape[1]):
                 rendered_frame = rendered_frames[0,view_index,:,:,:].permute(1,2,0)        
@@ -3253,8 +3247,9 @@ class VolumeFusionRevision(BaseModule):
             output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
             render_fovxs = output_batch_dict["output_fovxs"][:,-6:-4]# [B,6*3]
             render_fovys = output_batch_dict["output_fovys"][:,-6:-4] # [B,6*3]
-            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
-            gt_center_frame =gt_center_frame[:,-6:-4,:,:,:]
+            
+            gt_frames = interleave_left_right(output_batch_dict["output_imgs"])
+            
 
             render_pkg_fuse = self.renderer.render(
                 gaussians=gaussians_all,
@@ -3272,7 +3267,7 @@ class VolumeFusionRevision(BaseModule):
 
 
             '''second time inference'''
-            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=4,
+            input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=4,
                                                                             matching_nums=3)
             
             input_batch_dict["imgs"][:,2:,:,:,:] = rendered_center_frame
@@ -3326,8 +3321,8 @@ class VolumeFusionRevision(BaseModule):
             output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
             render_fovxs = output_batch_dict["output_fovxs"]# [B,6*3]
             render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
-            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
-            gt_center_frame =gt_center_frame
+            
+            gt_images = interleave_left_right(output_batch_dict["output_imgs"])
 
             render_pkg_fuse = self.renderer.render(
                 gaussians=gaussians_all,
@@ -3342,7 +3337,7 @@ class VolumeFusionRevision(BaseModule):
             rendered_frames = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
             rendered_frames = torch.clamp(rendered_frames,min=0,max=1.0)
             
-            target_frames = output_batch_dict["output_imgs"]
+            target_frames = gt_images
             
             for view_index in range(rendered_frames.shape[1]):
                 rendered_frame = rendered_frames[0,view_index,:,:,:].permute(1,2,0)        
@@ -3529,8 +3524,8 @@ class VolumeFusionRevision(BaseModule):
             output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
             render_fovxs = output_batch_dict["output_fovxs"]# [B,6*3]
             render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
-            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
-            gt_center_frame =gt_center_frame
+            gt_images = interleave_left_right(output_batch_dict["output_imgs"])
+            gt_images = gt_images
 
             render_pkg_fuse = self.renderer.render(
                 gaussians=gaussians_all,
@@ -3545,7 +3540,8 @@ class VolumeFusionRevision(BaseModule):
             rendered_frames = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
             rendered_frames = torch.clamp(rendered_frames,min=0,max=1.0)
             
-            target_frames = output_batch_dict["output_imgs"]
+            target_frames = gt_images
+            
             
             for view_index in range(rendered_frames.shape[1]):
                 rendered_frame = rendered_frames[0,view_index,:,:,:].permute(1,2,0)        
