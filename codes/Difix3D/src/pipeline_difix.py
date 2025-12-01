@@ -953,6 +953,7 @@ class DifixPipeline(
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
         # to deal with lora scaling and other possible forward hooks
+        
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -998,6 +999,8 @@ class DifixPipeline(
             lora_scale=lora_scale,
             clip_skip=self.clip_skip,
         )
+        
+    
 
         # For classifier free guidance, we need to do two forward passes.
         # Here we concatenate the unconditional and text embeddings into a single batch
@@ -1013,14 +1016,18 @@ class DifixPipeline(
             if self.do_classifier_free_guidance:
                 image_embeds = torch.cat([negative_image_embeds, image_embeds])
 
-        image = self.image_processor.preprocess(image)
+        # here is the original resolution of the image
+        image = self.image_processor.preprocess(image) # -1.0 to 1.0
+        
         if ref_image is not None:
-            ref_image = self.image_processor.preprocess(ref_image)
-
+            # here is the orginal resolution of the ref image
+            ref_image = self.image_processor.preprocess(ref_image) # -1.0 to 1.0
+        
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+        
 
-        # 5. Prepare latent variables
+        # 5. Prepare latent variables: rediuce to 1/8
         latents = self.prepare_latents(
             torch.cat([image, ref_image], dim=0) if ref_image is not None else image,
             batch_size,
@@ -1029,6 +1036,7 @@ class DifixPipeline(
             device,
             generator,
         )
+        
 
         if ref_image is not None:
             prompt_embeds = torch.cat([prompt_embeds, prompt_embeds], dim=0)
@@ -1049,12 +1057,15 @@ class DifixPipeline(
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        
+    
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
 
+                
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

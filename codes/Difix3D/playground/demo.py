@@ -4,7 +4,41 @@ from src.pipeline_difix import DifixPipeline
 from diffusers.utils import load_image
 
 import os
+import numpy as np
 from matplotlib import pyplot as plt
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+
+def compute_psnr_and_ssim(image1, image2):
+    """
+    Compute PSNR and SSIM between two images.
+    
+    Args:
+        image1: First image (PIL Image or numpy array)
+        image2: Second image (PIL Image or numpy array)
+    
+    Returns:
+        tuple: (psnr, ssim) values
+    """
+    # Convert PIL images to numpy arrays if needed
+    if hasattr(image1, 'mode'):
+        image1 = np.array(image1)
+    if hasattr(image2, 'mode'):
+        image2 = np.array(image2)
+    
+    # Ensure images are uint8 and in range [0, 255]
+    if image1.dtype != np.uint8:
+        image1 = (image1 * 255).astype(np.uint8) if image1.max() <= 1.0 else image1.astype(np.uint8)
+    if image2.dtype != np.uint8:
+        image2 = (image2 * 255).astype(np.uint8) if image2.max() <= 1.0 else image2.astype(np.uint8)
+    
+    # Compute PSNR
+    psnr = peak_signal_noise_ratio(image1, image2, data_range=255)
+    
+    # Compute SSIM (for skimage >=0.19 use channel_axis=-1, older versions: multichannel=True)
+    ssim = structural_similarity(image1, image2, data_range=255, channel_axis=-1)
+    
+    return psnr, ssim
+
 
 
 if __name__ == "__main__":
@@ -29,31 +63,34 @@ if __name__ == "__main__":
     
     remove_degradation_prompt = "remove degradation"
 
+    # Timesteps to explore
+    timesteps_list = [199, 299, 399, 499, 599]
+    
+    # Store results
+    results = {
+        'timesteps': [],
+        'psnr': [],
+        'ssim': [],
+        'images': []
+    }
+    
+    # Compute baseline metrics
+    input_image_psnr, input_image_ssim = compute_psnr_and_ssim(input_image, target_image)
+    ref_image_psnr, ref_image_ssim = compute_psnr_and_ssim(ref_image, target_image)
+    
+
+    timesteps = 499
+    guidance_scale = 5.0
 
     enhanced_image = pipe(remove_degradation_prompt, image=input_image, 
-                        ref_image=ref_image, num_inference_steps=1, 
-                        timesteps=[199], 
-                        guidance_scale=0.0).images[0]
+                        ref_image=ref_image, num_inference_steps=50, 
+                        timesteps=[timesteps], 
+                        guidance_scale=guidance_scale).images[0]
     
-
+    enhanced_image_psnr, enhanced_image_ssim = compute_psnr_and_ssim(enhanced_image, target_image)
+    input_image_psnr, input_image_ssim = compute_psnr_and_ssim(input_image, target_image)
     
-    plt.subplot(4, 1, 1)
-    plt.axis("off")
-    plt.title("Input Image")
-    plt.imshow(input_image)
-    plt.subplot(4, 1, 2)
-    plt.axis("off")
-    plt.title("Ref Image")
-    plt.imshow(ref_image)
-    plt.subplot(4, 1, 3)
-    plt.axis("off")
-    plt.title("Enhanced Image")
-    plt.imshow(enhanced_image)
-    plt.subplot(4, 1, 4)
-    plt.axis("off")
-    plt.title("Target Image")
-    plt.imshow(target_image)
-    plt.savefig("all_to_images.png")
+    print(f"Enhanced Image PSNR: {enhanced_image_psnr:.4f}, SSIM: {enhanced_image_ssim:.4f}")
+    print(f"Input Image PSNR: {input_image_psnr:.4f}, SSIM: {input_image_ssim:.4f}")
     
-    # output_image.save("enhanced_image.png")
     
