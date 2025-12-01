@@ -1,12 +1,13 @@
 import sys
 sys.path.append("..")
-from src.pipeline_difix import DifixPipeline
 from diffusers.utils import load_image
 
 import os
 import numpy as np
 from matplotlib import pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from src.simplified_pipeline_difix import DifixPipeline
+
 
 def compute_psnr_and_ssim(image1, image2):
     """
@@ -45,8 +46,7 @@ if __name__ == "__main__":
 
     pipe = DifixPipeline.from_pretrained("nvidia/difix_ref", trust_remote_code=True)
     pipe.to("cuda")
-    
-    
+        
     
     input_image_path = "/data1/zliu/KITTI360_Completed/KITTI360_Degradtations_Pairs/image/0/scene2013_05_28_drive_0000_sync_bin002_22.png"
     ref_image_path = "/data1/zliu/KITTI360_Completed/KITTI360_Degradtations_Pairs/ref_image/0/scene2013_05_28_drive_0000_sync_bin002_22.png"
@@ -80,12 +80,12 @@ if __name__ == "__main__":
     
 
     timesteps = 499
-    guidance_scale = 5.0
+    guidance_scale = 2.0
 
     enhanced_image = pipe(remove_degradation_prompt, image=input_image, 
-                        ref_image=ref_image, num_inference_steps=50, 
+                        ref_image=ref_image, num_inference_steps=10, 
                         timesteps=[timesteps], 
-                        guidance_scale=guidance_scale).images[0]
+                        guidance_scale=guidance_scale)
     
     
     saved_path_from_difix_pipeline = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/outputs/demo_output/from_pipeline.png"

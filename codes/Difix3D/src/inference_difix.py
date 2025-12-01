@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image
 from glob import glob
 from tqdm import tqdm
-from model import Difix
+
+from model_ref import DifixRef
 
 
 if __name__ == "__main__":
@@ -26,15 +27,18 @@ if __name__ == "__main__":
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+    
 
     # Initialize the model
-    model = Difix(
+    model = DifixRef(
         pretrained_name=args.model_name,
         pretrained_path=args.model_path,
         timestep=args.timestep,
         mv_unet=True if args.ref_image is not None else False,
     )
+    # set the eval mode.
     model.set_eval()
+    
 
     # Load input images
     if os.path.isdir(args.input_image):
@@ -63,6 +67,8 @@ if __name__ == "__main__":
             ref_image=ref_image,
             prompt=args.prompt
         )
+
+        
         output_images.append(output_image)
 
     # Save outputs
