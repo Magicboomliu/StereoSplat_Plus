@@ -203,7 +203,25 @@ class DifixRef(torch.nn.Module):
                 
             self.lora_rank_vae = lora_rank_vae
             self.target_modules_vae = target_modules_vae
-
+        
+        else:
+            target_modules_vae = []
+            
+            target_modules_vae = ["conv1", "conv2", "conv_in", "conv_shortcut", "conv", "conv_out",
+                            "skip_conv_1", "skip_conv_2", "skip_conv_3", "skip_conv_4",
+                            "to_k", "to_q", "to_v", "to_out.0",
+                        ]
+                        
+            target_modules = []
+            for id, (name, param) in enumerate(vae.named_modules()):
+                if 'decoder' in name and any(name.endswith(x) for x in target_modules_vae):
+                    target_modules.append(name)
+            target_modules_vae = target_modules
+                
+            self.lora_rank_vae = lora_rank_vae
+            self.target_modules_vae = target_modules_vae
+            
+            
         # unet.enable_xformers_memory_efficient_attention()
         unet.to("cuda")
         vae.to("cuda")

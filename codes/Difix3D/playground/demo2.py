@@ -48,9 +48,9 @@ if __name__ == "__main__":
     pipe.to("cuda")
         
     
-    input_image_path = "/data1/zliu/KITTI360_Completed/KITTI360_Degradtations_Pairs/image/0/scene2013_05_28_drive_0000_sync_bin002_22.png"
-    ref_image_path = "/data1/zliu/KITTI360_Completed/KITTI360_Degradtations_Pairs/ref_image/0/scene2013_05_28_drive_0000_sync_bin002_22.png"
-    target_image_path = "/data1/zliu/KITTI360_Completed/KITTI360_Degradtations_Pairs/target_image/0/scene2013_05_28_drive_0000_sync_bin002_22.png"
+    input_image_path = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/current_input_image.png"
+    ref_image_path = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/ref_image.png"
+    target_image_path = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/gt_target_image.png"
 
     assert os.path.exists(input_image_path), "Input image path does not exist"
     assert os.path.exists(ref_image_path), "Ref image path does not exist"
@@ -88,7 +88,7 @@ if __name__ == "__main__":
                         guidance_scale=guidance_scale)
     
     
-    saved_path_from_difix_pipeline = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/outputs/demo_output/from_pipeline.png"
+    saved_path_from_difix_pipeline = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/outputs/demo_output/from_pipeline2.png"
     enhanced_image.save(saved_path_from_difix_pipeline)
     
     

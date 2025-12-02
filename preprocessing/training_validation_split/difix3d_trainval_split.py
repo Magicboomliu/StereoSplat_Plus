@@ -15,7 +15,7 @@ if __name__=="__main__":
     
     root_path = "/data4/zliu/Difix3D/KITTI360_Degradtations_Pairs/"
     
-    saved_trainval_json_path = "filenames/kitti360/difix_dataset/trainval.json"
+    saved_trainval_json_path = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
     os.makedirs(os.path.dirname(saved_trainval_json_path),exist_ok=True)
         
     input_images_root_path = os.path.join(root_path, "image")

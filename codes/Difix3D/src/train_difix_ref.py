@@ -28,12 +28,31 @@ from model_ref import DifixRef,load_ckpt_from_state_dict, save_ckpt
 from dataset import PairedDataset
 from loss import gram_loss
 
+from matplotlib import pyplot as plt
+import skimage.io
+
+import numpy as np
+from pytorch_msssim import ssim
+
+
+
+def Convert_Tensor_to_Image(tensor):
+    tensor = torch.clamp(tensor, min=-1.0, max=1.0)
+    image_tensor = tensor.detach().squeeze(0).squeeze(0).permute(1,2,0).cpu().numpy() 
+    image_tensor = image_tensor * 0.5 + 0.5
+    image_tensor = (image_tensor * 255).astype(np.uint8)
+    return image_tensor 
+
+
 
 def main(args):
+    # Set log_with based on use_wandb flag
+    log_with = args.report_to if args.use_wandb else None
+    
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
+        log_with=log_with,
     )
 
     if accelerator.is_local_main_process:
@@ -49,12 +68,16 @@ def main(args):
     if accelerator.is_main_process:
         os.makedirs(os.path.join(args.output_dir, "checkpoints"), exist_ok=True)
         os.makedirs(os.path.join(args.output_dir, "eval"), exist_ok=True)
+    
 
-    net_difix = Difix(
-        lora_rank_vae=args.lora_rank_vae, 
+    net_difix = DifixRef(
+        pretrained_name=args.pretrained_model_name_or_path,
+        pretrained_path=args.pretrained_model_path,
+        lora_rank_vae=args.lora_rank_vae,
         timestep=args.timestep,
         mv_unet=args.mv_unet,
     )
+    
     net_difix.set_train()
 
     if args.enable_xformers_memory_efficient_attention:
@@ -97,15 +120,37 @@ def main(args):
         num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
         num_training_steps=args.max_train_steps * accelerator.num_processes,
         num_cycles=args.lr_num_cycles, power=args.lr_power,)
-
-    dataset_train = PairedDataset(dataset_path=args.dataset_path, split="train", tokenizer=net_difix.tokenizer)
-    dl_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.train_batch_size, shuffle=True, num_workers=args.dataloader_num_workers)
-    dataset_val = PairedDataset(dataset_path=args.dataset_path, split="test", tokenizer=net_difix.tokenizer)
-    random.Random(42).shuffle(dataset_val.img_names)
+    
+    
+    ''' Dataset Configurataion for the Paired Dataset '''
+    
+    resolution = (args.resolution_h, args.resolution_w)
+    
+    
+    dataset_train = PairedDataset(dataset_path=args.dataset_path, 
+                                  split="train", 
+                                  tokenizer=net_difix.tokenizer,
+                                  height=args.resolution_h, width=args.resolution_w)
+    
+    dl_train = torch.utils.data.DataLoader(dataset_train, 
+                                           batch_size=args.train_batch_size, 
+                                           shuffle=True, 
+                                           num_workers=args.dataloader_num_workers)
+    
+    dataset_val = PairedDataset(dataset_path=args.dataset_path, 
+                                split="test", 
+                                tokenizer=net_difix.tokenizer,
+                                height=args.resolution_h, width=args.resolution_w)
     dl_val = torch.utils.data.DataLoader(dataset_val, batch_size=1, shuffle=False, num_workers=0)
+    
+    
+
 
     # Resume from checkpoint
     global_step = 0    
+    
+    # start from the resume checkpoint weights
+    
     if args.resume is not None:
         if os.path.isdir(args.resume):
             # Resume from last ckpt
@@ -146,13 +191,18 @@ def main(args):
     net_lpips, net_vgg = accelerator.prepare(net_lpips, net_vgg)
     # renorm with image net statistics
     t_vgg_renorm =  transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    
+    
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
+    if accelerator.is_main_process and args.use_wandb:
+        # Set default run name if not provided
+        run_name = args.tracker_run_name if args.tracker_run_name else f"run_{args.seed}"
+        
         init_kwargs = {
             "wandb": {
-                "name": args.tracker_run_name,
+                "name": run_name,
                 "dir": args.output_dir,
             },
         }        
@@ -169,6 +219,7 @@ def main(args):
             with accelerator.accumulate(*l_acc):
                 x_src = batch["conditioning_pixel_values"]
                 x_tgt = batch["output_pixel_values"]
+                    
                 B, V, C, H, W = x_src.shape
 
                 # forward pass
@@ -176,17 +227,53 @@ def main(args):
                 
                 x_tgt = rearrange(x_tgt, 'b v c h w -> (b v) c h w')
                 x_tgt_pred = rearrange(x_tgt_pred, 'b v c h w -> (b v) c h w')
+                
+                
+                # # DEBUG Here
+                # current_input_image = Convert_Tensor_to_Image(x_src[:,:1,:,:,:])
+                # gt_target_image = Convert_Tensor_to_Image(x_tgt.unsqueeze(0)[:,:1,:,:,:])
+                # pred_target_image = Convert_Tensor_to_Image(x_tgt_pred.unsqueeze(0)[:,:1,:,:,:])
+                # ref_image = Convert_Tensor_to_Image(x_src[:,1:2,:,:,:])
+                
+                # print(np.mean(np.abs(pred_target_image-current_input_image)))
+                
+                # skimage.io.imsave("current_input_image.png", current_input_image)
+                # skimage.io.imsave("gt_target_image.png", gt_target_image)
+                # skimage.io.imsave("pred_target_image.png", pred_target_image)
+                # skimage.io.imsave("ref_image.png", ref_image)
+
+                # quit()
+                
                          
-                # Reconstruction loss
-                loss_l2 = F.mse_loss(x_tgt_pred.float(), x_tgt.float(), reduction="mean") * args.lambda_l2
+                 # Reconstruction loss: SSIM-weighted MSE
+                # Convert from [-1, 1] to [0, 1] for SSIM calculation
+                x_tgt_pred_normalized = (x_tgt_pred.float() + 1.0) / 2.0
+                x_tgt_normalized = (x_tgt.float() + 1.0) / 2.0
+                
+                # Compute SSIM (higher is better, range [0, 1])
+                ssim_value = ssim(x_tgt_pred_normalized, x_tgt_normalized, data_range=1.0, size_average=True)
+                
+
+                # Convert SSIM to weight: SSIM closer to 1 → smaller weight → smaller loss
+                # Use (1 - SSIM) so that high SSIM leads to low weight
+                ssim_weight = 1.0 - ssim_value + 1.0
+                
+                # Compute MSE loss
+                mse_loss = F.mse_loss(x_tgt_pred.float(), x_tgt.float(), reduction="mean")
+                
+                # Apply SSIM weight to MSE loss
+                loss_l2 = mse_loss * ssim_weight * args.lambda_l2
+                
+                # LPIPS loss remains unchanged
                 loss_lpips = net_lpips(x_tgt_pred.float(), x_tgt.float()).mean() * args.lambda_lpips
+                
                 loss = loss_l2 + loss_lpips
                 
                 # Gram matrix loss
                 if args.lambda_gram > 0:
                     if global_step > args.gram_loss_warmup_steps:
                         x_tgt_pred_renorm = t_vgg_renorm(x_tgt_pred * 0.5 + 0.5)
-                        crop_h, crop_w = 400, 400
+                        crop_h, crop_w = 112, 112
                         top, left = random.randint(0, H - crop_h), random.randint(0, W - crop_w)
                         x_tgt_pred_renorm = crop(x_tgt_pred_renorm, top, left, crop_h, crop_w)
                         
@@ -196,7 +283,8 @@ def main(args):
                         loss_gram = gram_loss(x_tgt_pred_renorm.to(weight_dtype), x_tgt_renorm.to(weight_dtype), net_vgg) * args.lambda_gram
                         loss += loss_gram
                     else:
-                        loss_gram = torch.tensor(0.0).to(weight_dtype)                    
+                        loss_gram = torch.tensor(0.0).to(weight_dtype) 
+                                 
 
                 accelerator.backward(loss, retain_graph=False)
                 if accelerator.sync_gradients:
@@ -216,7 +304,7 @@ def main(args):
                 if accelerator.is_main_process:
                     logs = {}
                     # log all the losses
-                    logs["loss_l2"] = loss_l2.detach().item()
+                    logs["loss_l2"] = mse_loss.detach().item()
                     logs["loss_lpips"] = loss_lpips.detach().item()
                     if args.lambda_gram > 0:
                         logs["loss_gram"] = loss_gram.detach().item()
@@ -253,7 +341,7 @@ def main(args):
                                 # forward pass
                                 x_tgt_pred = accelerator.unwrap_model(net_difix)(x_src, prompt_tokens=batch_val["input_ids"].cuda())
                                 
-                                if step % 10 == 0:
+                                if step % 10 == 0 and args.use_wandb:
                                     log_dict["sample/source"].append(wandb.Image(rearrange(x_src, "b v c h w -> b c (v h) w")[0].float().detach().cpu(), caption=f"idx={len(log_dict['sample/source'])}"))
                                     log_dict["sample/target"].append(wandb.Image(rearrange(x_tgt, "b v c h w -> b c (v h) w")[0].float().detach().cpu(), caption=f"idx={len(log_dict['sample/source'])}"))
                                     log_dict["sample/model_output"].append(wandb.Image(rearrange(x_tgt_pred, "b v c h w -> b c (v h) w")[0].float().detach().cpu(), caption=f"idx={len(log_dict['sample/source'])}"))
@@ -273,7 +361,17 @@ def main(args):
                             logs[k] = log_dict[k]
                         gc.collect()
                         torch.cuda.empty_cache()
-                    accelerator.log(logs, step=global_step)
+                    
+                    # Only log to wandb if enabled
+                    if args.use_wandb:
+                        accelerator.log(logs, step=global_step)
+                    else:
+                        if global_step % args.print_freq == 0:
+                            
+                            accelerator.log(logs, step=global_step)
+                        
+                            # Print logs to console if wandb is disabled
+                            # print(f"Step {global_step}: {logs}")
 
 
 if __name__ == "__main__":
@@ -293,14 +391,21 @@ if __name__ == "__main__":
 
     # validation eval args
     parser.add_argument("--eval_freq", default=100, type=int)
+    parser.add_argument("--print_freq", default=10, type=int)
+    
+    
     parser.add_argument("--num_samples_eval", type=int, default=100, help="Number of samples to use for all evaluation")
 
     parser.add_argument("--viz_freq", type=int, default=100, help="Frequency of visualizing the outputs.")
+    parser.add_argument("--use_wandb", action="store_true", help="Whether to use wandb for logging.")
     parser.add_argument("--tracker_project_name", type=str, default="difix", help="The name of the wandb project to log to.")
-    parser.add_argument("--tracker_run_name", type=str, required=True)
+    parser.add_argument("--tracker_run_name", type=str, default=None, help="The name of the wandb run.")
 
     # details about the model architecture
     parser.add_argument("--pretrained_model_name_or_path")
+    parser.add_argument("--pretrained_model_path", default=None, type=str)
+    
+    
     parser.add_argument("--revision", type=str, default=None,)
     parser.add_argument("--variant", type=str, default=None,)
     parser.add_argument("--tokenizer_name", type=str, default=None)
@@ -312,7 +417,13 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--cache_dir", default=None,)
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
-    parser.add_argument("--resolution", type=int, default=512,)
+
+    
+    
+    parser.add_argument("--resolution_h", type=int, default=112)
+    parser.add_argument("--resolution_w", type=int, default=544)
+    
+    
     parser.add_argument("--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader.")
     parser.add_argument("--num_training_epochs", type=int, default=10)
     parser.add_argument("--max_train_steps", type=int, default=10_000,)
