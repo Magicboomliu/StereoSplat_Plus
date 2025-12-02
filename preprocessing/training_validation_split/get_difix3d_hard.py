@@ -77,7 +77,7 @@ if __name__=="__main__":
     # 输出路径
     out_json_path = os.path.join(
         os.path.dirname(trainval_json_path),
-        "trainval_filtered.json"
+        "trainval_hard.json"
     )
 
     with open(out_json_path, "w") as f:
