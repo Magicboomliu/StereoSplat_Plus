@@ -814,9 +814,9 @@ class DifixPipeline(
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+        
+        added_cond_kwargs = None
 
-        # 6.1 Add image embeds for IP-Adapter
-        added_cond_kwargs = {"image_embeds": image_embeds} if ip_adapter_image is not None else None
 
         # 6.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
@@ -887,12 +887,3 @@ class DifixPipeline(
         
         
         return image 
-        # image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
-
-        # # Offload all models
-        # self.maybe_free_model_hooks()
-
-        # if not return_dict:
-        #     return (image, has_nsfw_concept)
-
-        # return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)

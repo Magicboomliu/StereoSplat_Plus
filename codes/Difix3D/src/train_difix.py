@@ -23,8 +23,8 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
 
 import wandb
+from model_ref import DifixRef,load_ckpt_from_state_dict, save_ckpt
 
-from model import Difix, load_ckpt_from_state_dict, save_ckpt
 from dataset import PairedDataset
 from loss import gram_loss
 

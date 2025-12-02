@@ -80,7 +80,7 @@ if __name__ == "__main__":
     
 
     timesteps = 499
-    guidance_scale = 2.0
+    guidance_scale = 0.0
 
     enhanced_image = pipe(remove_degradation_prompt, image=input_image, 
                         ref_image=ref_image, num_inference_steps=10, 
@@ -90,9 +90,6 @@ if __name__ == "__main__":
     
     saved_path_from_difix_pipeline = "/home/zliu/Project2025/OneStageTraining/FeedStereoGS/codes/Difix3D/outputs/demo_output/from_pipeline.png"
     enhanced_image.save(saved_path_from_difix_pipeline)
-    
-    
-    
     
     
     
