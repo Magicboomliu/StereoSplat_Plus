@@ -193,7 +193,6 @@ def main(args):
     t_vgg_renorm =  transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     
     
-
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process and args.use_wandb:
@@ -227,22 +226,6 @@ def main(args):
                 
                 x_tgt = rearrange(x_tgt, 'b v c h w -> (b v) c h w')
                 x_tgt_pred = rearrange(x_tgt_pred, 'b v c h w -> (b v) c h w')
-                
-                
-                # # DEBUG Here
-                # current_input_image = Convert_Tensor_to_Image(x_src[:,:1,:,:,:])
-                # gt_target_image = Convert_Tensor_to_Image(x_tgt.unsqueeze(0)[:,:1,:,:,:])
-                # pred_target_image = Convert_Tensor_to_Image(x_tgt_pred.unsqueeze(0)[:,:1,:,:,:])
-                # ref_image = Convert_Tensor_to_Image(x_src[:,1:2,:,:,:])
-                
-                # print(np.mean(np.abs(pred_target_image-current_input_image)))
-                
-                # skimage.io.imsave("current_input_image.png", current_input_image)
-                # skimage.io.imsave("gt_target_image.png", gt_target_image)
-                # skimage.io.imsave("pred_target_image.png", pred_target_image)
-                # skimage.io.imsave("ref_image.png", ref_image)
-
-                # quit()
                 
                          
                  # Reconstruction loss: SSIM-weighted MSE

@@ -39,3 +39,11 @@ In this repo, we finetune the original Difix3D for the KITTI360 Dataset for Diff
     cd preprocessing/training_validation_split
     python difix_3d_trainval_split.py
     ```
+
+### Step.2 Finetuning the Pix2Pix SD-Turbo
+(1) Finetuning with the weight of the [nvidia/difix_ref](https://huggingface.co/nvidia/difix_ref). 
+
+```
+cd codes/Difix3D/scripts
+sh train_difix_re.sh
+```
