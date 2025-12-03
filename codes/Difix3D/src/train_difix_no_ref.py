@@ -25,7 +25,9 @@ from diffusers.optimization import get_scheduler
 import wandb
 from model_no_ref import Difix_No_Ref,load_ckpt_from_state_dict, save_ckpt
 
-from dataset import PairedDataset
+# from dataset import PairedDataset
+from dataset_no_ref import PairedDataset_No_Ref
+
 from loss import gram_loss
 from matplotlib import pyplot as plt
 import skimage.io
@@ -44,6 +46,7 @@ def Convert_Tensor_to_Image(tensor):
 
 
 def main(args):
+    
     # Set log_with based on use_wandb flag
     log_with = args.report_to if args.use_wandb else None
     
@@ -75,7 +78,7 @@ def main(args):
         timestep=args.timestep,
         mv_unet=args.mv_unet,
     )
-    
+        
     net_difix.set_train()
 
     if args.enable_xformers_memory_efficient_attention:
@@ -125,7 +128,7 @@ def main(args):
     resolution = (args.resolution_h, args.resolution_w)
     
     
-    dataset_train = PairedDataset(dataset_path=args.dataset_path, 
+    dataset_train = PairedDataset_No_Ref(dataset_path=args.dataset_path, 
                                   split="train", 
                                   tokenizer=net_difix.tokenizer,
                                   height=args.resolution_h, width=args.resolution_w)
@@ -135,7 +138,7 @@ def main(args):
                                            shuffle=True, 
                                            num_workers=args.dataloader_num_workers)
     
-    dataset_val = PairedDataset(dataset_path=args.dataset_path, 
+    dataset_val =PairedDataset_No_Ref(dataset_path=args.dataset_path, 
                                 split="test", 
                                 tokenizer=net_difix.tokenizer,
                                 height=args.resolution_h, width=args.resolution_w)
@@ -214,6 +217,39 @@ def main(args):
             with accelerator.accumulate(*l_acc):
                 x_src = batch["conditioning_pixel_values"]
                 x_tgt = batch["output_pixel_values"]
+                
+                
+                
+                # # DEBUG HERE
+                # input_images_tensor = x_src[0][0].permute(1,2,0).cpu().numpy()
+                # input_images_tensor = (input_images_tensor * 0.5 + 0.5) * 255.0
+                # input_images_tensor = input_images_tensor.astype(np.uint8)
+                # input_images_tensor = Image.fromarray(input_images_tensor)
+                # input_images_tensor.save("input_images_tensor.png")
+                
+                # ref_images_tensor = x_src[0][1].permute(1,2,0).cpu().numpy()
+                # ref_images_tensor = (ref_images_tensor * 0.5 + 0.5) * 255.0
+                # ref_images_tensor = ref_images_tensor.astype(np.uint8)
+                # ref_images_tensor = Image.fromarray(ref_images_tensor)
+                # ref_images_tensor.save("ref_images_tensor.png")
+                
+                
+                # target_images_tensor = x_tgt[0][0].permute(1,2,0).cpu().numpy()
+                # target_images_tensor = (target_images_tensor * 0.5 + 0.5) * 255.0
+                # target_images_tensor = target_images_tensor.astype(np.uint8)
+                # target_images_tensor = Image.fromarray(target_images_tensor)
+                # target_images_tensor.save("target_images_tensor.png")
+                
+                
+                # target_ref_images_tensor = x_tgt[0][1].permute(1,2,0).cpu().numpy()
+                # target_ref_images_tensor = (target_ref_images_tensor * 0.5 + 0.5) * 255.0
+                # target_ref_images_tensor = target_ref_images_tensor.astype(np.uint8)
+                # target_ref_images_tensor = Image.fromarray(target_ref_images_tensor)
+                # target_ref_images_tensor.save("target_ref_images_tensor.png")
+                
+                # print(x_src.shape)
+                # print(x_tgt.shape)
+                # quit()
                     
                 B, V, C, H, W = x_src.shape
 

@@ -9,9 +9,8 @@ max_train_steps=200000
 # 分成两个变量，而不是数组
 resolution_h=112
 resolution_w=544
-
 learning_rate=2e-5
-train_batch_size=4
+train_batch_size=1
 dataloader_num_workers=8
 enable_xformers_memory_efficient_attention=True
 checkpointing_steps=10000
@@ -52,6 +51,7 @@ accelerate launch --mixed_precision=bf16 --config-file accelerate_config_singleG
     --timestep "$timestep" \
     # --use_wandb
 }
+
 
 
 Train_Diffix_No_Ref_Multiple_GPUs(){
@@ -111,6 +111,6 @@ accelerate launch --mixed_precision=bf16 --main_process_port $main_process_port 
     --use_wandb
 }
 
-Train_Diffix_Ref_One_Single_GPU
+# Train_Diffix_No_Ref_One_Single_GPU
 
-# Train_Diffix_Ref_Multiple_GPUs
+Train_Diffix_No_Ref_Multiple_GPUs
