@@ -2,13 +2,12 @@ import sys
 sys.path.append("..")
 import os
 from diffusers.utils import load_image
-
-from src.simplified_pipeline_diffix_no_ref import DifixPipeline
+from src.simplified_pipeline_diffix_no_ref import DifixPipeline_No_Ref
 
 
 
 if __name__ == "__main__":
-    pipe = DifixPipeline.from_pretrained("nvidia/difix", trust_remote_code=True)
+    pipe = DifixPipeline_No_Ref.from_pretrained("nvidia/difix", trust_remote_code=True)
     pipe.to("cuda")
     
     
