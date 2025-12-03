@@ -49,7 +49,7 @@ accelerate launch --mixed_precision=bf16 --config-file accelerate_config_singleG
     --tracker_project_name "$tracker_project_name" \
     --tracker_run_name "$tracker_run_name" \
     --timestep "$timestep" \
-    # --use_wandb
+    --use_wandb
 }
 
 
