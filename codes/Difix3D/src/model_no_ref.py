@@ -7,20 +7,17 @@ from tqdm import tqdm
 import torch
 from torchvision import transforms
 from transformers import AutoTokenizer, CLIPTextModel
-from diffusers import DDPMScheduler, DDIMScheduler
+from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from peft import LoraConfig
 p = "src/"
 sys.path.append(p)
 from einops import rearrange, repeat
-from autoencode_kl import AutoencoderKL
 
-# from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
+from .autoencode_kl import AutoencoderKL as PretrainedAutoencoderKL
 
-def make_1step_sched(pretrained_name=None):
-    if pretrained_name is None:
-        pretrained_name = "stabilityai/sd-turbo"
-    
-    noise_scheduler_1step = DDPMScheduler.from_pretrained(pretrained_name, subfolder="scheduler")
+
+def make_1step_sched():
+    noise_scheduler_1step = DDPMScheduler.from_pretrained("stabilityai/sd-turbo", subfolder="scheduler")
     noise_scheduler_1step.set_timesteps(1, device="cuda")
     noise_scheduler_1step.alphas_cumprod = noise_scheduler_1step.alphas_cumprod.cuda()
     return noise_scheduler_1step
@@ -118,49 +115,42 @@ def save_ckpt(net_difix, optimizer, outf):
     torch.save(sd, outf)
 
 
-class DifixRef(torch.nn.Module):
-    def __init__(self, pretrained_name=None,                  
+class Difix_No_Ref(torch.nn.Module):
+    def __init__(self, 
+                 pretrained_name=None, 
                  pretrained_path=None, 
                  ckpt_folder="checkpoints", 
                  lora_rank_vae=4, 
                  mv_unet=False, 
                  timestep=999):
+        
         super().__init__()
         
-        if pretrained_name=="None":
-            pretrained_name = None
-        
-        if pretrained_name is None:
-            pretrained_name = "stabilityai/sd-turbo"
+        self.tokenizer = AutoTokenizer.from_pretrained("stabilityai/sd-turbo", subfolder="tokenizer")
+        self.text_encoder = CLIPTextModel.from_pretrained("stabilityai/sd-turbo", subfolder="text_encoder").cuda()
+        self.sched = make_1step_sched()
 
-        if pretrained_path =="None":
-            pretrained_path = None
-        
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(pretrained_name, 
-                                                       subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained(pretrained_name, 
-                                                          subfolder="text_encoder").cuda()
-        
-        self.sched = make_1step_sched(pretrained_name)
-        
-
-        vae = AutoencoderKL.from_pretrained(pretrained_name, subfolder="vae", trust_remote_code=True)
+        vae = AutoencoderKL.from_pretrained("stabilityai/sd-turbo", subfolder="vae")
         vae.encoder.forward = my_vae_encoder_fwd.__get__(vae.encoder, vae.encoder.__class__)
         vae.decoder.forward = my_vae_decoder_fwd.__get__(vae.decoder, vae.decoder.__class__)
-
+        # add the skip connection convs
+        vae.decoder.skip_conv_1 = torch.nn.Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
+        vae.decoder.skip_conv_2 = torch.nn.Conv2d(256, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
+        vae.decoder.skip_conv_3 = torch.nn.Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
+        vae.decoder.skip_conv_4 = torch.nn.Conv2d(128, 256, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
+        vae.decoder.ignore_skip = False
         
         if mv_unet:
             from mv_unet import UNet2DConditionModel
         else:
             from diffusers import UNet2DConditionModel
 
-        unet = UNet2DConditionModel.from_pretrained(pretrained_name, subfolder="unet")
+        unet = UNet2DConditionModel.from_pretrained("stabilityai/sd-turbo", subfolder="unet")
 
         if pretrained_path is not None:
             sd = torch.load(pretrained_path, map_location="cpu")
             vae_lora_config = LoraConfig(r=sd["rank_vae"], init_lora_weights="gaussian", target_modules=sd["vae_lora_target_modules"])
-            # vae.add_adapter(vae_lora_config, adapter_name="vae_skip")
+            vae.add_adapter(vae_lora_config, adapter_name="vae_skip")
             _sd_vae = vae.state_dict()
             for k in sd["state_dict_vae"]:
                 _sd_vae[k] = sd["state_dict_vae"][k]
@@ -196,25 +186,7 @@ class DifixRef(torch.nn.Module):
                 
             self.lora_rank_vae = lora_rank_vae
             self.target_modules_vae = target_modules_vae
-        
-        else:
-            target_modules_vae = []
-            
-            target_modules_vae = ["conv1", "conv2", "conv_in", "conv_shortcut", "conv", "conv_out",
-                            "skip_conv_1", "skip_conv_2", "skip_conv_3", "skip_conv_4",
-                            "to_k", "to_q", "to_v", "to_out.0",
-                        ]
-                        
-            target_modules = []
-            for id, (name, param) in enumerate(vae.named_modules()):
-                if 'decoder' in name and any(name.endswith(x) for x in target_modules_vae):
-                    target_modules.append(name)
-            target_modules_vae = target_modules
-                
-            self.lora_rank_vae = lora_rank_vae
-            self.target_modules_vae = target_modules_vae
-            
-            
+
         # unet.enable_xformers_memory_efficient_attention()
         unet.to("cuda")
         vae.to("cuda")
@@ -229,8 +201,6 @@ class DifixRef(torch.nn.Module):
         print(f"Number of trainable parameters in UNet: {sum(p.numel() for p in unet.parameters() if p.requires_grad) / 1e6:.2f}M")
         print(f"Number of trainable parameters in VAE: {sum(p.numel() for p in vae.parameters() if p.requires_grad) / 1e6:.2f}M")
         print("="*50)
-        
-
 
     def set_eval(self):
         self.unet.eval()
@@ -252,11 +222,9 @@ class DifixRef(torch.nn.Module):
         self.vae.decoder.skip_conv_4.requires_grad_(True)
 
     def forward(self, x, timesteps=None, prompt=None, prompt_tokens=None):
-        
         # either the prompt or the prompt_tokens should be provided
         assert (prompt is None) != (prompt_tokens is None), "Either prompt or prompt_tokens should be provided"
         assert (timesteps is None) != (self.timesteps is None), "Either timesteps or self.timesteps should be provided"
-
         
         if prompt is not None:
             # encode the text prompt
@@ -272,8 +240,6 @@ class DifixRef(torch.nn.Module):
         caption_enc = repeat(caption_enc, 'b n c -> (b v) n c', v=num_views)
         
         unet_input = z
-        # Scale model input according to the current timestep
-        unet_input = self.sched.scale_model_input(unet_input, self.timesteps[0])
         
         model_pred = self.unet(unet_input, self.timesteps, encoder_hidden_states=caption_enc,).sample
         z_denoised = self.sched.step(model_pred, self.timesteps, z, return_dict=True).prev_sample
@@ -284,12 +250,9 @@ class DifixRef(torch.nn.Module):
         return output_image
     
     def sample(self, image, width, height, ref_image=None, timesteps=None, prompt=None, prompt_tokens=None):
-    
         input_width, input_height = image.size
         new_width = image.width - image.width % 8
         new_height = image.height - image.height % 8
-        
-        
         image = image.resize((new_width, new_height), Image.LANCZOS)
         
         T = transforms.Compose([
@@ -304,9 +267,6 @@ class DifixRef(torch.nn.Module):
             x = torch.stack([T(image), T(ref_image)], dim=0).unsqueeze(0).cuda()
         
         output_image = self.forward(x, timesteps, prompt, prompt_tokens)[:, 0]
-        
-        
-        
         output_pil = transforms.ToPILImage()(output_image[0].cpu() * 0.5 + 0.5)
         output_pil = output_pil.resize((input_width, input_height), Image.LANCZOS)
         

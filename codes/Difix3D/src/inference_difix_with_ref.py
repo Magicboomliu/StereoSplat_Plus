@@ -5,7 +5,6 @@ import numpy as np
 from PIL import Image
 from glob import glob
 from tqdm import tqdm
-
 from model_ref import DifixRef
 
 
@@ -23,16 +22,31 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help='Random seed to be used')
     parser.add_argument('--timestep', type=int, default=199, help='Diffusion timestep')
     parser.add_argument('--video', action='store_true', help='If the input is a video')
+    parser.add_argument('--ablation_name', type=str, default="official_difix_ref", 
+                        help='given_ablation_name')
+    parser.add_argument('--use_weight_format', type=str, default="ckpt", 
+                        help='select from ckpt and safetensors or huggingface')
+    
+    
     args = parser.parse_args()
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
+    
+    if args.use_weight_format == "huggingface":
+        model_path = None
+        model_name = args.model_name
+        
+    elif args.use_weight_format == "ckpt" or args.use_weight_format == "safetensors":
+        model_name = "nvidia/difix_ref"
+        model_path = args.model_path
+
 
     # Initialize the model
     model = DifixRef(
-        pretrained_name=args.model_name,
-        pretrained_path=args.model_path,
+        pretrained_name=model_name,
+        pretrained_path=model_path,
         timestep=args.timestep,
         mv_unet=True if args.ref_image is not None else False,
     )
@@ -82,4 +96,6 @@ if __name__ == "__main__":
     else:
         # Save as individual images
         for i, output_image in enumerate(tqdm(output_images, desc="Saving images")):
-            output_image.save(os.path.join(args.output_dir, os.path.basename(input_images[i])))
+            output_image_name = os.path.basename(input_images[i]).split(".")[0] + "_" + args.ablation_name + ".png"
+            
+            output_image.save(os.path.join(args.output_dir, output_image_name))

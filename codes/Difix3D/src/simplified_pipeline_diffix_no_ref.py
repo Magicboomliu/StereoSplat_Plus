@@ -797,8 +797,7 @@ class DifixPipeline_No_Ref(
                     return_dict=False,
                 )[0]
                 
-                print(self.do_classifier_free_guidance)
-                quit()
+
 
                 # perform guidance
                 if self.do_classifier_free_guidance:

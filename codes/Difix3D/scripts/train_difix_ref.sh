@@ -60,8 +60,8 @@ cd ..
 
 pretrained_model_name_or_path="nvidia/difix_ref"
 pretrained_model_path=None
-output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref_Hard"
-dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval_hard.json"
+output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref_All"
+dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
 max_train_steps=200000
 
 # 分成两个变量，而不是数组
