@@ -24,11 +24,26 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help='Random seed to be used')
     parser.add_argument('--timestep', type=int, default=199, help='Diffusion timestep')
     parser.add_argument('--video', action='store_true', help='If the input is a video')
+
+    parser.add_argument('--ablation_name', type=str, default="official_difix_ref", 
+                        help='given_ablation_name')
+    parser.add_argument('--use_weight_format', type=str, default="ckpt", 
+                        help='select from ckpt and safetensors or huggingface')
+
     args = parser.parse_args()
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
+    if args.use_weight_format == "huggingface":
+        model_path = None
+        model_name = args.model_name
+        
+    elif args.use_weight_format == "ckpt" or args.use_weight_format == "safetensors":
+        model_name = "nvidia/difix"
+        model_path = args.model_path
+
+
     # Initialize the model
     model = Difix_No_Ref(
         pretrained_name=args.model_name,
@@ -39,6 +54,7 @@ if __name__ == "__main__":
     # set the eval mode.
     model.set_eval()
     
+
 
     # Load input images
     if os.path.isdir(args.input_image):
@@ -55,6 +71,8 @@ if __name__ == "__main__":
 
         assert len(input_images) == len(ref_images), "Number of input images and reference images should be the same"
 
+    
+    
     # Process images
     output_images = []
     for i, input_image in enumerate(tqdm(input_images, desc="Processing images")):

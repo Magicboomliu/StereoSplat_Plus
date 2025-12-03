@@ -13,15 +13,17 @@ p = "src/"
 sys.path.append(p)
 from einops import rearrange, repeat
 
-from .autoencode_kl import AutoencoderKL as PretrainedAutoencoderKL
+from autoencode_kl import AutoencoderKL
 
 
-def make_1step_sched():
-    noise_scheduler_1step = DDPMScheduler.from_pretrained("stabilityai/sd-turbo", subfolder="scheduler")
+def make_1step_sched(pretrained_name=None):
+    if pretrained_name is None:
+        pretrained_name = "stabilityai/sd-turbo"
+    
+    noise_scheduler_1step = DDPMScheduler.from_pretrained(pretrained_name, subfolder="scheduler")
     noise_scheduler_1step.set_timesteps(1, device="cuda")
     noise_scheduler_1step.alphas_cumprod = noise_scheduler_1step.alphas_cumprod.cuda()
     return noise_scheduler_1step
-
 
 def my_vae_encoder_fwd(self, sample):
     sample = self.conv_in(sample)
@@ -125,32 +127,41 @@ class Difix_No_Ref(torch.nn.Module):
                  timestep=999):
         
         super().__init__()
-        
-        self.tokenizer = AutoTokenizer.from_pretrained("stabilityai/sd-turbo", subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained("stabilityai/sd-turbo", subfolder="text_encoder").cuda()
-        self.sched = make_1step_sched()
 
-        vae = AutoencoderKL.from_pretrained("stabilityai/sd-turbo", subfolder="vae")
+        if pretrained_name=="None":
+            pretrained_name = None
+        
+        if pretrained_name is None:
+            pretrained_name = "stabilityai/sd-turbo"
+
+        if pretrained_path =="None":
+            pretrained_path = None
+        
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(pretrained_name, 
+                                                       subfolder="tokenizer")
+        self.text_encoder = CLIPTextModel.from_pretrained(pretrained_name, 
+                                                          subfolder="text_encoder").cuda()
+        
+        self.sched = make_1step_sched(pretrained_name)
+        
+
+        vae = AutoencoderKL.from_pretrained(pretrained_name, subfolder="vae", trust_remote_code=True)
         vae.encoder.forward = my_vae_encoder_fwd.__get__(vae.encoder, vae.encoder.__class__)
         vae.decoder.forward = my_vae_decoder_fwd.__get__(vae.decoder, vae.decoder.__class__)
-        # add the skip connection convs
-        vae.decoder.skip_conv_1 = torch.nn.Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
-        vae.decoder.skip_conv_2 = torch.nn.Conv2d(256, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
-        vae.decoder.skip_conv_3 = torch.nn.Conv2d(128, 512, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
-        vae.decoder.skip_conv_4 = torch.nn.Conv2d(128, 256, kernel_size=(1, 1), stride=(1, 1), bias=False).cuda()
-        vae.decoder.ignore_skip = False
+
         
         if mv_unet:
             from mv_unet import UNet2DConditionModel
         else:
             from diffusers import UNet2DConditionModel
 
-        unet = UNet2DConditionModel.from_pretrained("stabilityai/sd-turbo", subfolder="unet")
+        unet = UNet2DConditionModel.from_pretrained(pretrained_name, subfolder="unet")
 
         if pretrained_path is not None:
             sd = torch.load(pretrained_path, map_location="cpu")
             vae_lora_config = LoraConfig(r=sd["rank_vae"], init_lora_weights="gaussian", target_modules=sd["vae_lora_target_modules"])
-            vae.add_adapter(vae_lora_config, adapter_name="vae_skip")
+            # vae.add_adapter(vae_lora_config, adapter_name="vae_skip")
             _sd_vae = vae.state_dict()
             for k in sd["state_dict_vae"]:
                 _sd_vae[k] = sd["state_dict_vae"][k]
@@ -186,7 +197,25 @@ class Difix_No_Ref(torch.nn.Module):
                 
             self.lora_rank_vae = lora_rank_vae
             self.target_modules_vae = target_modules_vae
-
+        
+        else:
+            target_modules_vae = []
+            
+            target_modules_vae = ["conv1", "conv2", "conv_in", "conv_shortcut", "conv", "conv_out",
+                            "skip_conv_1", "skip_conv_2", "skip_conv_3", "skip_conv_4",
+                            "to_k", "to_q", "to_v", "to_out.0",
+                        ]
+                        
+            target_modules = []
+            for id, (name, param) in enumerate(vae.named_modules()):
+                if 'decoder' in name and any(name.endswith(x) for x in target_modules_vae):
+                    target_modules.append(name)
+            target_modules_vae = target_modules
+                
+            self.lora_rank_vae = lora_rank_vae
+            self.target_modules_vae = target_modules_vae
+            
+            
         # unet.enable_xformers_memory_efficient_attention()
         unet.to("cuda")
         vae.to("cuda")
@@ -201,7 +230,7 @@ class Difix_No_Ref(torch.nn.Module):
         print(f"Number of trainable parameters in UNet: {sum(p.numel() for p in unet.parameters() if p.requires_grad) / 1e6:.2f}M")
         print(f"Number of trainable parameters in VAE: {sum(p.numel() for p in vae.parameters() if p.requires_grad) / 1e6:.2f}M")
         print("="*50)
-
+        
     def set_eval(self):
         self.unet.eval()
         self.vae.eval()
@@ -250,6 +279,7 @@ class Difix_No_Ref(torch.nn.Module):
         return output_image
     
     def sample(self, image, width, height, ref_image=None, timesteps=None, prompt=None, prompt_tokens=None):
+        
         input_width, input_height = image.size
         new_width = image.width - image.width % 8
         new_height = image.height - image.height % 8
