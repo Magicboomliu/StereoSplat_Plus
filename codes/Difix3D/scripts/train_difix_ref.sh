@@ -60,7 +60,8 @@ cd ..
 
 pretrained_model_name_or_path="nvidia/difix_ref"
 pretrained_model_path=None
-output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref_All"
+output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref_all"
+#dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
 dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
 max_train_steps=200000
 
@@ -81,10 +82,10 @@ lambda_l2=1.0
 lambda_gram=0.001
 gram_loss_warmup_steps=2000
 report_to="wandb"
-tracker_project_name="difix_ref_hard"
+tracker_project_name="difix_ref_all"
 tracker_run_name="train"
 timestep=199
-main_process_port=28505
+main_process_port=29501
 
 accelerate launch --mixed_precision=bf16 --main_process_port $main_process_port --config-file accelerate_config_multiGPU.yaml src/train_difix_ref.py \
     --pretrained_model_name_or_path "$pretrained_model_name_or_path" \
