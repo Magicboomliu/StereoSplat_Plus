@@ -2113,8 +2113,6 @@ class VolumeFusionRevision(BaseModule):
                                         ):
         
         bin_token_name = bin_token_list[0][:-4]
-        
-        
         if start_images_views == 2:
             view_num = 2
             matching_nums = 2
@@ -2161,8 +2159,6 @@ class VolumeFusionRevision(BaseModule):
         # Make Sure the estimate gaussains are valid
         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
         gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
-        
-        
         gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
         bs = gaussians_all.shape[0] # batch size is 2
         
@@ -2245,10 +2241,10 @@ class VolumeFusionRevision(BaseModule):
             
             rendered_center_frame = enhanced_rendered_center_frame
             
-            # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.68 + gt_center_frame * 0.32
-            fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
-            rendered_center_frame = fusion_rendered_center_frame
+            # # # # FIXME
+            # fusion_rendered_center_frame = rendered_center_frame * 0.64 + gt_center_frame * 0.36
+            # fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
+            # rendered_center_frame = fusion_rendered_center_frame
 
             
         '''second time inference'''
@@ -2370,9 +2366,11 @@ class VolumeFusionRevision(BaseModule):
             
             rendered_last_frame = enhanced_rendered_last_frame
             
-            fusion_rendered_last_frame = rendered_last_frame * 0.68 + gt_last_frame * 0.32
-            fusion_rendered_last_frame = torch.clamp(fusion_rendered_last_frame,min=0,max=1.0)
-            rendered_last_frame = fusion_rendered_last_frame
+            
+            # FIXME
+            # fusion_rendered_last_frame = rendered_last_frame * 0.64 + gt_last_frame * 0.36
+            # fusion_rendered_last_frame = torch.clamp(fusion_rendered_last_frame,min=0,max=1.0)
+            # rendered_last_frame = fusion_rendered_last_frame
             
             
             
@@ -2873,7 +2871,7 @@ class VolumeFusionRevision(BaseModule):
             
 
             # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.64 + gt_center_frame * 0.36
+            fusion_rendered_center_frame = rendered_center_frame * 0.68 + gt_center_frame * 0.32
             fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
             rendered_center_frame = fusion_rendered_center_frame
 
@@ -3186,6 +3184,7 @@ class VolumeFusionRevision(BaseModule):
         
         
         return evaluation_results_stat 
+    
     
     
     def get_additional_bev_novel_views_non_progressive(self,
@@ -3891,9 +3890,7 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d45_depth.png'),rendered_depth_center_right_plus_3_d45_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d30_depth.png'),rendered_depth_center_right_plus_3_d30_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_plus_3_d30_depth.png'),rendered_depth_center_plus_3_d30_vis)
-
-
-
+    
     # iteration twice
     def get_additional_bev_novel_views_progressive_iter_once(self,
                                         batch,
