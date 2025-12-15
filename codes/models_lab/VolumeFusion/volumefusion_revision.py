@@ -3185,8 +3185,7 @@ class VolumeFusionRevision(BaseModule):
         
         return evaluation_results_stat 
     
-    
-    
+       
     def get_additional_bev_novel_views_non_progressive(self,
                                         batch,
                                         val_result_savedir,
@@ -4272,8 +4271,11 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d30_depth.png'),rendered_depth_center_right_plus_3_d30_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_plus_3_d30_depth.png'),rendered_depth_center_plus_3_d30_vis)
 
+        return evaluation_results_stat
 
 
+    
+    
 
 
 

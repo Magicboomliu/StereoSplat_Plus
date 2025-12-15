@@ -1,4 +1,4 @@
-Get_Rendered_RGBS_Depths_Metrics(){
+3DGS_Incremental_Fusion_Kept_Latest_Only(){
 
 cd ../../..
 cd /home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGSFusion/codes/Validation
@@ -25,4 +25,4 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 
 }
 
-Get_Rendered_RGBS_Depths_Metrics
+3DGS_Incremental_Fusion_Kept_Latest_Only

@@ -4,7 +4,7 @@ cd ../../..
 cd /home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/Validation
 
 configs_path="/home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/codes/configs/Ablations/volumefusion_train_randomly/configs.py"
-output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Updated_1208/Dynamic_Camera_Pose/Progressive_Twice_Diffix3D_Gradually_Official/Testing"
+output_folder="/data1/zliu/feedforward_outputs_ablations/Progressive_Inference/Updated_1208/Dynamic_Camera_Pose/Progressive_Twice_Diffix3D_Gradually_No_Diffusion/Testing"
 val_filelist="/home/zliu/Project2025/FeedforwardGS_Ablations/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete_version2.txt"
 demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -31,7 +31,8 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --prompt "$prompt" \
     --difix_remote_path $difix_remote_path \
     --use_difix_type $use_difix_type \
-    --use_diffix3d \
+    --output_vis \
+    # --use_diffix3d \
     # --output_vis
 }
 

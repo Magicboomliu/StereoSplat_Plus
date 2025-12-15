@@ -29,7 +29,10 @@ from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
 # define the models
-from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
+# from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
+
+from models_lab.VolumeFusion.volumefusion_revision_fixed_cam import VolumeFusionRevision
+
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import skimage.io
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
@@ -149,7 +152,6 @@ def main(args):
         difix_model_path = args.pretrained_diffix_model_path
 
 
-
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -218,8 +220,7 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
+    
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -282,7 +283,6 @@ def main(args):
         
     pretrained_diffix_model.to(accelerator.device)
     
-
     
     evaluate_results_average_dict_rgb = {
         "first_view_psnr_left": 0,
@@ -324,6 +324,7 @@ def main(args):
     }
 
     
+    
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
@@ -331,7 +332,7 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_iter_once(
+            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_fixed_cam_batch_inference(
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
@@ -351,6 +352,10 @@ def main(args):
             for key in current_evaluate_results_dict_depth.keys():
                 evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
             batch_idx += 1
+            
+            # # FIXME
+            # if batch_idx>100:
+            #     break
            
         for key in evaluate_results_average_dict_rgb.keys():
             evaluate_results_average_dict_rgb[key] /= batch_idx

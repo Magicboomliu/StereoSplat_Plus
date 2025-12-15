@@ -34,7 +34,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --use_difix_type $use_difix_type \
     --output_vis \
     --use_diffix3d \
-    # --output_vis
+
 }
 
 Progressive_Twice_Diffix3D_Batch
