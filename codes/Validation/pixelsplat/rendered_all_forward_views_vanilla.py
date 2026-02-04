@@ -211,45 +211,39 @@ def main(args):
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
     
     
-
+    
+    # performance metrics for the rendered RGBs
     evaluate_results_average_dict_rgb = {
-        "first_view_psnr_left": 0,
-        "first_view_ssim_left": 0,
-        "first_view_psnr_right": 0,
-        "first_view_ssim_right": 0,
-        "center_view_psnr_left": 0,
-        "center_view_ssim_left": 0,
-        "center_view_psnr_right": 0,
-        "center_view_ssim_right": 0,
-        "last_view_psnr_left": 0,
-        "last_view_ssim_left": 0,
-        "last_view_psnr_right": 0,
-        "last_view_ssim_right": 0,
-        "all_view_psnr_left": 0,
-        "all_view_ssim_left": 0,
-        "all_view_psnr_right": 0,
-        "all_view_ssim_right": 0,
-
+        "first_view_psnr_average": 0,
+        "first_view_ssim_average":0,
+        "first_view_lpips_average":0,
+        "center_view_psnr_average": 0,
+        "center_view_ssim_average": 0,
+        "center_view_lpips_average": 0,
+        "last_view_psnr_average": 0,
+        "last_view_ssim_average": 0,
+        "last_view_lpips_average": 0,
+        "all_view_psnr_average": 0,
+        "all_view_ssim_average": 0,
+        "all_view_lpips_average": 0,
     }
     
+    # performance metrics for the rendered Depths
     evaluate_results_average_dict_depth = {
-        "first_view_left_mae": 0,
-        "first_view_left_mse": 0,
-        "first_view_right_mae": 0,
-        "first_view_right_mse": 0,
-        "center_view_left_mae": 0,
-        "center_view_left_mse": 0,
-        "center_view_right_mae": 0,
-        "center_view_right_mse": 0,
-        "last_view_left_mae": 0,
-        "last_view_left_mse": 0,
-        "last_view_right_mae": 0,
-        "last_view_right_mse": 0,
-        "all_view_left_mae": 0,
-        "all_view_left_mse": 0,
-        "all_view_right_mae": 0,
-        "all_view_right_mse": 0,
+        "first_view_Abs_Rel_average": 0,
+        "frist_view_Sq_Rel_average": 0,
+        "first_view_RMSE_log_average": 0,
+        "center_view_Abs_Rel_average": 0,
+        "center_view_Sq_Rel_average": 0,
+        "center_view_RMSE_log_average": 0,
+        "last_view_Abs_Rel_average": 0,
+        "last_view_Sq_Rel_average": 0,
+        "last_view_RMSE_log_average": 0,
+        "all_view_Abs_Rel_average": 0,
+        "all_view_Sq_Rel_average": 0,
+        "all_view_RMSE_log_average": 0,
     }
+
 
 
     with torch.no_grad():

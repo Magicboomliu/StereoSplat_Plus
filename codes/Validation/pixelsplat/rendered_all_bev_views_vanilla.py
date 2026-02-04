@@ -176,6 +176,8 @@ def main(args):
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
     
     
+
+    
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0

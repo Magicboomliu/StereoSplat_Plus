@@ -1,5 +1,6 @@
-# FeedStereoGS
-Diff-VolumeFusion: Progressive Input-Invariant Feed-Forward 3D Gaussian Splatting using Stereo Images
+# Diff-StereoSplat
+Diff-StereoSplat: Diffusion-Enhanced Feed-Forward Stereo Gaussian
+Splatting
 
 
 
@@ -10,9 +11,10 @@ Diff-VolumeFusion: Progressive Input-Invariant Feed-Forward 3D Gaussian Splattin
 - [OmniScene (CVPR 2025)](https://github.com/WU-CVGL/Omni-Scene)
 - [DepthSplat (CVPR2025)](https://github.com/cvg/depthsplat)
 ---
-- Ours1: Input-Invariant VolumeFusion
-- Ours2: Diff-VolumeFusion Iter = 2
-- Ours3: Diff-VolumeFusion Iter = 3
+- Ours1: Input-Invariant StereoSplat
+- Ours2: Diff-StereoSplat
+- Ours2(duplicate): Diff-VolumeFusion Iter = 2
+- Ours3(duplicate): Diff-VolumeFusion Iter = 3
 
 
 
@@ -21,7 +23,7 @@ Diff-VolumeFusion: Progressive Input-Invariant Feed-Forward 3D Gaussian Splattin
 - [MVSplat](https://drive.google.com/drive/folders/1l7nbn-aJx2s_107SKyRGpoYo17AaOmvb?usp=sharing)
 - [OmniScene](https://drive.google.com/drive/folders/1t_ba6d0S0FqlaRHJBXw1XFue8moxWzyY?usp=sharing)
 - [DepthSplat](https://drive.google.com/drive/folders/1ntWepSwW1NevE1eFsvtwCCeYXh9kfwwc?usp=sharing)
-- [VolumeFusion](https://drive.google.com/drive/folders/1sLbprywWeUzXHJkdqplX5rZ3-omQfeFc?usp=sharing)
+- [StereoSplat](https://drive.google.com/drive/folders/1sLbprywWeUzXHJkdqplX5rZ3-omQfeFc?usp=sharing)
 - [Diffix3D Pretrained Weight](https://drive.google.com/file/d/1qOHlj0gSmYu_YXbcHGRrCdj-ck2sIQm1/view?usp=sharing)
 
 
