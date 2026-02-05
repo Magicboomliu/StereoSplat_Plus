@@ -53,7 +53,7 @@ cd scripts/train/omnigs
 sh train.sh
 ```
 
-(5) VolumeFusion
+(5) StereoSplat (Training)
 ```
 cd scripts/train/volumefusion
 sh train_revision.sh
@@ -117,7 +117,7 @@ sh render_views_with_omnigs.sh
 
 ### Our Proposed Methods
 
-(1) Input-Invariant VolumeFusion
+(1) Input-Invariant StereoSplat
 
 - evaluations feedforward
 ```
@@ -130,12 +130,12 @@ cd scripts/evaluations/BEV_Visualizations
 sh render_views_with_input_invariant_volumefusion.sh
 ```
 
-(2) Diff-VolumeFusion Iter = 2
+(2) Diff-VolumeFusion Iter = 2 (Default)
 - evaluations feedforward
 
 - evaluations bev views
 
-(3) Diff-VolumeFusion Iter = 3
+(3) Diff-VolumeFusion Iter = 3 (Optional)
 
 - evaluations feedforward
 
