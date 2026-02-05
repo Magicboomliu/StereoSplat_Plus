@@ -13,8 +13,8 @@ Splatting
 ---
 - Ours1: Input-Invariant StereoSplat
 - Ours2: Diff-StereoSplat
-- Ours2(duplicate): Diff-VolumeFusion Iter = 2
-- Ours3(duplicate): Diff-VolumeFusion Iter = 3
+- Ours2(duplicate): Diff-StereoSplat Iter = 2
+- Ours3(duplicate): Diff-StereoSplat Iter = 3
 
 
 
