@@ -2,10 +2,10 @@ Get_Rendered_RGBS_Depths_Metrics(){
 cd ../../..
 cd codes/Validation
 
-configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/OmniScene/eval/omnigs_vanilla_first_LiDAR_as_reference.py"
-output_folder="/data1/zliu/forward_outputs_compared_with_others/omnigs/bev_views"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/val.txt"
-demo_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo_more.txt"
+configs_path="/home/zliu/IROS2026/Diff-StereoSplat/codes/configs/OmniScene/eval/omnigs_vanilla_first_LiDAR_as_reference.py"
+output_folder="/data1/zliu/IROS26/Compared_With_Others/OmniScene_2Views/bev_views/"
+val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"
+demo_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="MetricV2" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR"
 pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/OmniScene/checkpoint-60000/"

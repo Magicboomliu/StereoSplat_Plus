@@ -29,12 +29,12 @@ from .utils.interpolation import interpolate_extrinsics
 from tqdm import tqdm
 from .gs_fuse import transform_g2_to_g1
 #from .utilsdir.gaussain_fusion import fuse_gaussians_by_voxel_with_depth_batched_vectorized,fuse_gaussians_by_voxel_with_depth_scatter_batched
-
 from .depth_error_vis import disp_error_img,depths_to_colors
 import moviepy.editor as mpy
 import wandb
 from PIL import Image
 import time
+import math
 
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
@@ -256,10 +256,6 @@ def interleave_left_right_pose(x: torch.Tensor) -> torch.Tensor:
     y[:, 1::2] = right
     return torch.cat((y,first_left_right),dim=1)
 
-
-
-import math
-
 def add_local_pitch(c2w: torch.Tensor, deg: float):
     """绕相机自身X轴(右轴)旋转deg度，低头用负角度"""
     theta = math.radians(deg)
@@ -281,8 +277,8 @@ def add_local_yaw_about_camZ(c2w: torch.Tensor, deg: float):
     return c2w @ Rloc  # 后乘=局部旋转
 
 
-
 class VolumeFusionRevision(BaseModule):
+    
     def __init__(self,
                  backbone=None, # feature extraction
                  neck=None,      # feature aggregation
@@ -560,7 +556,6 @@ class VolumeFusionRevision(BaseModule):
                 matching_nums=3,            
                 iter=0,
                 cfg=None):
-        # get inpout_batch_dict
         
         # get the input and the reference input
         input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
@@ -1450,8 +1445,7 @@ class VolumeFusionRevision(BaseModule):
         
         
         return evaluation_results_stat
-    
-    
+        
     def save_3dgs_ply(self,
                     batch,
                     val_result_savedir,
@@ -1523,9 +1517,6 @@ class VolumeFusionRevision(BaseModule):
         
         self.renderer.save_ply(gaussians_all, saved_ply_path)
         
-
-    
-    
     def forward_kitti360_videos(self,
                                 batch,
                                 cfg,
