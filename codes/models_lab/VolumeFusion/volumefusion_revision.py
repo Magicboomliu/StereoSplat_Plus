@@ -36,6 +36,10 @@ from PIL import Image
 import time
 import math
 
+import lpips
+from torchmetrics.functional.image import structural_similarity_index_measure as ssim_fn
+
+
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -968,6 +972,7 @@ class VolumeFusionRevision(BaseModule):
         
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
     
+    
     def save_val_results(self,batch_data_for_eval,saved_dir,cfg):
         
         '''input batch data for evaluation'''
@@ -1272,68 +1277,114 @@ class VolumeFusionRevision(BaseModule):
         gt_depth_all_stereo = sparse_depth_gt
         
         
-        # RGB Evaluation
-        first_psnr_left,first_ssim_left,first_psnr_right,first_ssim_right = compute_stereo_psnr_ssim(pred=rendered_images_first_stereo,target=gt_images_first_stereo)
-        last_psnr_left,last_ssim_left,last_psnr_right,last_ssim_right = compute_stereo_psnr_ssim(pred=rendered_images_last_stereo,target=gt_images_last_stereo)
-        center_psnr_left,center_ssim_left,center_psnr_right,center_ssim_right = compute_stereo_psnr_ssim(pred=rendered_images_center_stereo,target=gt_images_center_stereo)
-        all_psnr_left,all_ssim_left,all_psnr_right,all_ssim_right = compute_all_stereo_psnr_ssim(pred=rendered_images_all_stereo,target=gt_images_all_stereo)
-        
         
 
+        ''' The Evaluation of the RGB Metrics '''
+        first_rgb_eval_info = metrics_mean(pred=rendered_images_first_stereo,
+                                           gt=gt_images_first_stereo)
+        first_rgb_lpips = first_rgb_eval_info['lpips']
+        first_rgb_ssim = first_rgb_eval_info['ssim']
+        first_rgb_psnr = first_rgb_eval_info['psnr']
+        
+        
+        center_rgb_eval_info = metrics_mean(pred=rendered_images_center_stereo,
+                                           gt=gt_images_center_stereo)
+        center_rgb_lpips = center_rgb_eval_info['lpips']
+        center_rgb_ssim = center_rgb_eval_info['ssim']
+        center_rgb_psnr = center_rgb_eval_info['psnr']
+        
+        last_rgb_eval_info = metrics_mean(pred=rendered_images_last_stereo,
+                                           gt=gt_images_last_stereo)
+        last_rgb_lpips = last_rgb_eval_info['lpips']
+        last_rgb_ssim = last_rgb_eval_info['ssim']
+        last_rgb_psnr = last_rgb_eval_info['psnr']
+        
+        
+        all_rgb_eval_info = metrics_mean(pred=rendered_images_all_stereo,
+                                           gt=gt_images_all_stereo)
+        all_rgb_lpips = all_rgb_eval_info['lpips']
+        all_rgb_ssim = all_rgb_eval_info['ssim']
+        all_rgb_psnr = all_rgb_eval_info['psnr']
+
+
+        
+     
+        ''' The Evaluation of the Depth Metrics '''
+        first_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred=renderded_depth_first_stereo,
+                                                         gt=gt_depth_first_stereo)
+        
+        frist_view_abs_rel = first_view_depth_eval_info['AbsRel']
+        frist_view_sq_rel = first_view_depth_eval_info['SqRel']
+        frist_view_rmse_log = first_view_depth_eval_info['RMSE_log']
+        
+        center_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred=renderded_depth_center_stereo,
+                                                         gt=gt_depth_center_stereo)
+        center_view_abs_rel = center_view_depth_eval_info['AbsRel']
+        center_view_sq_rel = center_view_depth_eval_info['SqRel']
+        center_view_rmse_log = center_view_depth_eval_info['RMSE_log']
+        
+        last_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred=renderded_depth_last_stereo,
+                                                         gt=gt_depth_last_stereo)
+        last_view_abs_rel = last_view_depth_eval_info['AbsRel']
+        last_view_sq_rel = last_view_depth_eval_info['SqRel']
+        last_view_rmse_log = last_view_depth_eval_info['RMSE_log']
+        
+        all_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred=renderded_depth_all_stereo,
+                                                         gt=gt_depth_all_stereo)
+        all_view_abs_rel = all_view_depth_eval_info['AbsRel']
+        all_view_sq_rel = all_view_depth_eval_info['SqRel']
+        all_view_rmse_log = all_view_depth_eval_info['RMSE_log']
+        
+        
         
         evaluation_rgb_results_stat = {
-  
-            'first_view_psnr_left':first_psnr_left.data.item(),
-            'first_view_ssim_left':first_ssim_left.data.item(),
-            'first_view_psnr_right':first_psnr_right.data.item(),
-            'first_view_ssim_right':first_ssim_right.data.item(),
+            "first_view_psnr_average": first_rgb_psnr.data.item(),
+            "first_view_ssim_average": first_rgb_ssim.data.item(),
+            "first_view_lpips_average": first_rgb_lpips.data.item(),
             
-            'last_view_psnr_left':last_psnr_left.data.item(),
-            'last_view_ssim_left':last_ssim_left.data.item(),
-            'last_view_psnr_right':last_psnr_right.data.item(),
-            'last_view_ssim_right':last_ssim_right.data.item(),
+            "center_view_psnr_average": center_rgb_psnr.data.item(),
+            "center_view_ssim_average": center_rgb_ssim.data.item(),
+            "center_view_lpips_average": center_rgb_lpips.data.item(),
             
-            'center_view_psnr_left':center_psnr_left.data.item(),
-            'center_view_ssim_left':center_ssim_left.data.item(),
-            'center_view_psnr_right':center_psnr_right.data.item(),
-            'center_view_ssim_right':center_ssim_right.data.item(),
+            "last_view_psnr_average": last_rgb_psnr.data.item(),
+            "last_view_ssim_average": last_rgb_ssim.data.item(),
+            "last_view_lpips_average": last_rgb_lpips.data.item(),
             
-            'all_view_psnr_left':all_psnr_left.data.item(),
-            'all_view_ssim_left':all_ssim_left.data.item(),
-            'all_view_psnr_right':all_psnr_right.data.item(),
-            'all_view_ssim_right':all_ssim_right.data.item(),
+            "all_view_psnr_average": all_rgb_psnr.data.item(),
+            "all_view_ssim_average": all_rgb_ssim.data.item(),
+            "all_view_lpips_average": all_rgb_lpips.data.item()
         }
         
-        # Depth Evaluation
-        first_left_mae,first_left_mse,first_right_mae,first_right_mse = compute_depth_stereo_mae_mse(depth_pred=renderded_depth_first_stereo,depth_gt=gt_depth_first_stereo)
-        last_left_mae,last_left_mse,last_right_mae,last_right_mse = compute_depth_stereo_mae_mse(depth_pred=renderded_depth_last_stereo,depth_gt=gt_depth_last_stereo)
-        center_left_mae,center_left_mse,center_right_mae,center_right_mse = compute_depth_stereo_mae_mse(depth_pred=renderded_depth_center_stereo,depth_gt=gt_depth_center_stereo)
-        all_left_mae,all_left_mse,all_right_mae,all_right_mse = compute_depth_stereo_mae_mse(depth_pred=renderded_depth_all_stereo,depth_gt=gt_depth_all_stereo)
         
         evaluation_depth_results_stat = {
-            'first_view_left_mae':first_left_mae.data.item(),
-            'first_view_left_mse':first_left_mse.data.item(),
-            'first_view_right_mae':first_right_mae.data.item(),
-            'first_view_right_mse':first_right_mse.data.item(),
-            'last_view_left_mae':last_left_mae.data.item(),
-            'last_view_left_mse':last_left_mse.data.item(),
-            'last_view_right_mae':last_right_mae.data.item(),
-            'last_view_right_mse':last_right_mse.data.item(),
-            'center_view_left_mae':center_left_mae.data.item(),
-            'center_view_left_mse':center_left_mse.data.item(),
-            'center_view_right_mae':center_right_mae.data.item(),
-            'center_view_right_mse':center_right_mse.data.item(),
-            'all_view_left_mae':all_left_mae.data.item(),
-            'all_view_left_mse':all_left_mse.data.item(),
-            'all_view_right_mae':all_right_mae.data.item(),
-            'all_view_right_mse':all_right_mse.data.item(),
+            
+            "first_view_Abs_Rel_average": frist_view_abs_rel.data.item(),
+            "frist_view_Sq_Rel_average": frist_view_sq_rel.data.item(),
+            "first_view_RMSE_log_average": frist_view_rmse_log.data.item(),
+            
+            "center_view_Abs_Rel_average": center_view_abs_rel.data.item(),
+            "center_view_Sq_Rel_average": center_view_sq_rel.data.item(),
+            "center_view_RMSE_log_average": center_view_rmse_log.data.item(),
+            
+            
+            "last_view_Abs_Rel_average": last_view_abs_rel.data.item(),
+            "last_view_Sq_Rel_average": last_view_sq_rel.data.item(),
+            "last_view_RMSE_log_average": last_view_rmse_log.data.item(),
+            
+            "all_view_Abs_Rel_average": all_view_abs_rel.data.item(),
+            "all_view_Sq_Rel_average": all_view_sq_rel.data.item(),
+            "all_view_RMSE_log_average": all_view_rmse_log.data.item(),            
         }
-
-
+        
         evaluation_results_stat = {
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
+
 
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
@@ -1409,43 +1460,42 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
             
             
-            # # rendered videos
-            # saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
-            # os.makedirs(saved_videos_path,exist_ok=True)
-            
-            # preds, saved_video_name = self.forward_kitti360_videos(batch=batch,cfg=cfg,view_num=view_num,matching_nums=matching_nums)
-            
-            # bs = preds["img"].shape[0]  
-            # pred_imgs = preds["img"] #(4,960,3,224,400)
-            # pred_depths = preds["depth"] #(4,960,3,224,400)
+            # rendered videos
+            saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
+            os.makedirs(saved_videos_path,exist_ok=True)
+            preds, saved_video_name = self.forward_kitti360_videos(batch=batch,cfg=cfg,view_num=view_num,matching_nums=matching_nums)
+            bs = preds["img"].shape[0]  
+            pred_imgs = preds["img"] #(4,960,3,224,400)
+            pred_depths = preds["depth"] #(4,960,3,224,400)
             
             
-            # # saved the results with batch
-            # for b in range(bs):
-            #     bin_token = saved_video_name[b]
-            #     # dump rgb view
-            #     dump_path = osp.join(saved_videos_path, "{}_rgb.mp4".format(bin_token))
-            #     video = (pred_imgs[b].clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
-            #     video_rec = wandb.Video(video[None], fps=30, format="mp4")
-            #     video_tensor = video_rec._prepare_video(video_rec.data)
-            #     clip = mpy.ImageSequenceClip(list(video_tensor), fps=30)
-            #     clip.write_videofile(dump_path, codec='libx264', preset='medium', logger=None)
+            # saved the results with batch
+            for b in range(bs):
+                bin_token = saved_video_name[b]
+                # dump rgb view
+                dump_path = osp.join(saved_videos_path, "{}_rgb.mp4".format(bin_token))
+                video = (pred_imgs[b].clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
+                video_rec = wandb.Video(video[None], fps=30, format="mp4")
+                video_tensor = video_rec._prepare_video(video_rec.data)
+                clip = mpy.ImageSequenceClip(list(video_tensor), fps=30)
+                clip.write_videofile(dump_path, codec='libx264', preset='medium', logger=None)
                 
-            #     # dump depth view
-            #     dump_path_dpt = osp.join(saved_videos_path, "{}_depth.mp4".format(bin_token))
-            #     pred_depth = pred_depths[b].clamp(0.0, 100.0)
-            #     max_val = float(pred_depth.max())
-            #     video_dpt = depths_to_colors(pred_depths[b], concat="frame", max_val=max_val)
-            #     video_dpt = video_dpt.transpose((0, 3, 1, 2))
-            #     video_rec_dpt = wandb.Video(video_dpt[None], fps=30, format="mp4")
-            #     video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
-            #     clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
-            #     clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
+                # dump depth view
+                dump_path_dpt = osp.join(saved_videos_path, "{}_depth.mp4".format(bin_token))
+                pred_depth = pred_depths[b].clamp(0.0, 100.0)
+                max_val = float(pred_depth.max())
+                video_dpt = depths_to_colors(pred_depths[b], concat="frame", max_val=max_val)
+                video_dpt = video_dpt.transpose((0, 3, 1, 2))
+                video_rec_dpt = wandb.Video(video_dpt[None], fps=30, format="mp4")
+                video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
+                clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
+                clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
         
         
         
         return evaluation_results_stat
-        
+    
+    
     def save_3dgs_ply(self,
                     batch,
                     val_result_savedir,
@@ -1516,7 +1566,8 @@ class VolumeFusionRevision(BaseModule):
         os.makedirs(os.path.dirname(saved_ply_path), exist_ok=True)
         
         self.renderer.save_ply(gaussians_all, saved_ply_path)
-        
+    
+    
     def forward_kitti360_videos(self,
                                 batch,
                                 cfg,
@@ -1798,6 +1849,7 @@ class VolumeFusionRevision(BaseModule):
         
         return input_batch_dict_list,output_batch_dict
 
+
     def filter_points_visible_in_either_view(self,
                                              points, 
                                              w2i_left, 
@@ -1838,6 +1890,7 @@ class VolumeFusionRevision(BaseModule):
         visible_mask = valid_left | valid_right
 
         return visible_mask
+
     
     def validataion_inside_fusion(self,batch,saved_dir,
                                   saved_label,
@@ -2088,6 +2141,7 @@ class VolumeFusionRevision(BaseModule):
                                                                  "results.json"
                                                                  ))
 
+
     def generate_low_quality_gt_pairs(self,batch,
                                       saved_dir,
                                       bin_token_list,
@@ -2166,6 +2220,7 @@ class VolumeFusionRevision(BaseModule):
             
             skimage.io.imsave(current_saved_gt_right_image_name,
                               (gt_right_image.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+
 
     def validation_on_the_novel_bev_views(self,
                                         batch,
@@ -2407,6 +2462,7 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(GT_images_folder_path,'last_stereo.png'),(gt_last_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
             gt_center_stereo = torch.cat((gt_images_center_stereo[:,0,:,:,:],gt_images_center_stereo[:,1,:,:,:]),dim=-1)
             skimage.io.imsave(os.path.join(GT_images_folder_path,'center_stereo.png'),(gt_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
+
 
     # iteration twice
     def validation_on_the_forward_views_progressive(self,
@@ -3003,6 +3059,7 @@ class VolumeFusionRevision(BaseModule):
         
         
         return evaluation_results_stat    
+
     # iteration twice
     def validation_on_the_forward_views_progressive_iter_once(self,
                                         batch,
@@ -3498,6 +3555,7 @@ class VolumeFusionRevision(BaseModule):
         
         
         return evaluation_results_stat 
+
         
     def get_additional_bev_novel_views_non_progressive(self,
                                         batch,
@@ -4200,7 +4258,6 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d30_depth.png'),rendered_depth_center_right_plus_3_d30_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_plus_3_d30_depth.png'),rendered_depth_center_plus_3_d30_vis)
 
-
     # iteration twice
     def get_additional_bev_novel_views_progressive_iter_once(self,
                                         batch,
@@ -4584,9 +4641,114 @@ class VolumeFusionRevision(BaseModule):
 
 
 
+@torch.no_grad()
+def lpips_mean(pred: torch.Tensor, gt: torch.Tensor, net: str = "alex") -> torch.Tensor:
+    """
+    pred, gt: [1, V, 3, H, W], float in [0, 1]
+    returns: scalar tensor (mean LPIPS over V)
+    """
+    assert pred.shape == gt.shape
+    assert pred.ndim == 5 and pred.shape[0] == 1 and pred.shape[2] == 3
 
+    device = pred.device
+    loss_fn = lpips.LPIPS(net=net).to(device).eval()
 
+    B, V, C, H, W = pred.shape  # B=1
+    pred_ = pred.view(B * V, C, H, W) * 2.0 - 1.0
+    gt_   = gt.view(B * V, C, H, W) * 2.0 - 1.0
 
+    d = loss_fn(pred_, gt_)          # [B*V, 1, 1, 1]
+    return d.mean()       
+
+@torch.no_grad()
+def metrics_mean(pred: torch.Tensor, gt: torch.Tensor, lpips_net: str = "alex"):
+    assert pred.shape == gt.shape
+    assert pred.ndim == 5 and pred.shape[0] == 1 and pred.shape[2] == 3
+
+    device = pred.device
+    B, V, C, H, W = pred.shape
+    N = B * V
+
+    pred_01 = pred.view(N, C, H, W).clamp(0.0, 1.0)
+    gt_01   = gt.view(N, C, H, W).clamp(0.0, 1.0)
+
+    # PSNR
+    mse = (pred_01 - gt_01).pow(2).mean(dim=(1, 2, 3)).clamp_min(1e-10)
+    psnr = (10.0 * torch.log10(1.0 / mse)).mean()
+
+    # SSIM (torchmetrics expects data_range)
+    ssim = ssim_fn(pred_01, gt_01, data_range=1.0).mean()
+
+    # LPIPS
+    loss_fn = lpips.LPIPS(net=lpips_net).to(device).eval()
+    lp = loss_fn(pred_01 * 2 - 1, gt_01 * 2 - 1).mean()
+
+    return {"lpips": lp, "psnr": psnr, "ssim": ssim}
+
+@torch.no_grad()
+def depth_metrics_absrel_sqrel_rmse_log(
+    pred: torch.Tensor,
+    gt: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+    eps: float = 1e-6,
+    per_view: bool = False,
+):
+    """
+    pred: [B, V, H, W] estimated depth
+    gt:   [B, V, H, W] ground-truth depth
+    valid_mask (optional): [B, V, H, W] boolean mask where True means valid
+    eps: clamp min value for numerical stability
+    per_view: if True, return metrics per (B,V); else return scalar over all valid pixels
+    """
+    assert pred.shape == gt.shape, f"Shape mismatch: {pred.shape} vs {gt.shape}"
+    assert pred.ndim == 4, f"Expected [B,V,H,W], got {pred.shape}"
+
+    # Basic validity: gt > 0 and finite
+    valid = (gt > 0) & torch.isfinite(gt) & torch.isfinite(pred)
+    if valid_mask is not None:
+        valid = valid & valid_mask.bool()
+
+    # Clamp to avoid division by zero and log(0)
+    pred_c = pred.clamp(min=eps)
+    gt_c   = gt.clamp(min=eps)
+
+    if per_view:
+        # Compute per (B,V): average over H,W only on valid pixels
+        B, V, H, W = pred.shape
+        valid_f = valid.view(B, V, -1)
+        pred_f  = pred_c.view(B, V, -1)
+        gt_f    = gt_c.view(B, V, -1)
+
+        # counts per (B,V) for safe division
+        cnt = valid_f.sum(dim=-1).clamp(min=1)
+
+        diff = pred_f - gt_f
+        absrel = (diff.abs() / gt_f).masked_fill(~valid_f, 0).sum(dim=-1) / cnt
+        sqrel  = (diff.pow(2) / gt_f).masked_fill(~valid_f, 0).sum(dim=-1) / cnt
+        rmse_log = ((torch.log(pred_f) - torch.log(gt_f)).pow(2)).masked_fill(~valid_f, 0).sum(dim=-1) / cnt
+        rmse_log = torch.sqrt(rmse_log)
+
+        return {
+            "AbsRel": absrel,       # [B, V]
+            "SqRel": sqrel,         # [B, V]
+            "RMSE_log": rmse_log,   # [B, V]
+            "valid_count": cnt,     # [B, V]
+        }
+
+    else:
+        # Scalar over all valid pixels (across B,V,H,W)
+        diff = pred_c - gt_c
+        v = valid
+
+        absrel = (diff.abs() / gt_c)[v].mean()
+        sqrel  = (diff.pow(2) / gt_c)[v].mean()
+        rmse_log = (torch.log(pred_c) - torch.log(gt_c)).pow(2)[v].mean().sqrt()
+
+        return {
+            "AbsRel": absrel,     # scalar tensor
+            "SqRel": sqrel,       # scalar tensor
+            "RMSE_log": rmse_log  # scalar tensor
+        }
 
 
 def get_mean(list):

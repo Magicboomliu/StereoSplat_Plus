@@ -121,7 +121,7 @@ sh render_views_with_omnigs.sh
 
 - evaluations feedforward
 ```
-cd scripts/evaluations/volumefusion
+cd scripts/evaluations/stereosplat
 sh rendered_all_rgb_depths_metrics_with_offset.sh
 ```
 - evaluations bev views
@@ -130,12 +130,12 @@ cd scripts/evaluations/BEV_Visualizations
 sh render_views_with_input_invariant_volumefusion.sh
 ```
 
-(2) Diff-VolumeFusion Iter = 2 (Default)
+(2) Diff-StereoSplat Iter = 2 (Default)
 - evaluations feedforward
 
 - evaluations bev views
 
-(3) Diff-VolumeFusion Iter = 3 (Optional)
+(3) Diff-StereoSplat Iter = 3 (Optional)
 
 - evaluations feedforward
 
