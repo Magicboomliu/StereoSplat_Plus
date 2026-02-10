@@ -130,14 +130,20 @@ cd scripts/evaluations/BEV_Visualizations
 sh render_views_with_input_invariant_volumefusion.sh
 ```
 
-(2) Diff-StereoSplat Iter = 2 (Default)
+(2) Diff-StereoSplat: One-Single Pass
 - evaluations feedforward
+
+```
+cd scripts/evaluations/stereosplat
+
+sh rendered_all_rgb_depths_metrics_with_offset_diff.sh
+```
 
 - evaluations bev views
 
-(3) Diff-StereoSplat Iter = 3 (Optional)
+```
+cd scripts/evaluations/BEV_Visualizations
 
-- evaluations feedforward
+sh rendered_progressive_with_diffix3d_bev_views.sh
 
-
-- evaluatiosn bev views
+```

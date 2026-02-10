@@ -35,6 +35,8 @@ import skimage.io
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
+
+
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
         json.dump(data_dict, f, indent=4)
@@ -204,8 +206,7 @@ def main(args):
         
     pretrained_diffix_model.to(accelerator.device)
     
-
-
+    
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
@@ -213,7 +214,7 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            my_model.get_additional_bev_novel_views_progressive_iter_twice(batch,
+            my_model.get_additional_bev_novel_views_progressive_iter_once(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
