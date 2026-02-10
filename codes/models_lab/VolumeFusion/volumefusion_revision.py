@@ -1223,8 +1223,8 @@ class VolumeFusionRevision(BaseModule):
                                         view_num=2,
                                         matching_nums=2,
                                         cfg=None,
-                                        vis=False,
-                                        ):
+                                        vis=False):
+        
         
         bin_token_name = bin_token_list[0][:-4]
         
@@ -1307,7 +1307,6 @@ class VolumeFusionRevision(BaseModule):
         all_rgb_psnr = all_rgb_eval_info['psnr']
 
 
-        
      
         ''' The Evaluation of the Depth Metrics '''
         first_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
