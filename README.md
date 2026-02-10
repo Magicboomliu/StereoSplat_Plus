@@ -2,6 +2,7 @@
 Diff-StereoSplat: Diffusion-Enhanced Feed-Forward Stereo Gaussian
 Splatting
 
+![](docs/diff_stereosplat.png)
 
 
 ### Performance Evaluations
