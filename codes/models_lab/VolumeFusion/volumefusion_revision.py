@@ -2222,6 +2222,84 @@ class VolumeFusionRevision(BaseModule):
                               (gt_right_image.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8))
 
 
+    def bev_video_kitti360(self,batch,cfg=None,
+                           rescale_h=3.0,rescale_w=1.0):
+        
+        
+        view_num = 2
+        matching_nums = 2
+        
+        # get the input and the reference input
+        input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,
+                                                                         view_num=view_num,
+                                                                         matching_nums=matching_nums)
+        
+        
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        height,width = img.shape[-2:]
+        bs = img.shape[0]
+        
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                
+        # perform the cost volume-based 
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
+        
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+        
+
+        
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        # doing rendering here
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+        
+        nums_of_views_all = render_c2w.shape[1]
+        nums_of_center_left_index = (nums_of_views_all-2)//2 -2
+        nums_of_center_right_index = nums_of_views_all -2 -2
+        
+        rendered_c2w_center_left = render_c2w[:,nums_of_center_left_index,:,:].unsqueeze(1)
+        
+        
+    
+
     def validation_on_the_novel_bev_views(self,
                                         batch,
                                         val_result_savedir,
@@ -2434,19 +2512,12 @@ class VolumeFusionRevision(BaseModule):
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
             os.makedirs(saved_folder_for_visualization,exist_ok=True)
-            
             rendered_images_folder_path = os.path.join(saved_folder_for_visualization,'rendered_images')
-
-            
             GT_images_folder_path = os.path.join(saved_folder_for_visualization,'GT Images')
-
-            
             Rendered_Depth_Error_Folder_Path = os.path.join(saved_folder_for_visualization,"Rendered_Depth_Error")
             
             os.makedirs(rendered_images_folder_path,exist_ok=True)
-
             os.makedirs(GT_images_folder_path,exist_ok=True)
-
             os.makedirs(Rendered_Depth_Error_Folder_Path,exist_ok=True)
             
             rendered_first_stereo = torch.cat((rendered_images_first_stereo[:,0,:,:,:],rendered_images_first_stereo[:,1,:,:,:]),dim=-1)
@@ -3556,6 +3627,192 @@ class VolumeFusionRevision(BaseModule):
         
         return evaluation_results_stat 
 
+
+
+    # render videos
+
+    def bev_video_kitti360(self,batch,cfg=None,
+                           rescale_h=3.0,rescale_w=1.0):
+        
+        view_num = 2
+        matching_nums = 2
+        
+        # get the input and the reference input
+        input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+        
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        height,width = img.shape[-2:]
+        bs = img.shape[0]
+        
+        bin_token_name = input_batch_dict['bin_token_name'][0][:-4]  
+        current_resolution = [img.shape[-2], img.shape[-1]]
+        
+        
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                
+        # perform the cost volume-based 
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
+        
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+        
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        # doing rendering here
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+        
+        
+        num_of_views_all = render_c2w.shape[1]
+        
+        rest_of_views_all = num_of_views_all - 2
+        rest_besides_first_c2w = render_c2w[:,:-2,:,:]
+        
+        half_rest_of_views_all = rest_of_views_all // 2
+        center_view_c2w_left_index = half_rest_of_views_all -2
+        last_view_c2w_left_index = half_rest_of_views_all -1
+        
+        center_view_c2w_right_index = rest_of_views_all - 2
+        last_view_c2w_right_index = rest_of_views_all - 1
+        
+    
+        first_view_c2w_left = render_c2w[:,-2:-1,:,:]
+        first_view_c2w_right = render_c2w[:,-1:,:,:]
+        
+        center_view_c2w_left = rest_besides_first_c2w[:,center_view_c2w_left_index,:,:].unsqueeze(1)
+        last_view_c2w_left = rest_besides_first_c2w[:,last_view_c2w_left_index,:,:].unsqueeze(1)
+        center_view_c2w_right = rest_besides_first_c2w[:,center_view_c2w_right_index,:,:].unsqueeze(1)
+        last_view_c2w_right = rest_besides_first_c2w[:,last_view_c2w_right_index,:,:].unsqueeze(1)
+    
+    
+        rendered_c2w_center_bev_view1_movement1 = copy.deepcopy(center_view_c2w_left)
+        rendered_c2w_center_bev_view1_movement1[0][0][2,3] = rendered_c2w_center_bev_view1_movement1[0][0][2,3] + 3
+        
+        
+        rendered_c2w_center_bev_view1_movement2 = copy.deepcopy(rendered_c2w_center_bev_view1_movement1)
+        rendered_c2w_center_bev_view1_movement2[0][0] = add_local_pitch(rendered_c2w_center_bev_view1_movement2[0][0], deg=-45.0)
+        
+        
+
+        num_frames_short = 60
+        t_short = torch.linspace(0, 1, num_frames_short, dtype=torch.float32, device=self.device)
+        
+        movement_0 = interpolate_extrinsics(center_view_c2w_left,
+                                            rendered_c2w_center_bev_view1_movement1,
+                                            t_short)
+        movement_1 = interpolate_extrinsics(rendered_c2w_center_bev_view1_movement1,
+                                            rendered_c2w_center_bev_view1_movement2,
+                                            t_short)
+        
+        c2w_interp = torch.cat([movement_0[0], 
+                                movement_1[0],
+                                ], dim=1)
+        
+        
+        N_Chunks = 10
+        interval = int(c2w_interp.shape[1]//N_Chunks)
+        
+        rendered_rgb_list = []
+        rendered_depth_list = []
+
+
+        for idx in tqdm(range(N_Chunks)):
+            
+            rendered_bev_novel_views_c2w = c2w_interp[:,idx*interval:(idx+1)*interval,:]
+            rendered_bev_fovxs = render_fovxs[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
+            rendered_bev_fovys = render_fovys[:,0:1].repeat(1,rendered_bev_novel_views_c2w.shape[1])
+            
+
+            intrinsics_info = intrinsics[0,0,:,:]
+            current_cx = intrinsics_info[0,2]
+            current_cy = intrinsics_info[1,2]
+            current_fx = intrinsics_info[0,0]
+            current_fy = intrinsics_info[1,1]
+            
+
+
+            rendered_bev_fovxs = 2 * torch.arctan(rescale_w*current_cx  / current_fx).to(self.device).unsqueeze(0).repeat(1,rendered_bev_novel_views_c2w.shape[1])
+            rendered_bev_fovys = 2 * torch.arctan(rescale_h*current_cy / current_fy).to(self.device).unsqueeze(0).repeat(1,rendered_bev_novel_views_c2w.shape[1])
+
+            rendered_resolution = [int(current_resolution[0]*rescale_h), int(current_resolution[1]*rescale_w)]
+
+
+
+            render_pkg_fuse = self.renderer.render_customized_resolution(
+                gaussians=gaussians_all,
+                c2w=rendered_bev_novel_views_c2w,
+                fovx=rendered_bev_fovxs,
+                fovy=rendered_bev_fovys,
+                rays_o=None,
+                rays_d=None,
+                new_resolution=rendered_resolution 
+            )
+
+            rendered_results_fuse = render_pkg_fuse
+
+            rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+            rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+            
+            
+            rendered_color = rendered_color_fuse
+            rendered_depth = rendered_depth_fuse
+
+
+            
+            rendered_color = torch.clamp(rendered_color,min=0,max=1.0)
+            rendered_depth = torch.clamp(rendered_depth,min=0,max=150)
+
+            rendered_color_fuse = rendered_color 
+            rendered_depth_fuse = rendered_depth
+
+            rendered_rgb_list.append(rendered_color)
+            rendered_depth_list.append(rendered_depth)
+            
+
+        rendered_rgb_final = torch.cat(rendered_rgb_list,dim=1)
+        rendered_depth_final = torch.cat(rendered_depth_list,dim=1)
+        
+        preds = {"img":rendered_rgb_final,"depth":rendered_depth_final}
+        
+        return preds
+    
+    
         
     def get_additional_bev_novel_views_non_progressive(self,
                                         batch,
@@ -3739,6 +3996,17 @@ class VolumeFusionRevision(BaseModule):
             
             os.makedirs(rendered_images_folder_path,exist_ok=True)
             os.makedirs(rendered_depth_folder_path,exist_ok=True)
+
+
+            # rendered interploated images and depth views.
+            rendered_interploated_images_folder_path = os.path.join(saved_folder_for_visualization,
+                                                              'rendered_interploated_images_views')
+            rendered_interploated_depth_folder_path = os.path.join(saved_folder_for_visualization,
+                                                              'rendered_interploated_depth_views')
+            os.makedirs(rendered_interploated_images_folder_path,exist_ok=True)
+            os.makedirs(rendered_interploated_depth_folder_path,exist_ok=True)
+
+
             
             
             # center_left_plus_3_d45, center_left_plus_3_d30, center_right_plus_3_d45, center_right_plus_3_d30, center_plus_3_d30
@@ -3772,6 +4040,38 @@ class VolumeFusionRevision(BaseModule):
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d45_depth.png'),rendered_depth_center_right_plus_3_d45_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_right_plus_3_d30_depth.png'),rendered_depth_center_right_plus_3_d30_vis)
             skimage.io.imsave(os.path.join(rendered_depth_folder_path,'center_plus_3_d30_depth.png'),rendered_depth_center_plus_3_d30_vis)
+    
+    
+            # Make videos
+            video_preds = self.bev_video_kitti360(batch=batch,cfg=cfg,
+                                                  rescale_h=rescale_h,rescale_w=rescale_w)
+            
+            bs = video_preds["img"].shape[0]  
+            pred_imgs = video_preds["img"] #(4,960,3,224,400)
+            pred_depths = video_preds["depth"] #(4,960,3,224,400)
+            
+            
+            # saved the results with batch
+            for b in range(bs):
+                # dump rgb view
+                dump_path = osp.join(rendered_interploated_images_folder_path, "rgb.mp4")
+                video = (pred_imgs[b].clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
+                video_rec = wandb.Video(video[None], fps=30, format="mp4")
+                video_tensor = video_rec._prepare_video(video_rec.data)
+                clip = mpy.ImageSequenceClip(list(video_tensor), fps=30)
+                clip.write_videofile(dump_path, codec='libx264', preset='medium', logger=None)
+                
+                # dump depth view
+                dump_path_dpt = osp.join(rendered_interploated_depth_folder_path, "depth.mp4")
+                pred_depth = pred_depths[b].clamp(0.0, 100.0)
+                max_val = float(pred_depth.max())
+                video_dpt = depths_to_colors(pred_depths[b], concat="frame", max_val=max_val)
+                video_dpt = video_dpt.transpose((0, 3, 1, 2))
+                video_rec_dpt = wandb.Video(video_dpt[None], fps=30, format="mp4")
+                video_tensor_dpt = video_rec_dpt._prepare_video(video_rec_dpt.data)
+                clip_dpt = mpy.ImageSequenceClip(list(video_tensor_dpt), fps=30)
+                clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
+
     
     # iteration twice
     def get_additional_bev_novel_views_progressive_iter_twice(self,
