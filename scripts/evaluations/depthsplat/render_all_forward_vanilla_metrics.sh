@@ -3,7 +3,7 @@ cd ../../..
 cd /home/zliu/IROS2026/Diff-StereoSplat/codes/Validation
 
 configs_path="/home/zliu/IROS2026/Diff-StereoSplat/codes/configs/DepthSplat/depthsplat_vanilla_first_lidar.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others/depthplat/forward_views"
+output_folder="/data1/zliu/IROS26/Compared_With_Others/DepthSplat_2Views/forward_views"
 val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
