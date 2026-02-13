@@ -1,5 +1,5 @@
-# Diff-StereoSplat
-Diff-StereoSplat: Diffusion-Enhanced Feed-Forward Stereo Gaussian
+# StereoSplat+
+StereoSplat+: Diffusion-Enhanced Feed-Forward Stereo Gaussian
 Splatting
 
 ![](docs/diff_stereosplat.png)
@@ -13,9 +13,9 @@ Splatting
 - [DepthSplat (CVPR2025)](https://github.com/cvg/depthsplat)
 ---
 - Ours1: Input-Invariant StereoSplat
-- Ours2: Diff-StereoSplat
-- Ours2(duplicate): Diff-StereoSplat Iter = 2
-- Ours3(duplicate): Diff-StereoSplat Iter = 3
+- Ours2: StereoSplat+
+- Ours2(duplicate): StereoSplat+ Iter = 2
+- Ours3(duplicate): StereoSplat+ Iter = 3
 
 
 
@@ -131,7 +131,7 @@ cd scripts/evaluations/BEV_Visualizations
 sh render_views_with_input_invariant_volumefusion.sh
 ```
 
-(2) Diff-StereoSplat: One-Single Pass
+(2) StereoSplat+: One-Single Pass
 - evaluations feedforward
 
 ```
