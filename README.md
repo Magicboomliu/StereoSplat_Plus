@@ -1,7 +1,9 @@
-# One Step Diffusion Training 
+# One-Step Diffusion Finetuning 
 
-In this repo, we finetune the original Difix3D for the KITTI360 Dataset for Diff-VolumeFusion.
+In this repo, we finetune the original Difix3D for the StereoSplat+.
 
+
+### Step.1 Generating Psuedo-GT Pairs for Finetuning.
 
 ### Step.1 Generating Pseudo-GT Pairs for finetuning.
 
