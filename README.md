@@ -52,7 +52,7 @@ cd scripts/train/omnigs
 sh train.sh
 ```
 
-(5) StereoSplat (Training)
+(5) **StereoSplat (Ours)**
 ```
 cd scripts/train/volumefusion
 sh train_revision.sh
