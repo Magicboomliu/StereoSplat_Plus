@@ -123,13 +123,15 @@ sh render_views_with_omnigs.sh
 - evaluations feedforward
 ```
 cd scripts/evaluations/stereosplat
-sh rendered_all_rgb_depths_metrics_with_offset.sh
+sh render_views_inside_bin.sh
 ```
 - evaluations bev views
 ```
 cd scripts/evaluations/BEV_Visualizations
-sh render_views_with_input_invariant_volumefusion.sh
+sh render_views_with_input_invariant_stereosplat.sh
 ```
+
+
 
 (2) StereoSplat+: One-Single Pass
 - evaluations feedforward
@@ -149,19 +151,3 @@ sh rendered_progressive_with_diffix3d_bev_views.sh
 
 ```
 
-(3) StereoSplat 6 Views (optional)
-
-- evaluate feedforward views
-```
-cd scripts/evaluations/stereosplat
-
-sh rendered_all_rgb_depths_metrics_with_offset_multi_view.sh
-
-```
-
-- evaluate the bev views
-
-```
-cd scripts/evaluations/BEV_Visualizations
-sh render_views_with_stereosplat_6views.sh
-```

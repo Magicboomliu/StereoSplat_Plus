@@ -39,7 +39,32 @@ import math
 import lpips
 from torchmetrics.functional.image import structural_similarity_index_measure as ssim_fn
 
+def compute_psnr_ssim_batch(est, gt, eps=1e-8):
+    """
+    est, gt: [B, V, C, H, W], values in [0, 1]
+    """
+    assert est.shape == gt.shape
+    assert est.ndim == 5
 
+    B, V, C, H, W = est.shape
+
+    # PSNR
+    mse = torch.mean((est - gt) ** 2, dim=(2, 3, 4))   # [B, V]
+    psnr = -10.0 * torch.log10(mse + eps)              # [B, V]
+
+    # SSIM
+    est_ = est.reshape(B * V, C, H, W)
+    gt_  = gt.reshape(B * V, C, H, W)
+    ssim = ssim_fn(
+        est_, gt_, data_range=1.0, reduction='none'
+    ).reshape(B, V)
+
+    return {
+        "psnr_per_view": psnr,
+        "psnr_mean": psnr.mean(),
+        "ssim_per_view": ssim,
+        "ssim_mean": ssim.mean(),
+    }
 
 def compute_depth_mae_mse(depth_pred, depth_gt, valid_min=0.0, valid_max=150.0):
     """
@@ -1225,7 +1250,6 @@ class VolumeFusionRevision(BaseModule):
                                         cfg=None,
                                         vis=False):
         
-        
         bin_token_name = bin_token_list[0][:-4]
         
         # loss and loss terms
@@ -1233,7 +1257,9 @@ class VolumeFusionRevision(BaseModule):
             loss, loss_terms,rendered_fusion_list,\
                 rendered_volume_list,rendered_cv_results_list, \
                     predicted_input_depth,input_sparse_gt_depth,\
-                        output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
+                        output_rgb,sparse_depth_gt,input_images = self.forward(
+                                                            batch,
+                                                            mode='val',
                                                             view_num=view_num,
                                                             matching_nums=matching_nums,
                                                             cfg=cfg)
@@ -1250,7 +1276,7 @@ class VolumeFusionRevision(BaseModule):
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fusion)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(rendered_images_gt)
-    
+        
     
         # first view
         rendered_images_first_stereo = rendered_images_fusion[:,-2:,:,:,:]
@@ -1305,8 +1331,7 @@ class VolumeFusionRevision(BaseModule):
         all_rgb_lpips = all_rgb_eval_info['lpips']
         all_rgb_ssim = all_rgb_eval_info['ssim']
         all_rgb_psnr = all_rgb_eval_info['psnr']
-
-
+        
      
         ''' The Evaluation of the Depth Metrics '''
         first_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
@@ -1339,7 +1364,7 @@ class VolumeFusionRevision(BaseModule):
         all_view_rmse_log = all_view_depth_eval_info['RMSE_log']
         
         
-        
+        # evaluate the rgb metrics
         evaluation_rgb_results_stat = {
             "first_view_psnr_average": first_rgb_psnr.data.item(),
             "first_view_ssim_average": first_rgb_ssim.data.item(),
@@ -1358,7 +1383,7 @@ class VolumeFusionRevision(BaseModule):
             "all_view_lpips_average": all_rgb_lpips.data.item()
         }
         
-        
+        # evaluate the depth metrics
         evaluation_depth_results_stat = {
             
             "first_view_Abs_Rel_average": frist_view_abs_rel.data.item(),
@@ -1631,12 +1656,12 @@ class VolumeFusionRevision(BaseModule):
         
         
         
-        c2w_ff_left = render_c2w[:,-2,:,:]
-        c2w_ff_right = render_c2w[:,-1,:,:]
-        c2w_cf_left = render_c2w[:,-6,:,:]
-        c2w_cf_right = render_c2w[:,-5,:,:]
-        c2w_lf_left = render_c2w[:,-4,:,:]
-        c2w_lf_right = render_c2w[:,-3,:,:]
+        c2w_ff_left = render_c2w[:,-2,:,:]  # first frame left
+        c2w_ff_right = render_c2w[:,-1,:,:] # first frame right
+        c2w_cf_left = render_c2w[:,-6,:,:]  # center frame left
+        c2w_cf_right = render_c2w[:,-5,:,:] # center frame right
+        c2w_lf_left = render_c2w[:,-4,:,:]  # last frame left
+        c2w_lf_right = render_c2w[:,-3,:,:] # last frame right
         
         
         
@@ -1751,6 +1776,9 @@ class VolumeFusionRevision(BaseModule):
 
 
         return preds, input_batch_dict['bin_token_name']
+    
+    
+    
 
     # for inside-bin fusion
     def process_inside_bin_fusion(self,batch):
@@ -3126,8 +3154,209 @@ class VolumeFusionRevision(BaseModule):
         
         return evaluation_results_stat    
     
+    
+    def generating_difix_training_dataset(self,
+                                          batch,
+                                          val_result_savedir,
+                                          bin_token_list,
+                                          start_images_views = 2,
+                                          cfg=None,
+                                          vis=False):
+        
+
+        
+        bin_token_name = bin_token_list[0][:-4]
+        
+
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+        
+        # First Time Iteration rendered images from the first frame stereo
+        with torch.no_grad():
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+            
+            
+            start_time1 = time.time()
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            input_img = img.clone()
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        # doing rendering here
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        interleave_render_c2w = interleave_left_right_pose(render_c2w)
+        
+        render_c2w = interleave_render_c2w[:,-6:-2,:,:]
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"][:,-6:-2]# [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"][:,-6:-2] # [B,6*3]
+        gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
+        gt_center_frame =gt_center_frame[:,-6:-2,:,:,:]
+        
+
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )  
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_center_frame = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_center_frame = torch.clamp(rendered_center_frame,min=0,max=1.0)
+        
+        
+        nums_of_views = 4
+        
+        saved_folder_for_rendered_subfolder = os.path.join(val_result_savedir,"rendered_views",bin_token_name)
+        os.makedirs(saved_folder_for_rendered_subfolder,exist_ok=True)
+        
+        saved_folder_for_gt_subfolder_views = os.path.join(val_result_savedir,"gt_views",bin_token_name)
+        os.makedirs(saved_folder_for_gt_subfolder_views,exist_ok=True)
+        
+        saved_folder_for_reference_views = os.path.join(val_result_savedir,"reference_views",bin_token_name)
+        os.makedirs(saved_folder_for_reference_views,exist_ok=True)
+        
+        for views_idx in range(nums_of_views):
+            
+            if views_idx == 0:
+                saved_render_filename = 'rendered_center_left.png'
+            elif views_idx == 1:
+                saved_render_filename = 'rendered_center_right.png'
+            elif views_idx == 2:
+                saved_render_filename = 'rendered_last_left.png'
+            elif views_idx == 3:
+                saved_render_filename = 'rendered_last_right.png'
+            else:
+                raise NotImplementedError
+            
+            if views_idx == 0:
+                saved_gt_filename = 'gt_center_left.png'
+            elif views_idx == 1:
+                saved_gt_filename = 'gt_center_right.png'
+            elif views_idx == 2:
+                saved_gt_filename = 'gt_last_left.png'
+            elif views_idx == 3:
+                saved_gt_filename = 'gt_last_right.png'
+            else:
+                raise NotImplementedError
+            
+            if views_idx == 0:
+                saved_reference_filename = 'reference_first_center_left.png'
+                reference_id = 0
+            elif views_idx == 1:
+                saved_reference_filename = 'reference_first_center_right.png'
+                reference_id = 1
+            elif views_idx == 2:
+                saved_reference_filename = 'reference_first_last_left.png'
+                reference_id = 0
+            elif views_idx == 3:
+                saved_reference_filename = 'reference_first_last_right.png'
+                reference_id = 1
+            else:
+                pass
+            
+
+            
+            saved_render_filename = os.path.join(saved_folder_for_rendered_subfolder,saved_render_filename)
+            saved_gt_filename = os.path.join(saved_folder_for_gt_subfolder_views,saved_gt_filename)
+            
+            saved_reference_filename = os.path.join(saved_folder_for_reference_views,saved_reference_filename)
+
+
+            current_rendered_views = rendered_center_frame[0,views_idx,:,:,:].permute(1,2,0).cpu().numpy()
+            current_rendered_views = (current_rendered_views*255).astype(np.uint8)
+            current_rendered_views_pil = Image.fromarray(current_rendered_views)
+            if not os.path.exists(saved_render_filename):
+                current_rendered_views_pil.save(saved_render_filename)
+            
+            current_gt_views = gt_center_frame[0,views_idx,:,:,:].permute(1,2,0).cpu().numpy()
+            current_gt_views = (current_gt_views*255).astype(np.uint8)
+            current_gt_views_pil = Image.fromarray(current_gt_views)
+            if not os.path.exists(saved_gt_filename):
+                current_gt_views_pil.save(saved_gt_filename)
+
+            current_reference_views = input_img[0,reference_id,:,:,:].permute(1,2,0).cpu().numpy()
+            current_reference_views = (current_reference_views*255).astype(np.uint8)
+            current_reference_views_pil = Image.fromarray(current_reference_views)
+            if not os.path.exists(saved_reference_filename):
+                current_reference_views_pil.save(saved_reference_filename)
+        
+        
+        # target_psuedo_center_fame = rendered_center_frame * 0.80 + gt_center_frame * 0.20
+        
+        
+        
+        
+        
+        # print(rendered_center_frame.shape)
+        # quit()
+        
+        
+        # print(compute_psnr_ssim_batch(est=rendered_center_frame,gt=gt_center_frame))
+        # print("-------------------------------------------------------------------")
+        # # print(compute_psnr_ssim_batch(est=target_psuedo_center_fame,gt=gt_center_frame))
+        # # print("........................End 1...................................")
+        
+        
+        # # print(rendered_center_frame.shape)
+        # # print(rendered_center_frame.min())
+        # # print(rendered_center_frame.max())
+        # # print(rendered_center_frame.mean())
+        # # print("-------------------------------")
+        # # print(gt_center_frame.shape)
+        # # print(gt_center_frame.min())
+        # # print(gt_center_frame.max())
+        # # print(gt_center_frame.mean())
+        # # quit()
+
+    
     # iteration twice
-    def validation_on_the_forward_views_progressive_iter_once(self,
+    def validation_on_the_forward_views_progressive_iter_once_revised(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -3308,10 +3537,6 @@ class VolumeFusionRevision(BaseModule):
             rendered_center_frame = enhanced_rendered_center_frame
             
 
-            # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.66 + gt_center_frame * 0.34
-            fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
-            rendered_center_frame = fusion_rendered_center_frame
 
             
         ''' Second Time Inference '''
@@ -3668,8 +3893,391 @@ class VolumeFusionRevision(BaseModule):
         
         
         
-        return evaluation_results_stat 
+        return evaluation_results_stat
 
+    def validation_on_the_forward_views_progressive_iter_once(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views=2,
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+
+        bin_token_name = bin_token_list[0][:-4]
+
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+
+        # First Time Iteration
+        with torch.no_grad():
+            input_batch_dict, output_batch_dict = self.prepare_input_multiview(batch=batch, view_num=view_num,
+                                                                               matching_nums=matching_nums)
+
+            img = input_batch_dict["imgs"]
+            height, width = img.shape[-2:]
+            bs = img.shape[0]
+
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv, gaussians_feat, pred_depths = self.costvolume_gs(input_batch_dict, cfg=cfg,
+                                                                          images_feat=img_feats[0])
+
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                               (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                               (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+            gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+            gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+            gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+
+            gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+            bs = gaussians_all.shape[0]
+
+            render_c2w = output_batch_dict["output_c2ws"]
+            interleave_render_c2w = interleave_left_right_pose(render_c2w)
+            render_c2w = interleave_render_c2w[:, -6:-2, :, :]
+            intrinsics = input_batch_dict['intrinsics'].clone()
+            output_intrinsics = intrinsics[:, 0:1, :, :].repeat(1, render_c2w.shape[1], 1, 1)
+            render_fovxs = output_batch_dict["output_fovxs"][:, -6:-2]
+            render_fovys = output_batch_dict["output_fovys"][:, -6:-2]
+            gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
+            gt_center_frame = gt_center_frame[:, -6:-2, :, :, :]
+
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+
+            rendered_results_fuse = render_pkg_fuse
+            rendered_center_frame = rendered_results_fuse['image']
+            rendered_center_frame = torch.clamp(rendered_center_frame, min=0, max=1.0)
+
+            if use_diffix3d:
+              
+                original_rendered_center_frame = rendered_center_frame.clone()
+
+                rendered_center_left = rendered_center_frame[0, 0, :, :, :].permute(1, 2, 0).cpu().numpy()
+                rendered_center_right = rendered_center_frame[0, 1, :, :, :].permute(1, 2, 0).cpu().numpy()
+                rendered_last_left = rendered_center_frame[0, 2, :, :, :].permute(1, 2, 0).cpu().numpy()
+                rendered_last_right = rendered_center_frame[0, 3, :, :, :].permute(1, 2, 0).cpu().numpy()
+
+                rendered_center_left = (rendered_center_left * 255).astype(np.uint8)
+                rendered_center_right = (rendered_center_right * 255).astype(np.uint8)
+                rendered_last_left = (rendered_last_left * 255).astype(np.uint8)
+                rendered_last_right = (rendered_last_right * 255).astype(np.uint8)
+
+                rendered_center_left_pil = Image.fromarray(rendered_center_left)
+                rendered_center_right_pil = Image.fromarray(rendered_center_right)
+                rendered_last_left_pil = Image.fromarray(rendered_last_left)
+                rendered_last_right_pil = Image.fromarray(rendered_last_right)
+
+                width, height = rendered_center_left_pil.size
+
+                ref_image_left = input_batch_dict["imgs"][0, 0, :, :, :].permute(1, 2, 0).cpu().numpy()
+                ref_image_left = (ref_image_left * 255).astype(np.uint8)
+                ref_image_left_pil = Image.fromarray(ref_image_left)
+                ref_image_right = input_batch_dict["imgs"][0, 1, :, :, :].permute(1, 2, 0).cpu().numpy()
+                ref_image_right = (ref_image_right * 255).astype(np.uint8)
+                ref_image_right_pil = Image.fromarray(ref_image_right)
+
+                enhanced_rendered_center_left_pil = diffix3d_network.sample(
+                    rendered_center_left_pil, height=112, width=544,
+                    ref_image=ref_image_left_pil, prompt=cfg.prompt)
+                enhanced_rendered_center_right_pil = diffix3d_network.sample(
+                    rendered_center_right_pil, height=112, width=544,
+                    ref_image=ref_image_right_pil, prompt=cfg.prompt)
+                enhanced_rendered_last_left_pil = diffix3d_network.sample(
+                    rendered_last_left_pil, height=112, width=544,
+                    ref_image=ref_image_left_pil, prompt=cfg.prompt)
+                enhanced_rendered_last_right_pil = diffix3d_network.sample(
+                    rendered_last_right_pil, height=112, width=544,
+                    ref_image=ref_image_right_pil, prompt=cfg.prompt)
+
+                enhanced_rendered_center_left = np.array(enhanced_rendered_center_left_pil).astype(np.float32) / 255.0
+                enhanced_rendered_center_right = np.array(enhanced_rendered_center_right_pil).astype(np.float32) / 255.0
+                enhanced_rendered_last_left = np.array(enhanced_rendered_last_left_pil).astype(np.float32) / 255.0
+                enhanced_rendered_last_right = np.array(enhanced_rendered_last_right_pil).astype(np.float32) / 255.0
+
+                enhanced_rendered_center_left = torch.from_numpy(enhanced_rendered_center_left).to(rendered_center_frame.device)
+                enhanced_rendered_center_right = torch.from_numpy(enhanced_rendered_center_right).to(rendered_center_frame.device)
+                enhanced_rendered_last_left = torch.from_numpy(enhanced_rendered_last_left).to(rendered_center_frame.device)
+                enhanced_rendered_last_right = torch.from_numpy(enhanced_rendered_last_right).to(rendered_center_frame.device)
+                enhanced_rendered_center_left = enhanced_rendered_center_left.permute(2, 0, 1).unsqueeze(0)
+                enhanced_rendered_center_right = enhanced_rendered_center_right.permute(2, 0, 1).unsqueeze(0)
+                enhanced_rendered_last_left = enhanced_rendered_last_left.permute(2, 0, 1).unsqueeze(0)
+                enhanced_rendered_last_right = enhanced_rendered_last_right.permute(2, 0, 1).unsqueeze(0)
+
+                enhanced_rendered_center_frame = torch.cat([
+                    enhanced_rendered_center_left, enhanced_rendered_center_right,
+                    enhanced_rendered_last_left, enhanced_rendered_last_right
+                ], dim=0).unsqueeze(0)
+                rendered_center_frame = enhanced_rendered_center_frame
+
+ 
+        input_batch_dict, output_batch_dict = self.prepare_input_multiview(batch=batch, view_num=6,
+                                                                           matching_nums=4)
+
+        if use_diffix3d:
+            input_batch_dict["imgs"][:, 2:, :, :, :] = original_rendered_center_frame
+            input_batch_dict["imgs"][:, 4:6, :, :, :] = rendered_center_frame[:, 2:4, :, :, :]
+        else:
+            input_batch_dict["imgs"][:, 2:, :, :, :] = rendered_center_frame
+
+        img = input_batch_dict["imgs"]
+        height, width = img.shape[-2:]
+        bs = img.shape[0]
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv, gaussians_feat, pred_depths = self.costvolume_gs(input_batch_dict, cfg=cfg,
+                                                                      images_feat=img_feats[0])
+
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                           (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                           (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+            [img_feats[0]],
+            input_batch_dict['extrinsics'],
+            gaussians_cv_mask,
+            gaussians_feat_mask,
+            input_batch_dict["img_metas"])
+
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0]
+
+        render_c2w = output_batch_dict["output_c2ws"]
+        intrinsics = input_batch_dict['intrinsics'].clone()
+        output_intrinsics = intrinsics[:, 0:1, :, :].repeat(1, render_c2w.shape[1], 1, 1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image']
+        rendered_depth_fuse = rendered_results_fuse['depth']
+        rendered_alpha_fuse = rendered_results_fuse['alpha']
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
+
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']
+
+        rendered_images_fusion = interleave_left_right(rendered_color_fuse)
+        rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(output_rgb)
+
+        if cfg.use_diffix3d_postprocessing:
+            enhanced_rendered_images_list = []
+            for current_view_idx in range(rendered_images_fusion.shape[1]):
+                current_rendered_image = rendered_images_fusion[0, current_view_idx, :, :, :].permute(1, 2, 0).cpu().numpy()
+                current_rendered_image = (current_rendered_image * 255).astype(np.uint8)
+                current_rendered_image_pil = Image.fromarray(current_rendered_image)
+                current_rendered_image_pil = diffix3d_network.sample(
+                    current_rendered_image_pil, height=112, width=544,
+                    ref_image=ref_image_left_pil, prompt=cfg.prompt)
+                current_rendered_image_np = np.array(current_rendered_image_pil).astype(np.float32) / 255.0
+                current_rendered_image = torch.from_numpy(current_rendered_image_np).to(rendered_center_frame.device)
+                current_rendered_image = current_rendered_image.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+                enhanced_rendered_images_list.append(current_rendered_image)
+            rendered_images_fusion = torch.cat(enhanced_rendered_images_list, dim=1)
+
+        rendered_images_first_stereo = rendered_images_fusion[:, -2:, :, :, :]
+        gt_images_first_stereo = rendered_images_gt[:, -2:, :, :, :]
+        renderded_depth_first_stereo = rendered_depth_fusion[:, -2:, :, :]
+        gt_depth_first_stereo = sparse_depth_gt[:, -2:, :, :]
+
+        rendered_images_last_stereo = rendered_images_fusion[:, -4:-2, :, :, :]
+        gt_images_last_stereo = rendered_images_gt[:, -4:-2, :, :, :]
+        renderded_depth_last_stereo = rendered_depth_fusion[:, -4:-2, :, :]
+        gt_depth_last_stereo = sparse_depth_gt[:, -4:-2, :, :]
+
+        rendered_images_center_stereo = rendered_images_fusion[:, -6:-4, :, :, :]
+        gt_images_center_stereo = rendered_images_gt[:, -6:-4, :, :, :]
+        renderded_depth_center_stereo = rendered_depth_fusion[:, -6:-4, :, :]
+        gt_depth_center_stereo = sparse_depth_gt[:, -6:-4, :, :]
+
+        rendered_images_all_stereo = rendered_images_fusion
+        gt_images_all_stereo = rendered_images_gt
+        renderded_depth_all_stereo = rendered_depth_fusion
+        gt_depth_all_stereo = sparse_depth_gt
+
+        first_rgb_eval_info = metrics_mean(pred=rendered_images_first_stereo, gt=gt_images_first_stereo)
+        first_rgb_lpips = first_rgb_eval_info['lpips']
+        first_rgb_ssim = first_rgb_eval_info['ssim']
+        first_rgb_psnr = first_rgb_eval_info['psnr']
+
+        center_rgb_eval_info = metrics_mean(pred=rendered_images_center_stereo, gt=gt_images_center_stereo)
+        center_rgb_lpips = center_rgb_eval_info['lpips']
+        center_rgb_ssim = center_rgb_eval_info['ssim']
+        center_rgb_psnr = center_rgb_eval_info['psnr']
+
+        last_rgb_eval_info = metrics_mean(pred=rendered_images_last_stereo, gt=gt_images_last_stereo)
+        last_rgb_lpips = last_rgb_eval_info['lpips']
+        last_rgb_ssim = last_rgb_eval_info['ssim']
+        last_rgb_psnr = last_rgb_eval_info['psnr']
+
+        all_rgb_eval_info = metrics_mean(pred=rendered_images_all_stereo, gt=gt_images_all_stereo)
+        all_rgb_lpips = all_rgb_eval_info['lpips']
+        all_rgb_ssim = all_rgb_eval_info['ssim']
+        all_rgb_psnr = all_rgb_eval_info['psnr']
+
+        first_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+            pred=renderded_depth_first_stereo, gt=gt_depth_first_stereo)
+        frist_view_abs_rel = first_view_depth_eval_info['AbsRel']
+        frist_view_sq_rel = first_view_depth_eval_info['SqRel']
+        frist_view_rmse_log = first_view_depth_eval_info['RMSE_log']
+
+        center_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+            pred=renderded_depth_center_stereo, gt=gt_depth_center_stereo)
+        center_view_abs_rel = center_view_depth_eval_info['AbsRel']
+        center_view_sq_rel = center_view_depth_eval_info['SqRel']
+        center_view_rmse_log = center_view_depth_eval_info['RMSE_log']
+
+        last_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+            pred=renderded_depth_last_stereo, gt=gt_depth_last_stereo)
+        last_view_abs_rel = last_view_depth_eval_info['AbsRel']
+        last_view_sq_rel = last_view_depth_eval_info['SqRel']
+        last_view_rmse_log = last_view_depth_eval_info['RMSE_log']
+
+        all_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
+            pred=renderded_depth_all_stereo, gt=gt_depth_all_stereo)
+        all_view_abs_rel = all_view_depth_eval_info['AbsRel']
+        all_view_sq_rel = all_view_depth_eval_info['SqRel']
+        all_view_rmse_log = all_view_depth_eval_info['RMSE_log']
+
+        evaluation_rgb_results_stat = {
+            "first_view_psnr_average": first_rgb_psnr.data.item(),
+            "first_view_ssim_average": first_rgb_ssim.data.item(),
+            "first_view_lpips_average": first_rgb_lpips.data.item(),
+            "center_view_psnr_average": center_rgb_psnr.data.item(),
+            "center_view_ssim_average": center_rgb_ssim.data.item(),
+            "center_view_lpips_average": center_rgb_lpips.data.item(),
+            "last_view_psnr_average": last_rgb_psnr.data.item(),
+            "last_view_ssim_average": last_rgb_ssim.data.item(),
+            "last_view_lpips_average": last_rgb_lpips.data.item(),
+            "all_view_psnr_average": all_rgb_psnr.data.item(),
+            "all_view_ssim_average": all_rgb_ssim.data.item(),
+            "all_view_lpips_average": all_rgb_lpips.data.item()
+        }
+        evaluation_depth_results_stat = {
+            "first_view_Abs_Rel_average": frist_view_abs_rel.data.item(),
+            "frist_view_Sq_Rel_average": frist_view_sq_rel.data.item(),
+            "first_view_RMSE_log_average": frist_view_rmse_log.data.item(),
+            "center_view_Abs_Rel_average": center_view_abs_rel.data.item(),
+            "center_view_Sq_Rel_average": center_view_sq_rel.data.item(),
+            "center_view_RMSE_log_average": center_view_rmse_log.data.item(),
+            "last_view_Abs_Rel_average": last_view_abs_rel.data.item(),
+            "last_view_Sq_Rel_average": last_view_sq_rel.data.item(),
+            "last_view_RMSE_log_average": last_view_rmse_log.data.item(),
+            "all_view_Abs_Rel_average": all_view_abs_rel.data.item(),
+            "all_view_Sq_Rel_average": all_view_sq_rel.data.item(),
+            "all_view_RMSE_log_average": all_view_rmse_log.data.item(),
+        }
+        evaluation_results_stat = {
+            "RGB": evaluation_rgb_results_stat,
+            "Depth": evaluation_depth_results_stat,
+        }
+
+        if vis:
+            saved_folder_for_visualization = os.path.join(val_result_savedir, bin_token_name)
+            os.makedirs(saved_folder_for_visualization, exist_ok=True)
+            rendered_images_folder_path = os.path.join(saved_folder_for_visualization, 'rendered_images')
+            rendered_depth_folder_path = os.path.join(saved_folder_for_visualization, 'rendered_depth')
+            GT_images_folder_path = os.path.join(saved_folder_for_visualization, 'GT Images')
+            GT_depth_folder_path = os.path.join(saved_folder_for_visualization, 'GT Depth')
+            Rendered_Depth_Error_Folder_Path = os.path.join(saved_folder_for_visualization, "Rendered_Depth_Error")
+            os.makedirs(rendered_images_folder_path, exist_ok=True)
+            os.makedirs(rendered_depth_folder_path, exist_ok=True)
+            os.makedirs(GT_images_folder_path, exist_ok=True)
+            os.makedirs(GT_depth_folder_path, exist_ok=True)
+            os.makedirs(Rendered_Depth_Error_Folder_Path, exist_ok=True)
+
+            rendered_first_stereo = torch.cat((rendered_images_first_stereo[:, 0, :, :, :], rendered_images_first_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(rendered_images_folder_path, 'first_stereo.png'), (rendered_first_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            rendered_last_stereo = torch.cat((rendered_images_last_stereo[:, 0, :, :, :], rendered_images_last_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(rendered_images_folder_path, 'last_stereo.png'), (rendered_last_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            rendered_center_stereo = torch.cat((rendered_images_center_stereo[:, 0, :, :, :], rendered_images_center_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(rendered_images_folder_path, 'center_stereo.png'), (rendered_center_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+            gt_first_stereo = torch.cat((gt_images_first_stereo[:, 0, :, :, :], gt_images_first_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(GT_images_folder_path, 'first_stereo.png'), (gt_first_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            gt_last_stereo = torch.cat((gt_images_last_stereo[:, 0, :, :, :], gt_images_last_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(GT_images_folder_path, 'last_stereo.png'), (gt_last_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            gt_center_stereo = torch.cat((gt_images_center_stereo[:, 0, :, :, :], gt_images_center_stereo[:, 1, :, :, :]), dim=-1)
+            skimage.io.imsave(os.path.join(GT_images_folder_path, 'center_stereo.png'), (gt_center_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+            rendered_depth_first_stereo = torch.cat((renderded_depth_first_stereo[:, 0, :, :], renderded_depth_first_stereo[:, 1, :, :]), dim=-1)
+            rendered_depth_first_stereo_vis = convert_depth_to_disp(depth=rendered_depth_first_stereo.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path, 'first_stereo_depth.png'), rendered_depth_first_stereo_vis)
+            rendered_depth_last_stereo = torch.cat((renderded_depth_last_stereo[:, 0, :, :], renderded_depth_last_stereo[:, 1, :, :]), dim=-1)
+            rendered_depth_last_stereo_vis = convert_depth_to_disp(depth=rendered_depth_last_stereo.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path, 'last_stereo_depth.png'), rendered_depth_last_stereo_vis)
+            rendered_depth_center_stereo = torch.cat((renderded_depth_center_stereo[:, 0, :, :], renderded_depth_center_stereo[:, 1, :, :]), dim=-1)
+            rendered_depth_center_stereo_vis = convert_depth_to_disp(depth=rendered_depth_center_stereo.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(rendered_depth_folder_path, 'center_stereo_depth.png'), rendered_depth_center_stereo_vis)
+
+            gt_depth_first_stereo_cat = torch.cat((gt_depth_first_stereo[:, 0, :, :], gt_depth_first_stereo[:, 1, :, :]), dim=-1)
+            gt_depth_first_stereo_vis = convert_depth_to_disp(depth=gt_depth_first_stereo_cat.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(GT_depth_folder_path, 'first_stereo_depth.png'), gt_depth_first_stereo_vis)
+            gt_depth_last_stereo_cat = torch.cat((gt_depth_last_stereo[:, 0, :, :], gt_depth_last_stereo[:, 1, :, :]), dim=-1)
+            gt_depth_last_stereo_vis = convert_depth_to_disp(depth=gt_depth_last_stereo_cat.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(GT_depth_folder_path, 'last_stereo_depth.png'), gt_depth_last_stereo_vis)
+            gt_depth_center_stereo_cat = torch.cat((gt_depth_center_stereo[:, 0, :, :], gt_depth_center_stereo[:, 1, :, :]), dim=-1)
+            gt_depth_center_stereo_vis = convert_depth_to_disp(depth=gt_depth_center_stereo_cat.squeeze(0).cpu().numpy())
+            skimage.io.imsave(os.path.join(GT_depth_folder_path, 'center_stereo_depth.png'), gt_depth_center_stereo_vis)
+
+            disp_error_img_first_stereo = disp_error_img(D_est_tensor=rendered_depth_first_stereo, D_gt_tensor=gt_depth_first_stereo_cat)
+            skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path, 'first_stereo_depth_error.png'), (disp_error_img_first_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            disp_error_img_last_stereo = disp_error_img(D_est_tensor=rendered_depth_last_stereo, D_gt_tensor=gt_depth_last_stereo_cat)
+            skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path, 'last_stereo_depth_error.png'), (disp_error_img_last_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+            disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo, D_gt_tensor=gt_depth_center_stereo_cat)
+            skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path, 'center_stereo_depth_error.png'), (disp_error_img_center_stereo.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+        return evaluation_results_stat
 
     # render videos
     def bev_video_kitti360(self,batch,cfg=None,
@@ -4261,12 +4869,7 @@ class VolumeFusionRevision(BaseModule):
                                                         enhanced_rendered_center_right],dim=0).unsqueeze(0)
             
             rendered_center_frame = enhanced_rendered_center_frame
-            
-            # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.68 + gt_center_frame * 0.32
-            fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
-            rendered_center_frame = fusion_rendered_center_frame
-
+        
             
         '''second time inference'''
         input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=4,
@@ -4386,11 +4989,7 @@ class VolumeFusionRevision(BaseModule):
                                                         enhanced_rendered_last_right],dim=0).unsqueeze(0)
             
             rendered_last_frame = enhanced_rendered_last_frame
-            
-            fusion_rendered_last_frame = rendered_last_frame * 0.68 + gt_last_frame * 0.32
-            fusion_rendered_last_frame = torch.clamp(fusion_rendered_last_frame,min=0,max=1.0)
-            rendered_last_frame = fusion_rendered_last_frame
-            
+ 
             
             
         
@@ -4777,10 +5376,7 @@ class VolumeFusionRevision(BaseModule):
             rendered_center_frame = enhanced_rendered_center_frame
             
 
-            # FIXME
-            fusion_rendered_center_frame = rendered_center_frame * 0.64 + gt_center_frame * 0.36
-            fusion_rendered_center_frame = torch.clamp(fusion_rendered_center_frame,min=0,max=1.0)
-            rendered_center_frame = fusion_rendered_center_frame
+
 
             
         ''' Second Time Inference for 3DGS Update'''

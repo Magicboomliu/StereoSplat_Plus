@@ -130,6 +130,8 @@ class KITTI360Dataset(Dataset):
         self.split = split
         
         
+        
+        
 
     def _uniform_sample(self,ordered_list, N):
         if N <= 0:

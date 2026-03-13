@@ -26,7 +26,7 @@ import json
 import sys
 sys.path.append("..")
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
-from mvsplat.src.model.mvsplat_model import MVSplatModel, GaussainEncoder
+from mvsplat2.src.model.mvsplat_model import MVSplatModel, GaussainEncoder
 
 
 
