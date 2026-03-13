@@ -62,8 +62,6 @@ sh train_revision.sh
 
 #### Others Methods
 
-
-
 (1) Pixelsplat 
 
 - evaluations feedforward

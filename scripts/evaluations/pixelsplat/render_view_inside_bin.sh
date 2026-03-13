@@ -8,7 +8,7 @@ val_filelist="/home/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/
 demo_filelist="/home/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/all_sequential.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR"
-pretrained_model_path="/data/zliu/feedforward_outputs_revision/PixelSplat_2Views/First_LiDAR_As_Ref/saved_models/checkpoint-126000/"
+pretrained_model_path="/data/zliu/feedforward_outputs_revision/PixelSplat_2Views/First_LiDAR_As_Ref/saved_models/checkpoints/"
 
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
