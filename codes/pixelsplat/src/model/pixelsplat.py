@@ -1130,10 +1130,6 @@ class PixelSplatModel(nn.Module):
         
         render_c2w = output_batch_dict["output_c2ws"]
         render_c2w = interleave_left_right_pose(render_c2w)
-
-
-        # rendered for new views
-        # last 
         c2w_lf_left = render_c2w[:, -4]
         c2w_lf_right = render_c2w[:, -3]
         # first

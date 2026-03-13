@@ -12,10 +12,8 @@ Splatting
 - [OmniScene (CVPR 2025)](https://github.com/WU-CVGL/Omni-Scene)
 - [DepthSplat (CVPR2025)](https://github.com/cvg/depthsplat)
 ---
-- Ours1: Input-Invariant StereoSplat
+- Ours1: StereoSplat (Input-Invarint)
 - Ours2: StereoSplat+
-- Ours2(duplicate): StereoSplat+ Iter = 2
-- Ours3(duplicate): StereoSplat+ Iter = 3
 
 
 
@@ -98,7 +96,7 @@ sh render_views_with_depthsplat.sh
 - evaluations feedforward
 ```
 cd scripts/evaluations/mvsplat
-sh render_all_forward_vanilla_metrics.sh
+sh render_view_inside_bin.sh
 ```
 - evaluations bev veiws
 ```
