@@ -10,15 +10,26 @@ import mmengine
 from mmengine import MMLogger
 from mmengine.config import Config
 import logging
+from torch import Tensor,nn
 from tqdm import tqdm
+import numpy as np
 from datetime import timedelta
 from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
-
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+import json
 import warnings
 warnings.filterwarnings("ignore")
 torch.autograd.set_detect_anomaly(True)
 import json
+
+
+import sys
+sys.path.append("..")
+from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
+# import the model here
+from pixelsplat.src.model.pixelsplat import PixelSplatModel
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -99,9 +110,15 @@ def kitti_colormap(disparity, maxval=-1):
 
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
+class DecoderCFG(object):
+    def __init__(self,background_color=[0.0, 0.0, 0.0]):
+        self.background_color = background_color
+
+
 
 def main(args):
-    
+
+
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
@@ -115,15 +132,13 @@ def main(args):
         mixed_precision=cfg.mixed_precision,
         log_with=cfg.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs]
-    )
+        kwargs_handlers=[kwargs])
 
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
     
     dataset_config = cfg.dataset_params
-    
     # configure logger
     if accelerator.is_main_process:
         os.makedirs(args.output_folder, exist_ok=True)
@@ -136,7 +151,6 @@ def main(args):
     elif args.dataset_type=="First_LiDAR":
         import sys
         sys.path.append("..")
-
         # import data.KITTI360_For_Val.KITTI360_CenterCam_Ref.dataloader as datasets
         import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
     else:
@@ -144,7 +158,6 @@ def main(args):
     
     
     dataset = getattr(datasets, dataset_config.dataset_name)
-    
     if args.output_vis:
         val_filelist = args.demo_filelist
     else:
@@ -172,15 +185,16 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
-    from builder import builder as model_builder
-    my_model = model_builder.build(cfg.model).to(accelerator.device)
     
+    
+    # declare the model achitecture here
+    my_model = PixelSplatModel()
+
     # move to the accelerate
-    my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
-    
-    
+    my_model,val_dataloader = accelerator.prepare(
+        my_model,  val_dataloader
+    )
+
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
         cfg.pretrained_model_path = args.pretrained_model_path
@@ -195,9 +209,9 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-
-
-
+    
+    
+    
     # performance metrics for the rendered RGBs
     evaluate_results_average_dict_rgb = {
         "first_view_psnr_average": 0,
@@ -230,19 +244,22 @@ def main(args):
         "all_view_RMSE_log_average": 0,
     }
 
+
+
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-
-            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
-                                            args.output_folder,
-                                            bin_token_list,
-                                            cfg=cfg,
-                                            vis=args.output_vis)
             
+            evaluation_results_stat = my_model.validation_complete_with_bin_tokens(batch,
+                                                        args.output_folder,
+                                                        bin_token_list,
+                                                        cfg=cfg,
+                                                        vis=args.output_vis)
+            
+
             current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
             current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
             
@@ -266,7 +283,11 @@ def main(args):
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
 
-                        
+
+
+
+
+
 def get_mean(list):
     return sum(list)*1.0/len(list)
     
@@ -292,3 +313,4 @@ if __name__ == '__main__':
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
     main(args)
+

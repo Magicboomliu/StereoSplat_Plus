@@ -69,7 +69,7 @@ sh train_revision.sh
 - evaluations feedforward
 ```
 cd scripts/evaluations/pixelsplat
-sh render_all_forward_vanilla_metrics.sh
+sh render_view_inside_bin.sh
 ```
 - evaluations bev views
 ```
@@ -107,7 +107,7 @@ sh render_views_with_mvsplat.sh
 - evaluations feedforward
 ```
 cd scripts/evaluations/omnigs
-sh render_all_rgb_depth_metrics.sh
+sh render_view_inside_bin.sh
 ```
 - evaluations bev views
 ```

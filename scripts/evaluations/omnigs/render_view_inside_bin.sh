@@ -13,7 +13,7 @@ pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performan
 
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml omnigs/rendered_all_rgbs_and_depths_inside_bin.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file accelerate_config_singleGPU.yaml omnigs/rendered_views_inside_bin.py \
     --config_path  $configs_path \
     --output_folder $output_folder \
     --val_filelist $val_filelist \
@@ -21,7 +21,7 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
     --ablation_type $ablation_type \
     --dataset_type $dataset_type \
     --pretrained_model_path $pretrained_model_path \
-    # --output_vis
+    --output_vis
 
 
 }

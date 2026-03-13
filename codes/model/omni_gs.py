@@ -2198,8 +2198,6 @@ class OmniGaussian(BaseModule):
         return preds
 
 
-
-
     def get_rgbs_bev_novel_view(self, batch, 
                                 val_result_savedir,
                                 bin_token_list,

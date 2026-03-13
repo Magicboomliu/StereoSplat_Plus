@@ -1125,18 +1125,23 @@ class PixelSplatModel(nn.Module):
                                           near, 
                                           far, 
                                           global_step=126000)
+        
+        
+        
+        render_c2w = output_batch_dict["output_c2ws"]
+        render_c2w = interleave_left_right_pose(render_c2w)
 
 
         # rendered for new views
         # last 
-        c2w_lf_left = output_batch_dict["output_c2ws"][:, -4]
-        c2w_lf_right = output_batch_dict["output_c2ws"][:, -3]
+        c2w_lf_left = render_c2w[:, -4]
+        c2w_lf_right = render_c2w[:, -3]
         # first
-        c2w_ff_left = output_batch_dict["output_c2ws"][:, -2]
-        c2w_ff_right = output_batch_dict["output_c2ws"][:, -1]
+        c2w_ff_left = render_c2w[:, -2]
+        c2w_ff_right = render_c2w[:, -1]
         # center
-        c2w_cf_left = output_batch_dict["output_c2ws"][:, -6] #(1,2,4,4)
-        c2w_cf_right = output_batch_dict["output_c2ws"][:, -5] #(1,2,4,4)
+        c2w_cf_left = render_c2w[:, -6] #(1,2,4,4)
+        c2w_cf_right = render_c2w[:, -5] #(1,2,4,4)
         
         ''' 
             Movement 0:  Center Left Rotation 45 Degree
@@ -1233,6 +1238,8 @@ class PixelSplatModel(nn.Module):
                                 movement_16,movement_17,
                                 movement_18
                                 ], dim=1)
+        
+        
         
         
         N_Chunks = 10
@@ -1382,6 +1389,9 @@ class PixelSplatModel(nn.Module):
         gt_depth_all_stereo = sparse_depth_gt
         
         
+
+        
+        
         ''' The Evaluation of the RGB Metrics '''
         first_rgb_eval_info = metrics_mean(pred=rendered_images_first_stereo,
                                            gt=gt_images_first_stereo)
@@ -1408,6 +1418,8 @@ class PixelSplatModel(nn.Module):
         all_rgb_lpips = all_rgb_eval_info['lpips']
         all_rgb_ssim = all_rgb_eval_info['ssim']
         all_rgb_psnr = all_rgb_eval_info['psnr']
+        
+
         
         
         ''' The Evaluation of the Depth Metrics '''
