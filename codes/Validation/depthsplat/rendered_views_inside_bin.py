@@ -164,6 +164,7 @@ def main(args):
     
     
     dataset = getattr(datasets, dataset_config.dataset_name)
+    
     if args.output_vis:
         val_filelist = args.demo_filelist
     else:

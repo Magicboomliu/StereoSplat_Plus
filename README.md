@@ -64,10 +64,13 @@ sh train_revision.sh
 
 #### Others Methods
 
+
+
 (1) Pixelsplat 
 
 - evaluations feedforward
 ```
+# using `--output_vis` to render video as well, default is OFF.
 cd scripts/evaluations/pixelsplat
 sh render_view_inside_bin.sh
 ```
@@ -81,7 +84,7 @@ sh render_views_with_pixelsplat.sh
 - evaluations feedforward
 ```
 cd scripts/evaluations/depthsplat
-sh render_all_forward_vanilla_metrics.sh
+sh render_view_inside_bin.sh
 ```
 
 - evaluations bev views

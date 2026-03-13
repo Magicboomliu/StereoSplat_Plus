@@ -1407,16 +1407,23 @@ class ModelWarpper(nn.Module):
             pred_depths = None
         
         
+
+        render_c2w = output_batch_dict["output_c2ws"]
+        render_c2w = interleave_left_right_pose(render_c2w)
+
+
         # rendered for new views
         # last 
-        c2w_lf_left = output_batch_dict["output_c2ws"][:, -4]
-        c2w_lf_right = output_batch_dict["output_c2ws"][:, -3]
+        c2w_lf_left = render_c2w[:, -4]
+        c2w_lf_right = render_c2w[:, -3]
         # first
-        c2w_ff_left = output_batch_dict["output_c2ws"][:, -2]
-        c2w_ff_right = output_batch_dict["output_c2ws"][:, -1]
+        c2w_ff_left = render_c2w[:, -2]
+        c2w_ff_right = render_c2w[:, -1]
         # center
-        c2w_cf_left = output_batch_dict["output_c2ws"][:, -6] #(1,2,4,4)
-        c2w_cf_right = output_batch_dict["output_c2ws"][:, -5] #(1,2,4,4)
+        c2w_cf_left = render_c2w[:, -6] #(1,2,4,4)
+        c2w_cf_right = render_c2w[:, -5] #(1,2,4,4)
+        
+        
         
         ''' 
             Movement 0:  Center Left Rotation 45 Degree
