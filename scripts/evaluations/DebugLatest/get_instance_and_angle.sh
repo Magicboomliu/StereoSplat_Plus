@@ -5,7 +5,7 @@ cd codes/Validation
 
 config_path="/home/zliu/IROS2026/Diff-StereoSplat/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
 output_folder="/data1/zliu/IROS26/Compared_With_Others/Diff-StereoSplatV2/Grounded_Angles"
-val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/all_sequential.txt"
+val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo.txt"
 demo_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"

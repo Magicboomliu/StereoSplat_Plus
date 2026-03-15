@@ -96,16 +96,11 @@ def analyze_batch_data(batch):
     
     output_batch_dict = dict()
     
-    
-    
-
 
     bin_token_name = batch['bin_token']
     input_cam_batch_data = batch['inputs_pix']                                 
     input_batch_data = batch['inputs']
     
-    print(bin_token_name)
-    quit()
     
     input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
     input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
@@ -134,15 +129,18 @@ def analyze_batch_data(batch):
     
     output_images = interleave_left_right(output_batch_dict["output_imgs"])
     output_depths = interleave_left_right_depth(output_batch_dict["output_depths"])
+    output_sparse_gt_depth = interleave_left_right_depth(output_batch_dict["output_sparse_depth"])
 
     output_c2ws = interleave_left_right_pose(output_batch_dict["output_c2ws"])
+    
+    output_instrinsics = input_camera_intrinsics[:,0:1,:,:].repeat(1,output_c2ws.shape[1],1,1)
     
     
     torch.save(output_images, "output_images.pth")
     torch.save(output_depths, "output_depths.pth")
     torch.save(output_c2ws, "output_c2ws.pth")
-    
-    torch.save(input_rgb,"input_rgb.pth")
+    torch.save(output_instrinsics, "output_instrinsics.pth")
+    torch.save(output_sparse_gt_depth, "output_sparse_gt_depth.pth")
     
     
     quit()
