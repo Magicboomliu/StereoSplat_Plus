@@ -541,19 +541,15 @@ class VolumeFusionRevision(BaseModule):
         return input_batch_dict,output_batch_dict
 
 
-
     def prepare_tripleview_by_ratio_index(self,
                                 batch,
                                 pseudo_ratio_index):
-        
-        
         
         device_id = self.device
         input_batch_dict = dict()
         input_batch_dict_build = dict()
         
-        output_batch_dict = dict()
-                                        
+        output_batch_dict = dict()                                        
         bin_token_name = batch['bin_token']
                                         
         # output dict
@@ -596,8 +592,7 @@ class VolumeFusionRevision(BaseModule):
         center_frames_sparse_depths = temporary_sparse_depth_all[:,-6:-4,:,:]
         center_frames_intrinsics = temporary_intrinsic_all[:,-6:-4,:,:]
         
-        
-        
+    
         # get all last frame information
         last_frames_images = temporary_images_all[:,-4:-2,:,:,:]
         last_frames_extrinsics = temporary_pose_all[:,-4:-2,:,:]
@@ -699,10 +694,6 @@ class VolumeFusionRevision(BaseModule):
     
 
         return input_batch_dict_build,output_batch_dict
-
-
-
-
 
 
     def prepare_data_complete(self,batch):
@@ -3354,12 +3345,9 @@ class VolumeFusionRevision(BaseModule):
                                           start_images_views = 2,
                                           cfg=None,
                                           vis=False):
-        
-
-        
+    
         bin_token_name = bin_token_list[0][:-4]
-        
-
+    
         if start_images_views == 2:
             view_num = 2
             matching_nums = 2
@@ -3492,7 +3480,6 @@ class VolumeFusionRevision(BaseModule):
             else:
                 pass
             
-
             
             saved_render_filename = os.path.join(saved_folder_for_rendered_subfolder,saved_render_filename)
             saved_gt_filename = os.path.join(saved_folder_for_gt_subfolder_views,saved_gt_filename)
@@ -3518,33 +3505,7 @@ class VolumeFusionRevision(BaseModule):
             if not os.path.exists(saved_reference_filename):
                 current_reference_views_pil.save(saved_reference_filename)
         
-        
-        # target_psuedo_center_fame = rendered_center_frame * 0.80 + gt_center_frame * 0.20
-        
-        
-        
-        
-        
-        # print(rendered_center_frame.shape)
-        # quit()
-        
-        
-        # print(compute_psnr_ssim_batch(est=rendered_center_frame,gt=gt_center_frame))
-        # print("-------------------------------------------------------------------")
-        # # print(compute_psnr_ssim_batch(est=target_psuedo_center_fame,gt=gt_center_frame))
-        # # print("........................End 1...................................")
-        
-        
-        # # print(rendered_center_frame.shape)
-        # # print(rendered_center_frame.min())
-        # # print(rendered_center_frame.max())
-        # # print(rendered_center_frame.mean())
-        # # print("-------------------------------")
-        # # print(gt_center_frame.shape)
-        # # print(gt_center_frame.min())
-        # # print(gt_center_frame.max())
-        # # print(gt_center_frame.mean())
-        # # quit()
+    
     
     # iteration twice
     def validation_on_the_forward_views_progressive_iter_once_revised(self,
@@ -3654,12 +3615,10 @@ class VolumeFusionRevision(BaseModule):
             rendered_last_right = rendered_center_frame[0,3,:,:,:].permute(1,2,0).cpu().numpy()
             
             
-            
             rendered_center_left = (rendered_center_left*255).astype(np.uint8)
             rendered_center_right = (rendered_center_right*255).astype(np.uint8)
             rendered_last_left = (rendered_last_left*255).astype(np.uint8)
             rendered_last_right = (rendered_last_right*255).astype(np.uint8)
-            
             
             
             rendered_center_left_pil = Image.fromarray(rendered_center_left)
@@ -6139,8 +6098,7 @@ class VolumeFusionRevision(BaseModule):
         
         return preds
 
-        
-
+    
     def oracle_upper_bound_ablation(self,
                                     batch,
                                     val_result_savedir,
