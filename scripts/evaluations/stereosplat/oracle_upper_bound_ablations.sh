@@ -4,8 +4,8 @@ Oracle_Upper_Bound_Ablations(){
 cd ../../..
 cd codes/Validation
 
-pseudo_ratio="0.5 1.0"
-output_folder="/data1/zliu/IROS26/Compared_With_Others/StereoSplat_2Views/Debug/Oracle_Upper_Bound_Ablations/0.5_1.0"
+pseudo_ratio="0.25 0.5"
+output_folder="/data1/zliu/IROS26/Compared_With_Others/StereoSplat_2Views/Debug/Oracle_Upper_Bound_Ablations/0.25_0.5"
 configs_path="/home/zliu/IROS2026/Diff-StereoSplat/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
 # 输出目录用固定名，避免 ${pseudo_ratio} 展开成 "0.25 0.5" 导致多出一个裸参数
 val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"

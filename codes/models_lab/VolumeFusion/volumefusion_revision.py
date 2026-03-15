@@ -553,12 +553,6 @@ class VolumeFusionRevision(BaseModule):
         input_batch_dict_build = dict()
         
         output_batch_dict = dict()
-        
-        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
-        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
-                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
-                                        #'sparse_gt_depth'])
-                                        
                                         
         bin_token_name = batch['bin_token']
                                         
@@ -611,14 +605,71 @@ class VolumeFusionRevision(BaseModule):
         last_frames_sparse_depths = temporary_sparse_depth_all[:,-4:-2,:,:]
         last_frames_intrinsics = temporary_intrinsic_all[:,-4:-2,:,:]
         
+        
+        if pseudo_ratio_index[0] == 0.5 and pseudo_ratio_index[1] == 1.0:
+            input_rgb_current = torch.cat((first_frames_images,center_frames_images,last_frames_images),dim=1)
+            input_camera_intrinsics_current = torch.cat((first_frames_intrinsics,center_frames_intrinsics,last_frames_intrinsics),dim=1)
+            input_camera_extrinsics_current = torch.cat((first_frames_extrinsics,center_frames_extrinsics,last_frames_extrinsics),dim=1)
+            input_psuedo_depth_current = torch.cat((first_frames_depths,center_frames_depths,last_frames_depths),dim=1)
+            input_sparse_depth_current = torch.cat((first_frames_sparse_depths,center_frames_sparse_depths,last_frames_sparse_depths),dim=1)
+            
+            
+        else:
+            rest_images = temporary_images_all[:,:-6,:,:,:]
+            rest_extrinsics = temporary_pose_all[:,:-6,:,:]
+            rest_depths = temporary_depth_all[:,:-6,:,:]
+            rest_sparse_depths = temporary_sparse_depth_all[:,:-6,:,:]
+            rest_intrinsics = temporary_intrinsic_all[:,:-6,:,:]
+            
+            rest_images = torch.cat([first_frames_images,rest_images,last_frames_images],dim=1)
+            rest_extrinsics = torch.cat([first_frames_extrinsics,rest_extrinsics,last_frames_extrinsics],dim=1)
+            rest_depths = torch.cat([first_frames_depths,rest_depths,last_frames_depths],dim=1)
+            rest_sparse_depths = torch.cat([first_frames_sparse_depths,rest_sparse_depths,last_frames_sparse_depths],dim=1)
+            rest_intrinsics = torch.cat([first_frames_intrinsics,rest_intrinsics,last_frames_intrinsics],dim=1)
+            
+            
+            
+            rest_stereo_pairs_nums = rest_images.shape[1]//2
+            
+            
+            # odd is the left and even in the right
+            
+            second_frame_left_id = int(rest_stereo_pairs_nums * pseudo_ratio_index[0]) * 2.0
+            second_frame_right_id = second_frame_left_id + 1.0
+            
+            third_frame_left_id = int(rest_stereo_pairs_nums * pseudo_ratio_index[1]) *2.0
+            third_frame_right_id = third_frame_left_id + 1.0
+            
+            
+            second_frame_left_id = int(second_frame_left_id)
+            second_frame_right_id = int(second_frame_right_id)
+            third_frame_left_id = int(third_frame_left_id)
+            third_frame_right_id = int(third_frame_right_id)
+            
+            
+            second_input_rgb = rest_images[:,second_frame_left_id:second_frame_right_id+1,:,:,:]
+            second_input_extrinsics = rest_extrinsics[:,second_frame_left_id:second_frame_right_id+1,:,:]
+            second_input_depths = rest_depths[:,second_frame_left_id:second_frame_right_id+1,:,:]
+            second_input_sparse_depths = rest_sparse_depths[:,second_frame_left_id:second_frame_right_id+1,:,:]
+            second_input_intrinsics = rest_intrinsics[:,second_frame_left_id:second_frame_right_id+1,:,:]
 
-        
-        input_rgb_current = torch.cat((first_frames_images,center_frames_images,last_frames_images),dim=1)
-        input_camera_intrinsics_current = torch.cat((first_frames_intrinsics,center_frames_intrinsics,last_frames_intrinsics),dim=1)
-        input_camera_extrinsics_current = torch.cat((first_frames_extrinsics,center_frames_extrinsics,last_frames_extrinsics),dim=1)
-        input_psuedo_depth_current = torch.cat((first_frames_depths,center_frames_depths,last_frames_depths),dim=1)
-        input_sparse_depth_current = torch.cat((first_frames_sparse_depths,center_frames_sparse_depths,last_frames_sparse_depths),dim=1)
-        
+            third_input_rgb = rest_images[:,third_frame_left_id:third_frame_right_id+1,:,:,:]
+            third_input_extrinsics = rest_extrinsics[:,third_frame_left_id:third_frame_right_id+1,:,:]
+            third_input_depths = rest_depths[:,third_frame_left_id:third_frame_right_id+1,:,:]
+            third_input_sparse_depths = rest_sparse_depths[:,third_frame_left_id:third_frame_right_id+1,:,:]
+            third_input_intrinsics = rest_intrinsics[:,third_frame_left_id:third_frame_right_id+1,:,:]
+            
+            
+            # update the input data
+            
+            input_rgb_current = torch.cat((first_frames_images,second_input_rgb,third_input_rgb),dim=1)
+            input_camera_extrinsics_current = torch.cat((first_frames_extrinsics,second_input_extrinsics,third_input_extrinsics),dim=1)
+            input_psuedo_depth_current = torch.cat((first_frames_depths,second_input_depths,third_input_depths),dim=1)
+            input_sparse_depth_current = torch.cat((first_frames_sparse_depths,second_input_sparse_depths,third_input_sparse_depths),dim=1)
+            input_camera_intrinsics_current = torch.cat((first_frames_intrinsics,second_input_intrinsics,third_input_intrinsics),dim=1)
+            
+            
+
         
         selected_cam_dist_index_current = self.k_nearest_camera_indices(
                                             extrinsics=input_camera_extrinsics_current,
