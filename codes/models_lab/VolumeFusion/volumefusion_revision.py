@@ -7177,10 +7177,749 @@ class VolumeFusionRevision(BaseModule):
     
     
         
+    def test_official_difix3d_ref_performance(
+                                        self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        psuedo_ratio=[],
+                                        start_images_views = 2,
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False):
+        
+        # for the psnr and ssim evaluations for both raw and enhanced results.
+        raw_results_stat = {
+            "0": {},
+            "0.125": {},
+            "0.25": {},
+            "0.33": {},
+            "0.5": {},
+            "0.66": {},
+            "0.75": {},
+            "1.0": {},
+        }
+        
+        enhanced_results_stat = {
+            "0": {},
+            "0.125": {},
+            "0.25": {},
+            "0.33": {},
+            "0.5": {},
+            "0.66": {},
+            "0.75": {},
+            "1.0": {},
+            
+        }
+        
+        saved_images_dict = {            
+        }
+        
+        
+        
+        view_num = 2
+        matching_nums = 2
+        # get the input and the reference input
+        input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+        
+        
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        
+        height,width = img.shape[-2:]
+        bs = img.shape[0]
+        
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                
+        # perform the cost volume-based 
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
+        
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
         
 
         
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
         
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        # doing rendering here
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+        
+
+        # return a dicts: rendered images and rendered alphs and rendered depth
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )  
+
+        rendered_results_fuse = render_pkg_fuse
+        
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        
+        # change the ordered.
+        rendered_images_fusion = interleave_left_right(rendered_color_fuse)
+        rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        
+
+
+        # GT Information For Supervision
+        output_rgb = output_batch_dict['output_imgs']
+        rgb_gt = output_rgb
+        pseudo_depth_gt = output_batch_dict['output_depths_m']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']
+        valid_mask_01 = sparse_depth_gt>0
+        valid_mask_01_float = valid_mask_01.float()
+        
+        # use this
+        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+
+        
+        rendered_images_gt = rgb_gt
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(rendered_images_gt)
+        
+    
+        # first view
+        rendered_images_first_stereo = rendered_images_fusion[:,-2:,:,:,:]
+        gt_images_first_stereo = rendered_images_gt[:,-2:,:,:,:]
+        renderded_depth_first_stereo = rendered_depth_fusion[:,-2:,:,:]
+        gt_depth_first_stereo = sparse_depth_gt[:,-2:,:,:]
+        
+        # last view
+        rendered_images_last_stereo = rendered_images_fusion[:,-4:-2,:,:,:]
+        gt_images_last_stereo = rendered_images_gt[:,-4:-2,:,:,:]
+        renderded_depth_last_stereo = rendered_depth_fusion[:,-4:-2,:,:]
+        gt_depth_last_stereo = sparse_depth_gt[:,-4:-2,:,:]
+        
+        # center view
+        rendered_images_center_stereo = rendered_images_fusion[:,-6:-4,:,:,:]
+        gt_images_center_stereo = rendered_images_gt[:,-6:-4,:,:,:]
+        renderded_depth_center_stereo = rendered_depth_fusion[:,-6:-4,:,:]
+        gt_depth_center_stereo = sparse_depth_gt[:,-6:-4,:,:]
+        
+        # all view
+        rendered_images_all_stereo = rendered_images_fusion
+        gt_images_all_stereo =  rendered_images_gt
+        renderded_depth_all_stereo = rendered_depth_fusion
+        gt_depth_all_stereo = sparse_depth_gt
+        
+        
+        rest_rendered_images_all_stereo = rendered_images_all_stereo[:,:-6,:,:,:]
+        rest_gt_images_all_stereo = gt_images_all_stereo[:,:-6,:,:,:]
+        
+        
+        # for the selection of all the views
+        candidates_rendered_images_all_stereo = torch.cat([rendered_images_first_stereo, 
+                                                           rest_rendered_images_all_stereo,
+                                                           rendered_images_last_stereo, 
+                                                           ], dim=1)
+        
+        candidates_gt_images_all_stereo = torch.cat([gt_images_first_stereo, 
+                                                     rest_gt_images_all_stereo,
+                                                     gt_images_last_stereo, 
+                                                     ], dim=1)
+        
+        
+        left_ref = input_batch_dict["imgs"][0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        left_ref = (left_ref*255).astype(np.uint8)
+        left_ref_pil = Image.fromarray(left_ref)
+        
+        right_ref = input_batch_dict["imgs"][0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        right_ref = (right_ref*255).astype(np.uint8)
+        right_ref_pil = Image.fromarray(right_ref)
+        
+        
+        # 0 ----> First
+        # raw
+        first_rgb_eval_info_raw = metrics_mean(pred=rendered_images_first_stereo,
+                                           gt=gt_images_first_stereo)
+        # enhance 
+        raw_candiates_0_left = rendered_images_first_stereo[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_0_left= (raw_candiates_0_left*255).astype(np.uint8)
+        raw_candiates_0_left_pil = Image.fromarray(raw_candiates_0_left)
+        
+        raw_candiates_0_right = rendered_images_first_stereo[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_0_right= (raw_candiates_0_right*255).astype(np.uint8)
+        raw_candiates_0_right_pil = Image.fromarray(raw_candiates_0_right)
+        
+        
+
+
+        with torch.no_grad():
+            
+            enhanced_candiates_0_left_pil = diffix3d_network(cfg.prompt, 
+                                image=raw_candiates_0_left_pil, 
+                                ref_image=left_ref_pil, 
+                                num_inference_steps=1, 
+             timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_0_right_pil = diffix3d_network(cfg.prompt, 
+                                image=raw_candiates_0_right_pil, 
+                                ref_image=right_ref_pil, 
+                                num_inference_steps=1, 
+             timesteps=[199], guidance_scale=0.0).images[0]
+            
+        
+        enhanced_candiates_0_left_tensor = convert_pil_to_tensor(enhanced_candiates_0_left_pil)
+        enhanced_candiates_0_right_tensor = convert_pil_to_tensor(enhanced_candiates_0_right_pil)
+        enhanced_candiates_0_stereo_tensor = torch.cat([enhanced_candiates_0_left_tensor, 
+                                                        enhanced_candiates_0_right_tensor], 
+                                                       dim=1)
+        enhanced_candiates_0_stereo_tensor = enhanced_candiates_0_stereo_tensor.type_as(gt_images_first_stereo)
+        
+        first_rgb_eval_info_enhances = metrics_mean(pred=enhanced_candiates_0_stereo_tensor,
+                                           gt=gt_images_first_stereo)
+        
+        first_rgb_lpips_raw = first_rgb_eval_info_raw['lpips'].data.item()
+        first_rgb_ssim_raw = first_rgb_eval_info_raw['ssim'].data.item()
+        first_rgb_psnr_raw = first_rgb_eval_info_raw['psnr'].data.item()
+        
+        first_rgb_lpips_enhances = first_rgb_eval_info_enhances['lpips'].data.item()
+        first_rgb_ssim_enhances = first_rgb_eval_info_enhances['ssim'].data.item()
+        first_rgb_psnr_enhances = first_rgb_eval_info_enhances['psnr'].data.item()
+        
+        raw_results_stat["0"]["lpips"] = first_rgb_lpips_raw
+        raw_results_stat["0"]["ssim"] = first_rgb_ssim_raw
+        raw_results_stat["0"]["psnr"] = first_rgb_psnr_raw
+        enhanced_results_stat["0"]["lpips"] = first_rgb_lpips_enhances
+        enhanced_results_stat["0"]["ssim"] = first_rgb_ssim_enhances
+        enhanced_results_stat["0"]["psnr"] = first_rgb_psnr_enhances
+        
+        
+        # saved images
+        candidates_0_saved_images = torch.cat([rendered_images_first_stereo[0,0,:,:,:],
+                                               enhanced_candiates_0_left_tensor[0,0,:,:,:].type_as(rendered_images_first_stereo[0,0,:,:,:]),
+                                               gt_images_first_stereo[0,0,:,:,:]],
+                                              dim=1)
+        candidates_0_saved_images = candidates_0_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_0_saved_images = (candidates_0_saved_images*255).astype(np.uint8)        
+        saved_images_dict["0"] = candidates_0_saved_images
+        
+
+        # 0.125
+        nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
+        nums_of_candidates_stereo_pairs = nums_of_candidates_views // 2
+        stereo_index = int(nums_of_candidates_stereo_pairs * 0.125)
+        left_index = stereo_index * 2
+        right_index = stereo_index * 2 + 1
+        
+        # raw
+        candidates_1_psuedo_images = candidates_rendered_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        candidates_1_psuedo_gt = candidates_gt_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        
+        eval_info_1_psuedo_raw = metrics_mean(pred=candidates_1_psuedo_images,
+                                           gt=candidates_1_psuedo_gt)
+        
+        # enhanced
+        raw_candiates_1_psuedo_left = candidates_1_psuedo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_1_psuedo_left= (raw_candiates_1_psuedo_left*255).astype(np.uint8)
+        raw_candiates_1_psuedo_left_pil = Image.fromarray(raw_candiates_1_psuedo_left)
+        
+        raw_candiates_1_psuedo_right = candidates_1_psuedo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_1_psuedo_right= (raw_candiates_1_psuedo_right*255).astype(np.uint8)
+        raw_candiates_1_psuedo_right_pil = Image.fromarray(raw_candiates_1_psuedo_right)
+        
+        
+        with torch.no_grad():
+                        
+            enhanced_candiates_1_psuedo_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_1_psuedo_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_1_psuedo_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_1_psuedo_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+        
+        enhanced_candiates_1_psuedo_left_tensor = convert_pil_to_tensor(enhanced_candiates_1_psuedo_left_pil)
+        enhanced_candiates_1_psuedo_right_tensor = convert_pil_to_tensor(enhanced_candiates_1_psuedo_right_pil)
+        enhanced_candiates_1_psuedo_stereo_tensor = torch.cat([enhanced_candiates_1_psuedo_left_tensor, 
+                                                                enhanced_candiates_1_psuedo_right_tensor], 
+                                                               dim=1)
+        enhanced_candiates_1_psuedo_stereo_tensor = enhanced_candiates_1_psuedo_stereo_tensor.type_as(candidates_1_psuedo_gt)
+        eval_info_1_psuedo_enhances = metrics_mean(pred=enhanced_candiates_1_psuedo_stereo_tensor,
+                                           gt=candidates_1_psuedo_gt)
+        
+
+        raw_results_stat["0.125"]["lpips"] = eval_info_1_psuedo_raw['lpips'].data.item()
+        raw_results_stat["0.125"]["ssim"] = eval_info_1_psuedo_raw['ssim'].data.item()
+        raw_results_stat["0.125"]["psnr"] = eval_info_1_psuedo_raw['psnr'].data.item()
+        enhanced_results_stat["0.125"]["lpips"] = eval_info_1_psuedo_enhances['lpips'].data.item()
+        enhanced_results_stat["0.125"]["ssim"] = eval_info_1_psuedo_enhances['ssim'].data.item()
+        enhanced_results_stat["0.125"]["psnr"] = eval_info_1_psuedo_enhances['psnr'].data.item()
+        
+    
+        candidates_1_saved_images = torch.cat([candidates_1_psuedo_images[0,0,:,:,:],
+                                               enhanced_candiates_1_psuedo_left_tensor[0,0,:,:,:].type_as(candidates_1_psuedo_images[0,0,:,:,:]),
+                                               candidates_1_psuedo_gt[0,0,:,:,:]],
+                                              dim=1)
+        candidates_1_saved_images = candidates_1_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_1_saved_images = (candidates_1_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.125"] = candidates_1_saved_images
+        
+    
+        # 0.25
+        nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
+        nums_of_candidates_stereo_pairs = nums_of_candidates_views // 2
+        stereo_index = int(nums_of_candidates_stereo_pairs * 0.25)
+        left_index = stereo_index * 2
+        right_index = stereo_index * 2 + 1
+        
+        # raw
+        candidates_2_psuedo_images = candidates_rendered_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        candidates_2_psuedo_gt = candidates_gt_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        
+        eval_info_2_psuedo_raw = metrics_mean(pred=candidates_2_psuedo_images,
+                                           gt=candidates_2_psuedo_gt)
+        
+        # enhanced
+        raw_candiates_2_psuedo_left = candidates_2_psuedo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_2_psuedo_left= (raw_candiates_2_psuedo_left*255).astype(np.uint8)
+        raw_candiates_2_psuedo_left_pil = Image.fromarray(raw_candiates_2_psuedo_left)
+        
+        raw_candiates_2_psuedo_right = candidates_2_psuedo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_2_psuedo_right= (raw_candiates_2_psuedo_right*255).astype(np.uint8)
+        raw_candiates_2_psuedo_right_pil = Image.fromarray(raw_candiates_2_psuedo_right)
+        
+        
+        with torch.no_grad():
+            enhanced_candiates_2_psuedo_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_2_psuedo_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_2_psuedo_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_2_psuedo_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+        
+        
+        enhanced_candiates_2_psuedo_left_tensor = convert_pil_to_tensor(enhanced_candiates_2_psuedo_left_pil)
+        enhanced_candiates_2_psuedo_right_tensor = convert_pil_to_tensor(enhanced_candiates_2_psuedo_right_pil)
+        enhanced_candiates_2_psuedo_stereo_tensor = torch.cat([enhanced_candiates_2_psuedo_left_tensor, 
+                                                                enhanced_candiates_2_psuedo_right_tensor], 
+                                                               dim=1)
+        enhanced_candiates_2_psuedo_stereo_tensor = enhanced_candiates_2_psuedo_stereo_tensor.type_as(candidates_2_psuedo_gt)
+        eval_info_2_psuedo_enhances = metrics_mean(pred=enhanced_candiates_2_psuedo_stereo_tensor,
+                                           gt=candidates_2_psuedo_gt)
+        
+        
+        raw_results_stat["0.25"]["lpips"] = eval_info_2_psuedo_raw['lpips'].data.item()
+        raw_results_stat["0.25"]["ssim"] = eval_info_2_psuedo_raw['ssim'].data.item()
+        raw_results_stat["0.25"]["psnr"] = eval_info_2_psuedo_raw['psnr'].data.item()
+        enhanced_results_stat["0.25"]["lpips"] = eval_info_2_psuedo_enhances['lpips'].data.item()
+        enhanced_results_stat["0.25"]["ssim"] = eval_info_2_psuedo_enhances['ssim'].data.item()
+        enhanced_results_stat["0.25"]["psnr"] = eval_info_2_psuedo_enhances['psnr'].data.item()
+
+        candidates_2_saved_images = torch.cat([candidates_2_psuedo_images[0,0,:,:,:],
+                                               enhanced_candiates_2_psuedo_left_tensor[0,0,:,:,:].type_as(candidates_2_psuedo_images[0,0,:,:,:]),
+                                               candidates_2_psuedo_gt[0,0,:,:,:]],
+                                              dim=1)
+        candidates_2_saved_images = candidates_2_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_2_saved_images = (candidates_2_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.25"] = candidates_2_saved_images
+        
+        
+        
+        # 0.33
+        nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
+        nums_of_candidates_stereo_pairs = nums_of_candidates_views // 2
+        stereo_index = int(nums_of_candidates_stereo_pairs * 0.33)
+        left_index = stereo_index * 2
+        right_index = stereo_index * 2 + 1
+        
+        # raw
+        candidates_3_psuedo_images = candidates_rendered_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        candidates_3_psuedo_gt = candidates_gt_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        
+        eval_info_3_psuedo_raw = metrics_mean(pred=candidates_3_psuedo_images,
+                                           gt=candidates_3_psuedo_gt)
+        
+        # enhanced
+        raw_candiates_3_psuedo_left = candidates_3_psuedo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_3_psuedo_left= (raw_candiates_3_psuedo_left*255).astype(np.uint8)
+        raw_candiates_3_psuedo_left_pil = Image.fromarray(raw_candiates_3_psuedo_left)
+        
+        raw_candiates_3_psuedo_right = candidates_3_psuedo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_3_psuedo_right= (raw_candiates_3_psuedo_right*255).astype(np.uint8)
+        raw_candiates_3_psuedo_right_pil = Image.fromarray(raw_candiates_3_psuedo_right)
+        
+        
+        with torch.no_grad():
+            enhanced_candiates_3_psuedo_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_3_psuedo_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_3_psuedo_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_3_psuedo_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+        
+        enhanced_candiates_3_psuedo_left_tensor = convert_pil_to_tensor(enhanced_candiates_3_psuedo_left_pil)
+        enhanced_candiates_3_psuedo_right_tensor = convert_pil_to_tensor(enhanced_candiates_3_psuedo_right_pil)
+        enhanced_candiates_3_psuedo_stereo_tensor = torch.cat([enhanced_candiates_3_psuedo_left_tensor, 
+                                                                enhanced_candiates_3_psuedo_right_tensor], 
+                                                               dim=1)
+        enhanced_candiates_3_psuedo_stereo_tensor = enhanced_candiates_3_psuedo_stereo_tensor.type_as(candidates_2_psuedo_gt)
+        eval_info_3_psuedo_enhances = metrics_mean(
+                                            pred=enhanced_candiates_3_psuedo_stereo_tensor,
+                                           gt=candidates_3_psuedo_gt)
+        
+        raw_results_stat["0.33"]["lpips"] = eval_info_3_psuedo_raw['lpips'].data.item()
+        raw_results_stat["0.33"]["ssim"] = eval_info_3_psuedo_raw['ssim'].data.item()
+        raw_results_stat["0.33"]["psnr"] = eval_info_3_psuedo_raw['psnr'].data.item()
+        enhanced_results_stat["0.33"]["lpips"] = eval_info_3_psuedo_enhances['lpips'].data.item()
+        enhanced_results_stat["0.33"]["ssim"] = eval_info_3_psuedo_enhances['ssim'].data.item()
+        enhanced_results_stat["0.33"]["psnr"] = eval_info_3_psuedo_enhances['psnr'].data.item()
+        
+        candidates_3_saved_images = torch.cat([candidates_3_psuedo_images[0,0,:,:,:],
+                                               enhanced_candiates_3_psuedo_left_tensor[0,0,:,:,:].type_as(candidates_3_psuedo_images[0,0,:,:,:]),
+                                               candidates_3_psuedo_gt[0,0,:,:,:]],
+                                              dim=1)
+        candidates_3_saved_images = candidates_3_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_3_saved_images = (candidates_3_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.33"] = candidates_3_saved_images
+        
+    
+        # 0.5 ----> Center
+        # raw
+        center_rgb_eval_info_raw = metrics_mean(pred=rendered_images_center_stereo,
+                                           gt=gt_images_center_stereo)
+        # enhance 
+        raw_center_left = rendered_images_center_stereo[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_center_left = (raw_center_left*255).astype(np.uint8)
+        raw_center_left_pil = Image.fromarray(raw_center_left)
+
+        raw_center_right = rendered_images_center_stereo[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_center_right = (raw_center_right*255).astype(np.uint8)
+        raw_center_right_pil = Image.fromarray(raw_center_right)
+
+
+        with torch.no_grad():
+            enhanced_center_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_center_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+
+            
+            enhanced_center_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_center_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+
+        enhanced_center_left_tensor = convert_pil_to_tensor(enhanced_center_left_pil)
+        enhanced_center_right_tensor = convert_pil_to_tensor(enhanced_center_right_pil)
+        
+        enhanced_center_tensor = torch.cat([enhanced_center_left_tensor, 
+                                            enhanced_center_right_tensor], 
+                                                       dim=1)
+        
+        enhanced_center_tensor = enhanced_center_tensor.type_as(gt_images_first_stereo)
+        
+        center_rgb_eval_info_enhances = metrics_mean(pred=enhanced_center_tensor,
+                                           gt=gt_images_center_stereo)
+        
+        
+        raw_results_stat["0.5"]["lpips"] = center_rgb_eval_info_raw['lpips'].data.item()
+        raw_results_stat["0.5"]["ssim"] = center_rgb_eval_info_raw['ssim'].data.item()
+        raw_results_stat["0.5"]["psnr"] = center_rgb_eval_info_raw['psnr'].data.item()
+        enhanced_results_stat["0.5"]["lpips"] = center_rgb_eval_info_enhances['lpips'].data.item()
+        enhanced_results_stat["0.5"]["ssim"] = center_rgb_eval_info_enhances['ssim'].data.item()
+        enhanced_results_stat["0.5"]["psnr"] = center_rgb_eval_info_enhances['psnr'].data.item()
+        
+        candidates_center_saved_images = torch.cat([rendered_images_center_stereo[0,0,:,:,:],
+                                               enhanced_center_left_tensor[0,0,:,:,:].type_as(rendered_images_center_stereo[0,0,:,:,:]),
+                                               gt_images_center_stereo[0,0,:,:,:]],
+                                              dim=1)
+        candidates_center_saved_images = candidates_center_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_center_saved_images = (candidates_center_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.5"] = candidates_center_saved_images
+
+        
+        # 0.66 
+        nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
+        nums_of_candidates_stereo_pairs = nums_of_candidates_views // 2
+        stereo_index = int(nums_of_candidates_stereo_pairs * 0.66)
+        left_index = stereo_index * 2
+        right_index = stereo_index * 2 + 1
+        
+        # raw
+        candidates_4_psuedo_images = candidates_rendered_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        candidates_4_psuedo_gt = candidates_gt_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        
+        eval_info_4_psuedo_raw = metrics_mean(pred=candidates_4_psuedo_images,
+                                           gt=candidates_4_psuedo_gt)
+        
+        # enhanced
+        raw_candiates_4_psuedo_left = candidates_4_psuedo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_4_psuedo_left= (raw_candiates_4_psuedo_left*255).astype(np.uint8)
+        raw_candiates_4_psuedo_left_pil = Image.fromarray(raw_candiates_4_psuedo_left)
+        
+        raw_candiates_4_psuedo_right = candidates_4_psuedo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_4_psuedo_right= (raw_candiates_4_psuedo_right*255).astype(np.uint8)
+        raw_candiates_4_psuedo_right_pil = Image.fromarray(raw_candiates_4_psuedo_right)
+        
+        
+        with torch.no_grad():
+            enhanced_candiates_4_psuedo_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_4_psuedo_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_4_psuedo_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_4_psuedo_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+        
+        enhanced_candiates_4_psuedo_left_tensor = convert_pil_to_tensor(enhanced_candiates_4_psuedo_left_pil)
+        enhanced_candiates_4_psuedo_right_tensor = convert_pil_to_tensor(enhanced_candiates_4_psuedo_right_pil)
+        enhanced_candiates_4_psuedo_stereo_tensor = torch.cat([enhanced_candiates_4_psuedo_left_tensor, 
+                                                                enhanced_candiates_4_psuedo_right_tensor], 
+                                                               dim=1)
+        enhanced_candiates_4_psuedo_stereo_tensor = enhanced_candiates_4_psuedo_stereo_tensor.type_as(candidates_2_psuedo_gt)
+        eval_info_4_psuedo_enhances = metrics_mean(
+                                            pred=enhanced_candiates_4_psuedo_stereo_tensor,
+                                           gt=candidates_4_psuedo_gt)
+        
+        raw_results_stat["0.66"]["lpips"] = eval_info_4_psuedo_raw['lpips'].data.item()
+        raw_results_stat["0.66"]["ssim"] = eval_info_4_psuedo_raw['ssim'].data.item()
+        raw_results_stat["0.66"]["psnr"] = eval_info_4_psuedo_raw['psnr'].data.item()
+        enhanced_results_stat["0.66"]["lpips"] = eval_info_4_psuedo_enhances['lpips'].data.item()
+        enhanced_results_stat["0.66"]["ssim"] = eval_info_4_psuedo_enhances['ssim'].data.item()
+        enhanced_results_stat["0.66"]["psnr"] = eval_info_4_psuedo_enhances['psnr'].data.item()
+        
+        
+        candidates_4_saved_images = torch.cat([candidates_4_psuedo_images[0,0,:,:,:],
+                                               enhanced_candiates_4_psuedo_left_tensor[0,0,:,:,:].type_as(candidates_4_psuedo_images[0,0,:,:,:]),
+                                               candidates_4_psuedo_gt[0,0,:,:,:]],
+                                              dim=1)
+        candidates_4_saved_images = candidates_4_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_4_saved_images = (candidates_4_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.66"] = candidates_4_saved_images
+                
+        # 0.75  
+        nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
+        nums_of_candidates_stereo_pairs = nums_of_candidates_views // 2
+        stereo_index = int(nums_of_candidates_stereo_pairs * 0.75)
+        left_index = stereo_index * 2
+        right_index = stereo_index * 2 + 1
+        
+        # raw
+        candidates_5_psuedo_images = candidates_rendered_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        candidates_5_psuedo_gt = candidates_gt_images_all_stereo[:,left_index:right_index+1,:,:,:]
+        
+        eval_info_5_psuedo_raw = metrics_mean(pred=candidates_5_psuedo_images,
+                                           gt=candidates_5_psuedo_gt)
+        
+        # enhanced
+        raw_candiates_5_psuedo_left = candidates_5_psuedo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_5_psuedo_left= (raw_candiates_5_psuedo_left*255).astype(np.uint8)
+        raw_candiates_5_psuedo_left_pil = Image.fromarray(raw_candiates_5_psuedo_left)
+        
+        raw_candiates_5_psuedo_right = candidates_5_psuedo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_candiates_5_psuedo_right= (raw_candiates_5_psuedo_right*255).astype(np.uint8)
+        raw_candiates_5_psuedo_right_pil = Image.fromarray(raw_candiates_5_psuedo_right)
+        
+        
+        with torch.no_grad():
+            enhanced_candiates_5_psuedo_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_5_psuedo_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_candiates_5_psuedo_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_candiates_5_psuedo_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+        
+        enhanced_candiates_5_psuedo_left_tensor = convert_pil_to_tensor(enhanced_candiates_5_psuedo_left_pil)
+        enhanced_candiates_5_psuedo_right_tensor = convert_pil_to_tensor(enhanced_candiates_5_psuedo_right_pil)
+        enhanced_candiates_5_psuedo_stereo_tensor = torch.cat([enhanced_candiates_5_psuedo_left_tensor, 
+                                                                enhanced_candiates_5_psuedo_right_tensor], 
+                                                               dim=1)
+        enhanced_candiates_5_psuedo_stereo_tensor = enhanced_candiates_5_psuedo_stereo_tensor.type_as(candidates_2_psuedo_gt)
+        eval_info_5_psuedo_enhances = metrics_mean(
+                                            pred=enhanced_candiates_5_psuedo_stereo_tensor,
+                                           gt=candidates_5_psuedo_gt)
+    
+        raw_results_stat["0.75"]["lpips"] = eval_info_5_psuedo_raw['lpips'].data.item()
+        raw_results_stat["0.75"]["ssim"] = eval_info_5_psuedo_raw['ssim'].data.item()
+        raw_results_stat["0.75"]["psnr"] = eval_info_5_psuedo_raw['psnr'].data.item()
+        enhanced_results_stat["0.75"]["lpips"] = eval_info_5_psuedo_enhances['lpips'].data.item()
+        enhanced_results_stat["0.75"]["ssim"] = eval_info_5_psuedo_enhances['ssim'].data.item()
+        enhanced_results_stat["0.75"]["psnr"] = eval_info_5_psuedo_enhances['psnr'].data.item()
+        
+        
+        candidates_5_saved_images = torch.cat([candidates_5_psuedo_images[0,0,:,:,:],
+                                               enhanced_candiates_5_psuedo_left_tensor[0,0,:,:,:].type_as(candidates_5_psuedo_images[0,0,:,:,:]),
+                                               candidates_5_psuedo_gt[0,0,:,:,:]],
+                                              dim=1)
+        candidates_5_saved_images = candidates_5_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_5_saved_images = (candidates_5_saved_images*255).astype(np.uint8)
+        saved_images_dict["0.75"] = candidates_5_saved_images
+        
+        
+    
+        # 1.0 -----> Last
+       # raw
+        last_rgb_eval_info_raw = metrics_mean(pred=rendered_images_last_stereo,
+                                           gt=gt_images_last_stereo)
+        # enhance 
+        raw_last_left = rendered_images_last_stereo[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_last_left = (raw_last_left*255).astype(np.uint8)
+        raw_last_left_pil = Image.fromarray(raw_last_left)
+
+        raw_last_right = rendered_images_last_stereo[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+        raw_last_right = (raw_last_right*255).astype(np.uint8)
+        raw_last_right_pil = Image.fromarray(raw_last_right)
+
+
+        with torch.no_grad():
+            enhanced_last_left_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_last_left_pil, 
+                ref_image=left_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+            
+            enhanced_last_right_pil = diffix3d_network(
+                cfg.prompt,
+                image=raw_last_right_pil, 
+                ref_image=right_ref_pil, 
+                num_inference_steps=1, 
+                timesteps=[199], guidance_scale=0.0).images[0]
+
+
+        enhanced_last_left_tensor = convert_pil_to_tensor(enhanced_last_left_pil)
+        enhanced_last_right_tensor = convert_pil_to_tensor(enhanced_last_right_pil)
+        
+        enhanced_last_tensor = torch.cat([enhanced_last_left_tensor, 
+                                            enhanced_last_right_tensor], 
+                                                       dim=1)
+        
+        enhanced_last_tensor = enhanced_last_tensor.type_as(gt_images_first_stereo)
+        
+        last_rgb_eval_info_enhances = metrics_mean(pred=enhanced_last_tensor,
+                                           gt=gt_images_last_stereo)
+        
+        
+        raw_results_stat["1.0"]["lpips"] = last_rgb_eval_info_raw['lpips'].data.item()
+        raw_results_stat["1.0"]["ssim"] = last_rgb_eval_info_raw['ssim'].data.item()
+        raw_results_stat["1.0"]["psnr"] = last_rgb_eval_info_raw['psnr'].data.item()
+        enhanced_results_stat["1.0"]["lpips"] = last_rgb_eval_info_enhances['lpips'].data.item()
+        enhanced_results_stat["1.0"]["ssim"] = last_rgb_eval_info_enhances['ssim'].data.item()
+        enhanced_results_stat["1.0"]["psnr"] = last_rgb_eval_info_enhances['psnr'].data.item()
+        
+        
+        candidates_last_saved_images = torch.cat([rendered_images_last_stereo[0,0,:,:,:],
+                                               enhanced_last_left_tensor[0,0,:,:,:].type_as(rendered_images_last_stereo[0,0,:,:,:]),
+                                               gt_images_last_stereo[0,0,:,:,:]],
+                                              dim=1)
+        candidates_last_saved_images = candidates_last_saved_images.permute(1,2,0).cpu().numpy()
+        candidates_last_saved_images = (candidates_last_saved_images*255).astype(np.uint8)
+        saved_images_dict["1.0"] = candidates_last_saved_images
+        
+        
+        return raw_results_stat, enhanced_results_stat, saved_images_dict
+    
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @torch.no_grad()
 def convert_pil_to_tensor(pil_image):

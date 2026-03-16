@@ -29,6 +29,10 @@ import json
 # define the models
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
 from models_lab.diffix3D.model import Difix
+
+from models_lab.diffix3D.pipeline_difix import DifixPipeline
+
+
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import skimage.io
 
@@ -199,13 +203,18 @@ def main(args):
     # loading the pretrained diffix3d models.
     assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
 
-    pretrained_diffix_model = Difix(
-        pretrained_name=None,
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref)
+    # pretrained_diffix_model = Difix(
+    #     pretrained_name=None,
+    #     pretrained_path=args.pretrained_diffix_model_path,
+    #     timestep=args.timestep,
+    #     mv_unet=args.use_ref)
     
-    pretrained_diffix_model.set_eval()
+    # pretrained_diffix_model.set_eval()
+    
+    
+    # This is using the official pre-trained difix3d model weight, defualt is using the reference version
+    pretrained_diffix_model = DifixPipeline.from_pretrained("nvidia/difix_ref", trust_remote_code=True)
+    pretrained_diffix_model.to(accelerator.device)
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
@@ -267,7 +276,7 @@ def main(args):
             
  
             
-            raw_results_stat, enhanced_results_stat, saved_images_dict = my_model.test_current_difix3d_performance(
+            raw_results_stat, enhanced_results_stat, saved_images_dict = my_model.test_official_difix3d_ref_performance(
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
