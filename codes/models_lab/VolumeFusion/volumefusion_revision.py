@@ -4043,7 +4043,9 @@ class VolumeFusionRevision(BaseModule):
         
         return evaluation_results_stat
 
-    def validation_on_the_forward_views_progressive_iter_once(self,
+
+    # FIXME: This is the bug version of the first submission to IROS2026, please delete in the future.
+    def validation_on_the_forward_views_progressive_iter_once_bug_version(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -6097,6 +6099,8 @@ class VolumeFusionRevision(BaseModule):
         return preds
 
     
+    # FIXME: Please Delete in the Future This Version is just to show the 
+    # the potential of the progressive inference.
     def oracle_upper_bound_ablation(self,
                                     batch,
                                     val_result_savedir,
@@ -6447,7 +6451,6 @@ class VolumeFusionRevision(BaseModule):
         
         return evaluation_results_stat
 
-
     #FIXME: Please Delete in the Future, This Version is Just to Test the Difix3D Performance.
     def test_current_difix3d_performance(
                                         self,
@@ -6714,10 +6717,6 @@ class VolumeFusionRevision(BaseModule):
         candidates_0_saved_images = candidates_0_saved_images.permute(1,2,0).cpu().numpy()
         candidates_0_saved_images = (candidates_0_saved_images*255).astype(np.uint8)        
         saved_images_dict["0"] = candidates_0_saved_images
-        
-
-        
-        
         
         # 0.125
         nums_of_candidates_views = candidates_rendered_images_all_stereo.shape[1]
@@ -7175,8 +7174,7 @@ class VolumeFusionRevision(BaseModule):
         
         return raw_results_stat, enhanced_results_stat, saved_images_dict
     
-    
-        
+    # FIXME: Please Delete in the Future, This Version is Just to Test the Difixi3D Performance.
     def test_official_difix3d_ref_performance(
                                         self,
                                         batch,
@@ -7902,23 +7900,36 @@ class VolumeFusionRevision(BaseModule):
         
         return raw_results_stat, enhanced_results_stat, saved_images_dict
     
+
+    
+    # FIXME： Please Delete in the future, this version is just to select the
+    # best selection from finetuned diffix3d and the stereosplat 
+    def stereosplat_plus_gt_pose_once_progressive_inference_with_difix3d(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views = 2,
+                                        pseudo_ratio_index = [],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        
+        bin_token_name = bin_token_list[0][:-4]
+        
+        print(bin_token_name)
+        print(pseudo_ratio_index)
+        quit()
+    
+    
+    
+    
+    
+    
+
             
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @torch.no_grad()
