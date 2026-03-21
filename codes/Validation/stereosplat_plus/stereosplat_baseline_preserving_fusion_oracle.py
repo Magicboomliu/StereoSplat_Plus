@@ -239,37 +239,29 @@ def main(args):
     pretrained_diffix_model.to(accelerator.device)
     
     
-
-    # performance metrics for the rendered RGBs
-    evaluate_results_average_dict_rgb = {
-        "first_view_psnr_average": 0,
-        "first_view_ssim_average":0,
-        "first_view_lpips_average":0,
-        "center_view_psnr_average": 0,
-        "center_view_ssim_average": 0,
-        "center_view_lpips_average": 0,
-        "last_view_psnr_average": 0,
-        "last_view_ssim_average": 0,
-        "last_view_lpips_average": 0,
-        "all_view_psnr_average": 0,
-        "all_view_ssim_average": 0,
-        "all_view_lpips_average": 0,
+    evaluation_results_g_base = {
+        "psnr": 0,
+        "ssim": 0,
+        "lpips": 0,
+        "absrel": 0,
+        "sqrel": 0,
+        "rmse_log": 0,
     }
-    
-    # performance metrics for the rendered Depths
-    evaluate_results_average_dict_depth = {
-        "first_view_Abs_Rel_average": 0,
-        "frist_view_Sq_Rel_average": 0,
-        "first_view_RMSE_log_average": 0,
-        "center_view_Abs_Rel_average": 0,
-        "center_view_Sq_Rel_average": 0,
-        "center_view_RMSE_log_average": 0,
-        "last_view_Abs_Rel_average": 0,
-        "last_view_Sq_Rel_average": 0,
-        "last_view_RMSE_log_average": 0,
-        "all_view_Abs_Rel_average": 0,
-        "all_view_Sq_Rel_average": 0,
-        "all_view_RMSE_log_average": 0,
+    evaluation_results_g_plus = {
+        "psnr": 0,
+        "ssim": 0,
+        "lpips": 0,
+        "absrel": 0,
+        "sqrel": 0,
+        "rmse_log": 0,
+    }
+    evaluation_results_g_fusion = {
+        "psnr": 0,
+        "ssim": 0,
+        "lpips": 0,
+        "absrel": 0,
+        "sqrel": 0,
+        "rmse_log": 0,
     }
 
 
@@ -292,9 +284,44 @@ def main(args):
                                             use_ref=args.use_ref,
                                             vis=args.output_vis)
             
-            print(evaluation_results_stat)
-            quit()
-
+            current_evaluation_results_dict_g_base = evaluation_results_stat["G_base"]
+            current_evaluation_results_dict_g_plus = evaluation_results_stat["G_plus"]
+            current_evaluation_results_dict_g_fusion = evaluation_results_stat["G_fusion"]
+            
+            for key in current_evaluation_results_dict_g_base.keys():
+                evaluation_results_g_base[key] += current_evaluation_results_dict_g_base[key]
+            for key in current_evaluation_results_dict_g_plus.keys():
+                evaluation_results_g_plus[key] += current_evaluation_results_dict_g_plus[key]
+            for key in current_evaluation_results_dict_g_fusion.keys():
+                evaluation_results_g_fusion[key] += current_evaluation_results_dict_g_fusion[key]
+            batch_idx += 1
+        
+            
+        for key in evaluation_results_g_base.keys():
+            evaluation_results_g_base[key] /= batch_idx
+        for key in evaluation_results_g_plus.keys():
+            evaluation_results_g_plus[key] /= batch_idx
+        for key in evaluation_results_g_fusion.keys():
+            evaluation_results_g_fusion[key] /= batch_idx
+            
+        results_dict = {
+            "G_base": evaluation_results_g_base,
+            "G_plus": evaluation_results_g_plus,
+            "G_fusion": evaluation_results_g_fusion,
+        }
+        
+        saved_into_json(data_dict=results_dict,
+                        path=os.path.join(args.output_folder,"metric.json"))
+        
+        
+        
+            
+            
+            
+            
+            
+            
+            
             
         #     current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
         #     current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
