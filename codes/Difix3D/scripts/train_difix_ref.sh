@@ -4,7 +4,7 @@ cd ..
 pretrained_model_name_or_path="nvidia/difix_ref"
 pretrained_model_path=None
 output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref"
-dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
+dataset_path="/home/zliu/IROS2026/StereoSplat_Plus/filenames/kitti360/difix_dataset/trainval.json"
 max_train_steps=200000
 
 # 分成两个变量，而不是数组
@@ -51,7 +51,7 @@ accelerate launch --mixed_precision=bf16 --config-file accelerate_config_singleG
     --tracker_project_name "$tracker_project_name" \
     --tracker_run_name "$tracker_run_name" \
     --timestep "$timestep" \
-    --use_wandb
+    # --use_wandb
 }
 
 
@@ -61,8 +61,8 @@ cd ..
 pretrained_model_name_or_path="nvidia/difix_ref"
 pretrained_model_path=None
 output_dir="/data4/zliu/Difix3D/Pretrained_Models/Fintune_Difix_Ref_all"
-#dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
-dataset_path="/home/zliu/Project2025/OneStageTraining/FeedStereoGS/filenames/kitti360/difix_dataset/trainval.json"
+#dataset_path="/home/zliu/IROS2026/StereoSplat_Plus/filenames/kitti360/difix_dataset/trainval.json"
+dataset_path="/home/zliu/IROS2026/StereoSplat_Plus/filenames/kitti360/difix_dataset/trainval.json"
 max_train_steps=200000
 
 # 分成两个变量，而不是数组
@@ -110,7 +110,7 @@ accelerate launch --mixed_precision=bf16 --main_process_port $main_process_port 
     --tracker_project_name "$tracker_project_name" \
     --tracker_run_name "$tracker_run_name" \
     --timestep "$timestep" \
-    --use_wandb
+    # --use_wandb
 }
 
 # Train_Diffix_Ref_One_Single_GPU

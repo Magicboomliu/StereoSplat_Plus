@@ -9,7 +9,14 @@ class PairedDataset(torch.utils.data.Dataset):
 
         super().__init__()
         with open(dataset_path, "r") as f:
-            self.data = json.load(f)[split]
+            payload = json.load(f)
+        # 与 make_near_view_finetuning 等脚本对齐：training/validation ↔ train/test
+        key = split
+        if key == "train" and "train" not in payload and "training" in payload:
+            key = "training"
+        elif key == "test" and "test" not in payload and "validation" in payload:
+            key = "validation"
+        self.data = payload[key]
         self.img_ids = list(self.data.keys())
         self.image_size = (height, width)
         self.tokenizer = tokenizer

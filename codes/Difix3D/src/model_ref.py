@@ -124,7 +124,9 @@ class DifixRef(torch.nn.Module):
                  ckpt_folder="checkpoints", 
                  lora_rank_vae=4, 
                  mv_unet=False, 
-                 timestep=999):
+                 timestep=999,
+                 deterministic_vae_encode: bool = False,
+                 deterministic_scheduler_step: bool = False):
         super().__init__()
         
         if pretrained_name=="None":
@@ -223,14 +225,64 @@ class DifixRef(torch.nn.Module):
         self.vae.decoder.gamma = 1
         self.timesteps = torch.tensor([timestep], device="cuda").long()
         self.text_encoder.requires_grad_(False)
+        self.deterministic_vae_encode = deterministic_vae_encode
+        self.deterministic_scheduler_step = deterministic_scheduler_step
 
         # print number of trainable parameters
         print("="*50)
         print(f"Number of trainable parameters in UNet: {sum(p.numel() for p in unet.parameters() if p.requires_grad) / 1e6:.2f}M")
         print(f"Number of trainable parameters in VAE: {sum(p.numel() for p in vae.parameters() if p.requires_grad) / 1e6:.2f}M")
+        if deterministic_vae_encode or deterministic_scheduler_step:
+            print(
+                f"DifixRef deterministic forward: vae_encode={deterministic_vae_encode}, "
+                f"ddpm_step_mean_only={deterministic_scheduler_step}"
+            )
         print("="*50)
         
 
+
+    def _ddpm_prev_sample_mean_only(self, model_output, sample):
+        """DDPM 反向一步只取均值 μ，不加 randn 随机方差项（与 diffusers step 第 6 节之前一致）。"""
+        sched = self.sched
+        ts = self.timesteps[0]
+        t = int(ts.item()) if torch.is_tensor(ts) else int(ts)
+        prev_t = sched.previous_timestep(t)
+        prev_t_idx = int(prev_t.item()) if torch.is_tensor(prev_t) else int(prev_t)
+
+        if model_output.shape[1] == sample.shape[1] * 2 and sched.config.variance_type in ["learned", "learned_range"]:
+            model_output, _predicted_variance = torch.split(model_output, sample.shape[1], dim=1)
+
+        acp = sched.alphas_cumprod.to(device=sample.device, dtype=sample.dtype)
+        one = sched.one.to(device=sample.device, dtype=sample.dtype)
+
+        alpha_prod_t = acp[t]
+        alpha_prod_t_prev = acp[prev_t_idx] if prev_t_idx >= 0 else one
+        beta_prod_t = 1 - alpha_prod_t
+        beta_prod_t_prev = 1 - alpha_prod_t_prev
+        current_alpha_t = alpha_prod_t / alpha_prod_t_prev
+        current_beta_t = 1 - current_alpha_t
+
+        if sched.config.prediction_type == "epsilon":
+            pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
+        elif sched.config.prediction_type == "sample":
+            pred_original_sample = model_output
+        elif sched.config.prediction_type == "v_prediction":
+            pred_original_sample = (alpha_prod_t**0.5) * sample - (beta_prod_t**0.5) * model_output
+        else:
+            raise ValueError(
+                f"prediction_type {sched.config.prediction_type} not supported for deterministic DDPM step."
+            )
+
+        if sched.config.thresholding:
+            pred_original_sample = sched._threshold_sample(pred_original_sample)
+        elif sched.config.clip_sample:
+            pred_original_sample = pred_original_sample.clamp(
+                -sched.config.clip_sample_range, sched.config.clip_sample_range
+            )
+
+        pred_original_sample_coeff = (alpha_prod_t_prev ** (0.5) * current_beta_t) / beta_prod_t
+        current_sample_coeff = current_alpha_t ** (0.5) * beta_prod_t_prev / beta_prod_t
+        return pred_original_sample_coeff * pred_original_sample + current_sample_coeff * sample
 
     def set_eval(self):
         self.unet.eval()
@@ -268,7 +320,11 @@ class DifixRef(torch.nn.Module):
                                 
         num_views = x.shape[1]
         x = rearrange(x, 'b v c h w -> (b v) c h w')
-        z = self.vae.encode(x).latent_dist.sample() * self.vae.config.scaling_factor 
+        latent_dist = self.vae.encode(x).latent_dist
+        if self.deterministic_vae_encode:
+            z = latent_dist.mode() * self.vae.config.scaling_factor
+        else:
+            z = latent_dist.sample() * self.vae.config.scaling_factor
         caption_enc = repeat(caption_enc, 'b n c -> (b v) n c', v=num_views)
         
         unet_input = z
@@ -276,7 +332,10 @@ class DifixRef(torch.nn.Module):
         unet_input = self.sched.scale_model_input(unet_input, self.timesteps[0])
         
         model_pred = self.unet(unet_input, self.timesteps, encoder_hidden_states=caption_enc,).sample
-        z_denoised = self.sched.step(model_pred, self.timesteps, z, return_dict=True).prev_sample
+        if self.deterministic_scheduler_step:
+            z_denoised = self._ddpm_prev_sample_mean_only(model_pred, z)
+        else:
+            z_denoised = self.sched.step(model_pred, self.timesteps, z, return_dict=True).prev_sample
         self.vae.decoder.incoming_skip_acts = self.vae.encoder.current_down_blocks
         output_image = (self.vae.decode(z_denoised / self.vae.config.scaling_factor).sample).clamp(-1, 1)
         output_image = rearrange(output_image, '(b v) c h w -> b v c h w', v=num_views)
