@@ -1,5 +1,3 @@
-set -euo pipefail
-
 Train_Difix_Revision_Ref_Single_GPU() {
   cd "$(dirname "$0")/.."
 

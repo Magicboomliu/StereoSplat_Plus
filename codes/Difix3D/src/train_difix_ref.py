@@ -32,7 +32,7 @@ from matplotlib import pyplot as plt
 import skimage.io
 
 import numpy as np
-from pytorch_msssim import ssim
+from ssim_torch import ssim
 
 
 

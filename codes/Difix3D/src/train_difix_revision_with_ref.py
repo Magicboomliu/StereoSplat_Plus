@@ -21,7 +21,7 @@ import wandb
 from model_ref import DifixRef,load_ckpt_from_state_dict, save_ckpt
 
 from dataset import PairedDataset
-from pytorch_msssim import ssim
+from ssim_torch import ssim
 
 
 def psnr_neg1_to_1(mse: float, eps: float = 1e-10) -> float:
@@ -133,12 +133,12 @@ def main(args):
         num_training_steps=args.max_train_steps * accelerator.num_processes,
         num_cycles=args.lr_num_cycles, power=args.lr_power,)
     
+
     
     ''' Dataset Configurataion for the Paired Dataset '''
     
     resolution = (args.resolution_h, args.resolution_w)
-    
-    
+        
     dataset_train = PairedDataset(dataset_path=args.dataset_path, 
                                   split="train", 
                                   tokenizer=net_difix.tokenizer,
