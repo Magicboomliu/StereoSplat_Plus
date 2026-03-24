@@ -51,7 +51,7 @@ src/train_difix_revision_with_ref.py \
 --tracker_run_name "$tracker_run_name" \
 --timestep "$timestep" \
 --enable_xformers_memory_efficient_attention \
---use_wandb
+# --use_wandb
 
 
 }

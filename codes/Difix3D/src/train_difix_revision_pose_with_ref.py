@@ -17,9 +17,8 @@ import diffusers
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
 import wandb
-from model_ref import DifixRef,load_ckpt_from_state_dict, save_ckpt
+from model_ref_with_pose import DifixRefWithPose,load_ckpt_from_state_dict, save_ckpt
 from dataset_pose_cond import KITTI360_Restoration_Dataset
-
 from ssim_torch import ssim
 
 
@@ -60,8 +59,6 @@ def Convert_Tensor_to_Image(tensor):
     image_tensor = (image_tensor * 255).astype(np.uint8)
     return image_tensor 
 
-
-
 def main(args):
     # Set log_with based on use_wandb flag
     log_with = args.report_to if args.use_wandb else None
@@ -87,7 +84,7 @@ def main(args):
         os.makedirs(os.path.join(args.output_dir, "eval"), exist_ok=True)
     
 
-    net_difix = DifixRef(
+    net_difix = DifixRefWithPose(
         pretrained_name=args.pretrained_model_name_or_path,
         pretrained_path=args.pretrained_model_path,
         lora_rank_vae=args.lora_rank_vae,
@@ -114,6 +111,7 @@ def main(args):
     # make the optimizer
     layers_to_opt = []
     layers_to_opt += list(net_difix.unet.parameters())
+    layers_to_opt += list(net_difix.pose_mlp.parameters())
    
     for n, _p in net_difix.vae.named_parameters():
         if "lora" in n and "vae_skip" in n:
@@ -132,7 +130,7 @@ def main(args):
         num_training_steps=args.max_train_steps * accelerator.num_processes,
         num_cycles=args.lr_num_cycles, power=args.lr_power,)
     
-    
+
     
     ''' Dataset Configurataion for the Paired Dataset '''
     
@@ -155,8 +153,6 @@ def main(args):
                                 use_relative_pose=args.use_relative_pose)
     
     dl_val = torch.utils.data.DataLoader(dataset_val, batch_size=1, shuffle=False, num_workers=0)
-    
-    
     # Resume from checkpoint
     global_step = 0    
     
@@ -226,7 +222,14 @@ def main(args):
                 x_tgt = batch["output_pixel_values"]
                 B, V, C, H, W = x_src.shape
                 # forward pass
-                x_tgt_pred = net_difix(x_src, prompt_tokens=batch["input_ids"])       
+                # 当 use_relative_pose=False 时，不从 batch 里取 relative_pose，避免 KeyError。
+                x_relative_pose = batch["relative_pose"] if args.use_relative_pose else None  # (B,V,4,4) or None
+
+                x_tgt_pred = net_difix(
+                    x_src,
+                    x_relative_pose,
+                    prompt_tokens=batch["input_ids"],
+                )
                 
                 x_tgt = rearrange(x_tgt, 'b v c h w -> (b v) c h w')
                 x_tgt_pred = rearrange(x_tgt_pred, 'b v c h w -> (b v) c h w')
@@ -290,11 +293,20 @@ def main(args):
                                 break
                             x_src = batch_val["conditioning_pixel_values"].to(accelerator.device, dtype=weight_dtype)
                             x_tgt = batch_val["output_pixel_values"].to(accelerator.device, dtype=weight_dtype)
+                            x_relative_pose = (
+                                batch_val["relative_pose"].to(accelerator.device, dtype=weight_dtype)
+                                if args.use_relative_pose
+                                else None
+                            )
                             B, V, C, H, W = x_src.shape
                             assert B == 1, "Use batch size 1 for eval."
                             with torch.no_grad():
                                 # forward pass
-                                x_tgt_pred = accelerator.unwrap_model(net_difix)(x_src, prompt_tokens=batch_val["input_ids"].cuda())
+                                x_tgt_pred = accelerator.unwrap_model(net_difix)(
+                                    x_src,
+                                    x_relative_pose,
+                                    prompt_tokens=batch_val["input_ids"].cuda(),
+                                )
                                 
                                 if step % 10 == 0 and args.use_wandb:
                                     log_dict["sample/source"].append(wandb.Image(rearrange(x_src, "b v c h w -> b c (v h) w")[0].float().detach().cpu(), caption=f"idx={len(log_dict['sample/source'])}"))
