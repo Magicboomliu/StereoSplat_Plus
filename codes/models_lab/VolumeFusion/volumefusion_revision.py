@@ -44,6 +44,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .debug import save_debug_visualizations
+
 
 def write_pose_to_json(pose, json_path: str) -> None:
     """
@@ -9355,6 +9357,7 @@ class VolumeFusionRevision(BaseModule):
         else:
             raise NotImplementedError
         
+        
         # First Time Iteration rendered images from the first frame stereo
         with torch.no_grad():
             input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
@@ -9619,12 +9622,348 @@ class VolumeFusionRevision(BaseModule):
                                                         pred = rendered_depth_plus,
                                                          gt = sparse_depth_gt)
 
-        # oracle G_base and G_plus fusion version
-        base_mask,plus_mask, fusion_image = fuse_rgb_by_gt_error(
-            rgb1 = rendered_images_base,
-            rgb2 = rendered_images_plus,
-            gt = rendered_images_gt
+        
+        base_mask, plus_mask, fusion_image = fuse_rgb_by_base_alpha(rgb_base=rendered_images_base, 
+                               rgb_plus=rendered_images_plus, 
+                               alpha_base=rendered_alpha_base)
+        
+        
+        fusion_depth = rendered_depth_base * base_mask.squeeze(2) + rendered_depth_plus * plus_mask.squeeze(2)
+    
+        all_rgb_eval_info_fusion = metrics_mean(pred = fusion_image,
+                                           gt = rendered_images_gt)
+        all_depth_eval_info_fusion = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = fusion_depth,
+                                                         gt = sparse_depth_gt)
+        
+        
+
+        eval_base_dict = {
+            "psnr": all_rgb_eval_info_base['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_base['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_base['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_base_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_base_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_base_depth['RMSE_log'].data.item(),
+        }
+        eval_plus_dict = {
+            "psnr": all_rgb_eval_info_plus['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_plus['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_plus['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_plus_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_plus_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_plus_depth['RMSE_log'].data.item(),
+        }
+        
+        eval_fusion_dict = {
+            "psnr": all_rgb_eval_info_fusion['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_fusion['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_fusion['lpips'].data.item(),
+            "absrel": all_depth_eval_info_fusion['AbsRel'].data.item(),
+            "sqrel": all_depth_eval_info_fusion['SqRel'].data.item(),
+            "rmse_log": all_depth_eval_info_fusion['RMSE_log'].data.item(),
+        }
+        
+        final_eval_dict ={
+            "G_base": eval_base_dict,
+            "G_plus": eval_plus_dict,
+            "G_fusion": eval_fusion_dict,
+        }
+
+        return final_eval_dict
+    
+
+
+    # FIXME: Please Delete in the Future, this version is just for the baseline perserving fusion debugging purpose.
+    def stereosplat_plus_baseline_preserving_hard_alpha_fusion(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views = 2,
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        bin_token_name = bin_token_list[0][:-4]
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+        
+        
+        # First Time Iteration rendered images from the first frame stereo
+        with torch.no_grad():
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+            
+            
+            start_time1 = time.time()
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+                
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
         )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        ''' Novel View Generation  for the 3DG (Base) here'''
+        rendered_images_base = interleave_left_right(rendered_color_fuse)
+        rendered_depth_base = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_base = interleave_left_right_depth(rendered_alpha_fuse)
+        
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(output_rgb)
+        
+        rendered_images_based_center_last = rendered_images_base[:,-6:-2,:,:,:]
+        rendered_images_based_center = rendered_images_based_center_last[:,-4:-2,:,:,:]
+        rendered_images_based_last = rendered_images_based_center_last[:,-2:,:,:,:]
+    
+        
+        if use_diffix3d:
+            # logic here
+            # enhance the center frame
+            rendered_images_based_center_last = rendered_images_based_center_last
+            rendered_center_left = rendered_images_based_center_last[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_center_right = rendered_images_based_center_last[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_left = rendered_images_based_center_last[0,2,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_right = rendered_images_based_center_last[0,3,:,:,:].permute(1,2,0).cpu().numpy()
+            
+            
+            rendered_center_left = (rendered_center_left*255).astype(np.uint8)
+            rendered_center_right = (rendered_center_right*255).astype(np.uint8)
+            rendered_last_left = (rendered_last_left*255).astype(np.uint8)
+            rendered_last_right = (rendered_last_right*255).astype(np.uint8)
+            
+            
+            rendered_center_left_pil = Image.fromarray(rendered_center_left)
+            rendered_center_right_pil = Image.fromarray(rendered_center_right)
+            rendered_last_left_pil = Image.fromarray(rendered_last_left)
+            rendered_last_right_pil = Image.fromarray(rendered_last_right)
+            
+            width,height = rendered_center_left_pil.size
+            
+            # get the ref image
+            ref_image_left = input_batch_dict["imgs"][0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_left = (ref_image_left*255).astype(np.uint8)
+            ref_image_left_pil = Image.fromarray(ref_image_left)
+            ref_image_right = input_batch_dict["imgs"][0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_right = (ref_image_right*255).astype(np.uint8)
+            ref_image_right_pil = Image.fromarray(ref_image_right)
+
+            enhanced_rendered_center_left_pil = diffix3d_network.sample(
+                    rendered_center_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_center_right_pil = diffix3d_network.sample(
+                    rendered_center_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_left_pil = diffix3d_network.sample(
+                    rendered_last_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_right_pil = diffix3d_network.sample(
+                    rendered_last_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+
+            enhanced_rendered_center_left = np.array(enhanced_rendered_center_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_center_right = np.array(enhanced_rendered_center_right_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_left = np.array(enhanced_rendered_last_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_right = np.array(enhanced_rendered_last_right_pil).astype(np.float32)/255.0
+            
+            enhanced_rendered_center_left = torch.from_numpy(enhanced_rendered_center_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_right = torch.from_numpy(enhanced_rendered_center_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_left = torch.from_numpy(enhanced_rendered_last_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_right = torch.from_numpy(enhanced_rendered_last_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_left = enhanced_rendered_center_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_center_right = enhanced_rendered_center_right.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_left = enhanced_rendered_last_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_right = enhanced_rendered_last_right.permute(2,0,1).unsqueeze(0)
+            
+            enhanced_rendered_images_based_center_last = torch.cat([enhanced_rendered_center_left,
+                                                        enhanced_rendered_center_right,
+                                                        enhanced_rendered_last_left,
+                                                        enhanced_rendered_last_right],dim=0).unsqueeze(0)
+            
+            rendered_images_based_center_last = enhanced_rendered_images_based_center_last
+        
+        
+        input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=6,
+                                                                         matching_nums=4)
+        input_batch_dict["imgs"][:,2:,:,:,:] = rendered_images_based_center_last
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        
+        height,width = img.shape[-2:]
+        bs = img.shape[0]   
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                        images_feat=img_feats[0])
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        '''Do the visualization and the evaluation here'''
+        rendered_images_plus = interleave_left_right(rendered_color_fuse)
+        rendered_depth_plus = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_plus = interleave_left_right_depth(rendered_alpha_fuse)
+        
+        
+        
+        all_rgb_eval_info_base = metrics_mean(pred = rendered_images_base,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_base,
+                                                         gt = sparse_depth_gt)
+        
+
+        all_rgb_eval_info_plus = metrics_mean(pred = rendered_images_plus,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_plus_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_plus,
+                                                         gt = sparse_depth_gt)
+
+        
+        base_mask, plus_mask, fusion_image = fuse_rgb_by_base_alpha_hard(
+                               rgb_base=rendered_images_base, 
+                               rgb_plus=rendered_images_plus, 
+                               alpha_base=rendered_alpha_base,
+                               alpha_plus=rendered_alpha_plus)
         
         
         fusion_depth = rendered_depth_base * base_mask.squeeze(2) + rendered_depth_plus * plus_mask.squeeze(2)
@@ -9672,9 +10011,713 @@ class VolumeFusionRevision(BaseModule):
         return final_eval_dict
     
     
+
+    # FIXME: Please Delete in the Future, this version is just for the baseline perserving fusion debugging purpose,
+    def stereosplat_plus_baseline_preserving_depth_consistency_fusion(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views = 2,
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        bin_token_name = bin_token_list[0][:-4]
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+        
+        
+        # First Time Iteration rendered images from the first frame stereo
+        with torch.no_grad():
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+            
+            
+            start_time1 = time.time()
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+                
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        ''' Novel View Generation  for the 3DG (Base) here'''
+        rendered_images_base = interleave_left_right(rendered_color_fuse)
+        rendered_depth_base = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_base = interleave_left_right_depth(rendered_alpha_fuse)
+        
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(output_rgb)
+        
+        rendered_images_based_center_last = rendered_images_base[:,-6:-2,:,:,:]
+        rendered_images_based_center = rendered_images_based_center_last[:,-4:-2,:,:,:]
+        rendered_images_based_last = rendered_images_based_center_last[:,-2:,:,:,:]
     
+        
+        if use_diffix3d:
+            # logic here
+            # enhance the center frame
+            rendered_images_based_center_last = rendered_images_based_center_last
+            rendered_center_left = rendered_images_based_center_last[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_center_right = rendered_images_based_center_last[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_left = rendered_images_based_center_last[0,2,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_right = rendered_images_based_center_last[0,3,:,:,:].permute(1,2,0).cpu().numpy()
+            
+            
+            rendered_center_left = (rendered_center_left*255).astype(np.uint8)
+            rendered_center_right = (rendered_center_right*255).astype(np.uint8)
+            rendered_last_left = (rendered_last_left*255).astype(np.uint8)
+            rendered_last_right = (rendered_last_right*255).astype(np.uint8)
+            
+            
+            rendered_center_left_pil = Image.fromarray(rendered_center_left)
+            rendered_center_right_pil = Image.fromarray(rendered_center_right)
+            rendered_last_left_pil = Image.fromarray(rendered_last_left)
+            rendered_last_right_pil = Image.fromarray(rendered_last_right)
+            
+            width,height = rendered_center_left_pil.size
+            
+            # get the ref image
+            ref_image_left = input_batch_dict["imgs"][0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_left = (ref_image_left*255).astype(np.uint8)
+            ref_image_left_pil = Image.fromarray(ref_image_left)
+            ref_image_right = input_batch_dict["imgs"][0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_right = (ref_image_right*255).astype(np.uint8)
+            ref_image_right_pil = Image.fromarray(ref_image_right)
+
+            enhanced_rendered_center_left_pil = diffix3d_network.sample(
+                    rendered_center_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_center_right_pil = diffix3d_network.sample(
+                    rendered_center_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_left_pil = diffix3d_network.sample(
+                    rendered_last_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_right_pil = diffix3d_network.sample(
+                    rendered_last_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+
+            enhanced_rendered_center_left = np.array(enhanced_rendered_center_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_center_right = np.array(enhanced_rendered_center_right_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_left = np.array(enhanced_rendered_last_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_right = np.array(enhanced_rendered_last_right_pil).astype(np.float32)/255.0
+            
+            enhanced_rendered_center_left = torch.from_numpy(enhanced_rendered_center_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_right = torch.from_numpy(enhanced_rendered_center_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_left = torch.from_numpy(enhanced_rendered_last_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_right = torch.from_numpy(enhanced_rendered_last_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_left = enhanced_rendered_center_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_center_right = enhanced_rendered_center_right.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_left = enhanced_rendered_last_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_right = enhanced_rendered_last_right.permute(2,0,1).unsqueeze(0)
+            
+            enhanced_rendered_images_based_center_last = torch.cat([enhanced_rendered_center_left,
+                                                        enhanced_rendered_center_right,
+                                                        enhanced_rendered_last_left,
+                                                        enhanced_rendered_last_right],dim=0).unsqueeze(0)
+            
+            rendered_images_based_center_last = enhanced_rendered_images_based_center_last
+        
+        
+        input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=6,
+                                                                         matching_nums=4)
+        input_batch_dict["imgs"][:,2:,:,:,:] = rendered_images_based_center_last
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        
+        height,width = img.shape[-2:]
+        bs = img.shape[0]   
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                        images_feat=img_feats[0])
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        '''Do the visualization and the evaluation here'''
+        rendered_images_plus = interleave_left_right(rendered_color_fuse)
+        rendered_depth_plus = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_plus = interleave_left_right_depth(rendered_alpha_fuse)
+        rendered_c2w_pose = interleave_left_right_pose(render_c2w)
+        
     
+        all_rgb_eval_info_base = metrics_mean(pred = rendered_images_base,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_base,
+                                                         gt = sparse_depth_gt)
+        all_rgb_eval_info_plus = metrics_mean(pred = rendered_images_plus,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_plus_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_plus,
+                                                         gt = sparse_depth_gt)
+        
+        
+        # w_base, w_plus, fusion_image = fuse_rgb_by_projected_depth(rgb_base=rendered_images_base,
+        #                             rgb_plus=rendered_images_plus,
+        #                             alpha_base=rendered_alpha_base,
+        #                             alpha_plus=rendered_alpha_plus,
+        #                             relative_pose=rendered_c2w_pose,
+        #                             base_depth=rendered_depth_base,
+        #                             plus_depth=rendered_depth_plus,
+        #                             intrinsics=output_intrinsics,
+        #                             rel_depth_thresh=0.15,
+        #                             occ_ratio=0.05,
+        #                             no_proj_conf_base=0.25,
+        #                             mismatch_conf_base=0.4)
+        
+        w_base, w_plus, fusion_image, debug = fuse_rgb_by_projected_depth(
+                                    rgb_base=rendered_images_base,
+                                    rgb_plus=rendered_images_plus,
+                                    alpha_base=rendered_alpha_base,
+                                    alpha_plus=rendered_alpha_plus,
+                                    relative_pose=rendered_c2w_pose,
+                                    base_depth=rendered_depth_base,
+                                    plus_depth=rendered_depth_plus,
+                                    intrinsics=output_intrinsics,
+                                    return_debug=True,
+        )
+        
+        # save_debug_visualizations(
+        #     debug=debug,
+        #     save_root="/home/zliu/IROS2026/Diff-StereoSplat/codes/Validation/Temp_Exp/",
+        #     batch_names=None,         # 或者 ["sample0", "sample1", ...]
+        #     save_single_views=True,
+        #     save_grids=True,
+        #     depth_log_scale=False,
+        #     rel_err_max=0.5,)
+        
+                
+        
+        fusion_depth = rendered_depth_base * w_base.squeeze(2) + rendered_depth_plus * w_plus.squeeze(2)
+        all_rgb_eval_info_fusion = metrics_mean(pred = fusion_image,
+                                           gt = rendered_images_gt)
+        all_depth_eval_info_fusion = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = fusion_depth,
+                                                         gt = sparse_depth_gt)
+        
+        eval_base_dict = {
+            "psnr": all_rgb_eval_info_base['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_base['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_base['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_base_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_base_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_base_depth['RMSE_log'].data.item(),
+        }
+        eval_plus_dict = {
+            "psnr": all_rgb_eval_info_plus['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_plus['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_plus['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_plus_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_plus_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_plus_depth['RMSE_log'].data.item(),
+        }
+        
+        eval_fusion_dict = {
+            "psnr": all_rgb_eval_info_fusion['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_fusion['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_fusion['lpips'].data.item(),
+            "absrel": all_depth_eval_info_fusion['AbsRel'].data.item(),
+            "sqrel": all_depth_eval_info_fusion['SqRel'].data.item(),
+            "rmse_log": all_depth_eval_info_fusion['RMSE_log'].data.item(),
+        }
+        
+        final_eval_dict ={
+            "G_base": eval_base_dict,
+            "G_plus": eval_plus_dict,
+            "G_fusion": eval_fusion_dict,
+        }
+        
+
+        return final_eval_dict    
     
+
+    # FIXME: Please Delete in the Future, this version is just for the baseline perserving fusion debugging purpose.
+    def stereosplat_plus_baseline_preserving_edges_and_textures_fusion(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views = 2,
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        bin_token_name = bin_token_list[0][:-4]
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+        
+        
+        # First Time Iteration rendered images from the first frame stereo
+        with torch.no_grad():
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+            
+            
+            start_time1 = time.time()
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+                
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        ''' Novel View Generation  for the 3DG (Base) here'''
+        rendered_images_base = interleave_left_right(rendered_color_fuse)
+        rendered_depth_base = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_base = interleave_left_right_depth(rendered_alpha_fuse)
+        
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(output_rgb)
+        
+        rendered_images_based_center_last = rendered_images_base[:,-6:-2,:,:,:]
+        rendered_images_based_center = rendered_images_based_center_last[:,-4:-2,:,:,:]
+        rendered_images_based_last = rendered_images_based_center_last[:,-2:,:,:,:]
+    
+        
+        if use_diffix3d:
+            # logic here
+            # enhance the center frame
+            rendered_images_based_center_last = rendered_images_based_center_last
+            rendered_center_left = rendered_images_based_center_last[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_center_right = rendered_images_based_center_last[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_left = rendered_images_based_center_last[0,2,:,:,:].permute(1,2,0).cpu().numpy()
+            rendered_last_right = rendered_images_based_center_last[0,3,:,:,:].permute(1,2,0).cpu().numpy()
+            
+            
+            rendered_center_left = (rendered_center_left*255).astype(np.uint8)
+            rendered_center_right = (rendered_center_right*255).astype(np.uint8)
+            rendered_last_left = (rendered_last_left*255).astype(np.uint8)
+            rendered_last_right = (rendered_last_right*255).astype(np.uint8)
+            
+            
+            rendered_center_left_pil = Image.fromarray(rendered_center_left)
+            rendered_center_right_pil = Image.fromarray(rendered_center_right)
+            rendered_last_left_pil = Image.fromarray(rendered_last_left)
+            rendered_last_right_pil = Image.fromarray(rendered_last_right)
+            
+            width,height = rendered_center_left_pil.size
+            
+            # get the ref image
+            ref_image_left = input_batch_dict["imgs"][0,0,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_left = (ref_image_left*255).astype(np.uint8)
+            ref_image_left_pil = Image.fromarray(ref_image_left)
+            ref_image_right = input_batch_dict["imgs"][0,1,:,:,:].permute(1,2,0).cpu().numpy()
+            ref_image_right = (ref_image_right*255).astype(np.uint8)
+            ref_image_right_pil = Image.fromarray(ref_image_right)
+
+            enhanced_rendered_center_left_pil = diffix3d_network.sample(
+                    rendered_center_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_center_right_pil = diffix3d_network.sample(
+                    rendered_center_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_left_pil = diffix3d_network.sample(
+                    rendered_last_left_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_left_pil,
+                    prompt=cfg.prompt
+                )
+            enhanced_rendered_last_right_pil = diffix3d_network.sample(
+                    rendered_last_right_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_image_right_pil,
+                    prompt=cfg.prompt
+                )
+
+            enhanced_rendered_center_left = np.array(enhanced_rendered_center_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_center_right = np.array(enhanced_rendered_center_right_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_left = np.array(enhanced_rendered_last_left_pil).astype(np.float32)/255.0
+            enhanced_rendered_last_right = np.array(enhanced_rendered_last_right_pil).astype(np.float32)/255.0
+            
+            enhanced_rendered_center_left = torch.from_numpy(enhanced_rendered_center_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_right = torch.from_numpy(enhanced_rendered_center_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_left = torch.from_numpy(enhanced_rendered_last_left).to(rendered_images_based_center_last.device)
+            enhanced_rendered_last_right = torch.from_numpy(enhanced_rendered_last_right).to(rendered_images_based_center_last.device)
+            enhanced_rendered_center_left = enhanced_rendered_center_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_center_right = enhanced_rendered_center_right.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_left = enhanced_rendered_last_left.permute(2,0,1).unsqueeze(0)
+            enhanced_rendered_last_right = enhanced_rendered_last_right.permute(2,0,1).unsqueeze(0)
+            
+            enhanced_rendered_images_based_center_last = torch.cat([enhanced_rendered_center_left,
+                                                        enhanced_rendered_center_right,
+                                                        enhanced_rendered_last_left,
+                                                        enhanced_rendered_last_right],dim=0).unsqueeze(0)
+            
+            rendered_images_based_center_last = enhanced_rendered_images_based_center_last
+        
+        
+        input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=6,
+                                                                         matching_nums=4)
+        input_batch_dict["imgs"][:,2:,:,:,:] = rendered_images_based_center_last
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]
+        
+        height,width = img.shape[-2:]
+        bs = img.shape[0]   
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                        images_feat=img_feats[0])
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+        
+
+        '''Do the visualization and the evaluation here'''
+        rendered_images_plus = interleave_left_right(rendered_color_fuse)
+        rendered_depth_plus = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_alpha_plus = interleave_left_right_depth(rendered_alpha_fuse)
+        
+        
+        
+        all_rgb_eval_info_base = metrics_mean(pred = rendered_images_base,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_base,
+                                                         gt = sparse_depth_gt)
+        
+
+        all_rgb_eval_info_plus = metrics_mean(pred = rendered_images_plus,
+                                           gt = rendered_images_gt)
+        all_rgb_eval_info_plus_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = rendered_depth_plus,
+                                                         gt = sparse_depth_gt)
+
+        
+        # base_mask, plus_mask, fusion_image = fuse_rgb_by_base_alpha(rgb_base=rendered_images_base, 
+        #                        rgb_plus=rendered_images_plus, 
+        #                        alpha_base=rendered_alpha_base)
+        
+        
+        base_mask, plus_mask, fusion_image, focus_score = fuse_rgb_by_boundary_texture_focus(rgb_base=rendered_images_base,
+                                            rgb_plus=rendered_images_plus,
+                                            edge_weight= 0.65,
+                                            texture_weight= 0.35,
+                                            threshold= 0.20,
+                                            temperature= 0.08,
+                                            blur_kernel_size= 3,
+                                            texture_kernel_size= 7)
+        
+        
+        fusion_depth = rendered_depth_base * base_mask.squeeze(2) + rendered_depth_plus * plus_mask.squeeze(2)
+    
+        all_rgb_eval_info_fusion = metrics_mean(pred = fusion_image,
+                                           gt = rendered_images_gt)
+        all_depth_eval_info_fusion = depth_metrics_absrel_sqrel_rmse_log(
+                                                        pred = fusion_depth,
+                                                         gt = sparse_depth_gt)
+        
+        
+
+        eval_base_dict = {
+            "psnr": all_rgb_eval_info_base['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_base['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_base['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_base_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_base_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_base_depth['RMSE_log'].data.item(),
+        }
+        eval_plus_dict = {
+            "psnr": all_rgb_eval_info_plus['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_plus['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_plus['lpips'].data.item(),
+            "absrel": all_rgb_eval_info_plus_depth['AbsRel'].data.item(),
+            "sqrel": all_rgb_eval_info_plus_depth['SqRel'].data.item(),
+            "rmse_log": all_rgb_eval_info_plus_depth['RMSE_log'].data.item(),
+        }
+        
+        eval_fusion_dict = {
+            "psnr": all_rgb_eval_info_fusion['psnr'].data.item(),
+            "ssim": all_rgb_eval_info_fusion['ssim'].data.item(),
+            "lpips": all_rgb_eval_info_fusion['lpips'].data.item(),
+            "absrel": all_depth_eval_info_fusion['AbsRel'].data.item(),
+            "sqrel": all_depth_eval_info_fusion['SqRel'].data.item(),
+            "rmse_log": all_depth_eval_info_fusion['RMSE_log'].data.item(),
+        }
+        
+        final_eval_dict ={
+            "G_base": eval_base_dict,
+            "G_plus": eval_plus_dict,
+            "G_fusion": eval_fusion_dict,
+        }
+        
+    
+        return final_eval_dict
+
+
     # FIXME: Creating the finetuning dataset for Difix3D: All views with Pose Conditioning Prompt
     def Creating_Finetuning_Dataset_For_Difix3D_With_Pose_Conditioning_Prompt(self,
                                         batch,
@@ -9858,7 +10901,10 @@ class VolumeFusionRevision(BaseModule):
                                os.path.join(saved_relative_pose_folder,
                                             "relative_pose_{}.txt".format(image_index)))
             
-            
+    
+    
+    
+        
 @torch.no_grad()
 def convert_pil_to_tensor(pil_image):
     img = torch.from_numpy(np.array(pil_image)).type(torch.float32)/255.0
@@ -10036,6 +11082,563 @@ def fuse_rgb_by_gt_error(
     fused_rgb = rgb1 * mask1_rgb + rgb2 * mask2_rgb
 
     return mask1, mask2, fused_rgb
+
+
+def fuse_rgb_by_base_alpha(
+    rgb_base: torch.Tensor,
+    rgb_plus: torch.Tensor,
+    alpha_base: torch.Tensor,
+):
+    """
+    Fuse rgb_base and rgb_plus by base alpha (continuous weighting).
+
+    Args:
+        rgb_base: [B, V, 3, H, W]
+        rgb_plus: [B, V, 3, H, W]
+        alpha_base: [B, V, H, W] or [B, V, 1, H, W], expected in [0, 1]
+
+    Returns:
+        base_mask: [B, V, 1, H, W], continuous weight from alpha_base
+        plus_mask: [B, V, 1, H, W], 1 - base_mask
+        fused_rgb: [B, V, 3, H, W]
+    """
+    if rgb_base.shape != rgb_plus.shape:
+        raise ValueError(f"Shape mismatch: rgb_base={rgb_base.shape}, rgb_plus={rgb_plus.shape}")
+    if rgb_base.ndim != 5 or rgb_base.shape[2] != 3:
+        raise ValueError(f"Expected rgb shape [B, V, 3, H, W], but got {rgb_base.shape}")
+
+    if alpha_base.ndim == 4:
+        base_mask = alpha_base.unsqueeze(2)  # [B, V, 1, H, W]
+    elif alpha_base.ndim == 5 and alpha_base.shape[2] == 1:
+        base_mask = alpha_base
+    else:
+        raise ValueError(
+            f"Expected alpha shape [B, V, H, W] or [B, V, 1, H, W], but got {alpha_base.shape}"
+        )
+
+    base_mask = base_mask.to(rgb_base.dtype).clamp(0.0, 1.0)
+    plus_mask = 1.0 - base_mask
+    fused_rgb = rgb_base * base_mask + rgb_plus * plus_mask
+    return base_mask, plus_mask, fused_rgb
+
+
+
+def fuse_rgb_by_base_alpha_hard(
+    rgb_base: torch.Tensor,
+    rgb_plus: torch.Tensor,
+    alpha_base: torch.Tensor,
+    alpha_plus: torch.Tensor,
+):
+    """
+    Hard fuse rgb_base and rgb_plus by comparing alpha_plus and alpha_base.
+
+    Args:
+        rgb_base: [B, V, 3, H, W]
+        rgb_plus: [B, V, 3, H, W]
+        alpha_base: [B, V, H, W] or [B, V, 1, H, W], expected in [0, 1]
+        alpha_plus: [B, V, H, W] or [B, V, 1, H, W], expected in [0, 1]
+
+    Returns:
+        base_mask: [B, V, 1, H, W], hard mask
+        plus_mask: [B, V, 1, H, W], hard mask
+        fused_rgb: [B, V, 3, H, W]
+    """
+    if rgb_base.shape != rgb_plus.shape:
+        raise ValueError(f"Shape mismatch: rgb_base={rgb_base.shape}, rgb_plus={rgb_plus.shape}")
+    if rgb_base.ndim != 5 or rgb_base.shape[2] != 3:
+        raise ValueError(f"Expected rgb shape [B, V, 3, H, W], but got {rgb_base.shape}")
+
+    if alpha_base.ndim == 4:
+        alpha_base = alpha_base.unsqueeze(2)  # [B, V, 1, H, W]
+    elif alpha_base.ndim == 5 and alpha_base.shape[2] == 1:
+        alpha_base = alpha_base
+    else:
+        raise ValueError(
+            f"Expected alpha shape [B, V, H, W] or [B, V, 1, H, W], but got {alpha_base.shape}"
+        )
+
+    if alpha_plus.ndim == 4:
+        alpha_plus = alpha_plus.unsqueeze(2)  # [B, V, 1, H, W]
+    elif alpha_plus.ndim == 5 and alpha_plus.shape[2] == 1:
+        alpha_plus = alpha_plus
+    else:
+        raise ValueError(
+            f"Expected alpha shape [B, V, H, W] or [B, V, 1, H, W], but got {alpha_plus.shape}"
+        )
+
+    alpha_base = alpha_base.to(rgb_base.dtype).clamp(0.0, 1.0)
+    alpha_plus = alpha_plus.to(rgb_base.dtype).clamp(0.0, 1.0)
+
+    plus_mask = (alpha_plus > alpha_base).to(rgb_base.dtype)
+    base_mask = 1.0 - plus_mask
+    fused_rgb = rgb_base * base_mask + rgb_plus * plus_mask
+    return base_mask, plus_mask, fused_rgb
+
+
+
+def fuse_rgb_by_boundary_texture_focus(
+    rgb_base: torch.Tensor,
+    rgb_plus: torch.Tensor,
+    edge_weight: float = 0.65,
+    texture_weight: float = 0.35,
+    threshold: float = 0.20,
+    temperature: float = 0.08,
+    blur_kernel_size: int = 3,
+    texture_kernel_size: int = 7,
+):
+    """
+    在边界/纹理更丰富的区域使用 plus，其余区域尽量保留 base。
+
+    做法是比较 plus 相对 base 的细节增益：
+    1. 用 Sobel 梯度提取边界强度
+    2. 用局部方差提取纹理/高频强度
+    3. 只保留 plus 相比 base 新增的那部分响应
+    4. 通过 sigmoid 生成 soft mask，对 RGB 进行加权融合
+
+    Args:
+        rgb_base: [B, V, 3, H, W]
+        rgb_plus: [B, V, 3, H, W]
+        edge_weight: 边界增益权重
+        texture_weight: 纹理增益权重
+        threshold: focus score 超过该阈值后，更偏向 plus
+        temperature: sigmoid 温度，越小 mask 越硬
+        blur_kernel_size: 梯度前平滑核大小，必须是奇数
+        texture_kernel_size: 局部方差窗口大小，必须是奇数
+
+    Returns:
+        base_mask: [B, V, 1, H, W]
+        plus_mask: [B, V, 1, H, W]
+        fused_rgb: [B, V, 3, H, W]
+        focus_score: [B, V, 1, H, W]
+    """
+    if rgb_base.shape != rgb_plus.shape:
+        raise ValueError(f"Shape mismatch: rgb_base={rgb_base.shape}, rgb_plus={rgb_plus.shape}")
+    if rgb_base.ndim != 5 or rgb_base.shape[2] != 3:
+        raise ValueError(f"Expected rgb shape [B, V, 3, H, W], but got {rgb_base.shape}")
+    if blur_kernel_size % 2 == 0 or texture_kernel_size % 2 == 0:
+        raise ValueError("blur_kernel_size 和 texture_kernel_size 必须是奇数")
+
+    B, V, _, H, W = rgb_base.shape
+    dtype = rgb_base.dtype
+    device = rgb_base.device
+
+    def _to_gray(x: torch.Tensor) -> torch.Tensor:
+        r, g, b = x[:, :, 0:1], x[:, :, 1:2], x[:, :, 2:3]
+        return 0.2989 * r + 0.5870 * g + 0.1140 * b
+
+    def _per_view_minmax(x: torch.Tensor) -> torch.Tensor:
+        x_flat = x.reshape(B, V, -1)
+        x_min = x_flat.min(dim=-1, keepdim=True)[0].view(B, V, 1, 1, 1)
+        x_max = x_flat.max(dim=-1, keepdim=True)[0].view(B, V, 1, 1, 1)
+        return (x - x_min) / (x_max - x_min + 1e-8)
+
+    def _extract_edge_and_texture(x: torch.Tensor):
+        gray = _to_gray(x).reshape(B * V, 1, H, W)
+
+        if blur_kernel_size > 1:
+            pad = blur_kernel_size // 2
+            gray = F.avg_pool2d(gray, kernel_size=blur_kernel_size, stride=1, padding=pad)
+
+        sobel_x = torch.tensor(
+            [[[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]]],
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)
+        sobel_y = torch.tensor(
+            [[[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]]],
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)
+
+        grad_x = F.conv2d(gray, sobel_x, padding=1)
+        grad_y = F.conv2d(gray, sobel_y, padding=1)
+        grad_mag = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-8).reshape(B, V, 1, H, W)
+
+        tex_pad = texture_kernel_size // 2
+        local_mean = F.avg_pool2d(gray, kernel_size=texture_kernel_size, stride=1, padding=tex_pad)
+        local_mean_sq = F.avg_pool2d(gray ** 2, kernel_size=texture_kernel_size, stride=1, padding=tex_pad)
+        local_var = torch.relu(local_mean_sq - local_mean ** 2).reshape(B, V, 1, H, W)
+
+        return _per_view_minmax(grad_mag), _per_view_minmax(local_var)
+
+    edge_base, texture_base = _extract_edge_and_texture(rgb_base)
+    edge_plus, texture_plus = _extract_edge_and_texture(rgb_plus)
+
+    edge_gain = torch.relu(edge_plus - edge_base)
+    texture_gain = torch.relu(texture_plus - texture_base)
+
+    focus_score = edge_weight * edge_gain + texture_weight * texture_gain
+    focus_score = _per_view_minmax(focus_score)
+
+    plus_mask = torch.sigmoid((focus_score - threshold) / max(temperature, 1e-6))
+    base_mask = 1.0 - plus_mask
+    fused_rgb = rgb_base * base_mask + rgb_plus * plus_mask
+    return base_mask, plus_mask, fused_rgb, focus_score
+
+
+
+
+
+def _forward_warp_depth_splat(
+    depth_src: torch.Tensor,
+    T_src_c2w: torch.Tensor,
+    T_tgt_c2w: torch.Tensor,
+    K_src: torch.Tensor,
+    K_tgt: torch.Tensor,
+) -> torch.Tensor:
+    """
+    将 source 视角深度图前向投影到 target 像素格，多源像素落同一点时取更近深度 (amin)。
+
+    depth_src: [H, W]
+    T_*_c2w: [4, 4]
+    K_*: [3, 3]
+    返回: [H, W]，无覆盖处为 inf。
+    """
+    H, W = depth_src.shape
+    device, dtype = depth_src.device, depth_src.dtype
+
+    yy, xx = torch.meshgrid(
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
+        indexing="ij",
+    )
+
+    z = depth_src
+    valid_z = z > 1e-6
+
+    fx_s, fy_s = K_src[0, 0], K_src[1, 1]
+    cx_s, cy_s = K_src[0, 2], K_src[1, 2]
+
+    x = (xx - cx_s) * z / fx_s
+    y = (yy - cy_s) * z / fy_s
+
+    homo = torch.stack([x, y, z, torch.ones_like(z)], dim=-1).reshape(-1, 4).T
+    p_w = T_src_c2w @ homo
+    p_t = (torch.linalg.inv(T_tgt_c2w) @ p_w).T.reshape(H, W, 4)
+
+    Zt = p_t[..., 2]
+    valid_z2 = Zt > 1e-6
+
+    fx_t, fy_t = K_tgt[0, 0], K_tgt[1, 1]
+    cx_t, cy_t = K_tgt[0, 2], K_tgt[1, 2]
+
+    u_t = fx_t * p_t[..., 0] / (Zt + 1e-8) + cx_t
+    v_t = fy_t * p_t[..., 1] / (Zt + 1e-8) + cy_t
+
+    inside = (u_t >= 0) & (u_t <= W - 1) & (v_t >= 0) & (v_t <= H - 1)
+    m = valid_z & valid_z2 & inside
+
+    Zt_flat = Zt.reshape(-1)
+    u_flat = u_t.reshape(-1)
+    v_flat = v_t.reshape(-1)
+
+    iu = u_flat.long().clamp(0, W - 1)
+    iv = v_flat.long().clamp(0, H - 1)
+    idx = iv * W + iu
+    m_flat = m.reshape(-1)
+
+    out = torch.full((H * W,), float("inf"), device=device, dtype=dtype)
+    if m_flat.any():
+        out.scatter_reduce_(
+            0,
+            idx[m_flat].long(),
+            Zt_flat[m_flat],
+            reduce="amin",
+            include_self=False,
+        )
+    return out.reshape(H, W)
+
+
+def _alpha_to_bv1hw(alpha: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    if alpha.ndim == 4:
+        return alpha.unsqueeze(2).to(ref.dtype).clamp(0.0, 1.0)
+    if alpha.ndim == 5 and alpha.shape[2] == 1:
+        return alpha.to(ref.dtype).clamp(0.0, 1.0)
+    raise ValueError(
+        f"Expected alpha [B,V,H,W] or [B,V,1,H,W], got {alpha.shape}"
+    )
+
+
+def _get_intrinsic(intrinsics: torch.Tensor, b: int, v: int) -> torch.Tensor:
+    if intrinsics.ndim == 3:
+        return intrinsics[b]
+    if intrinsics.ndim == 4:
+        return intrinsics[b, v]
+    raise ValueError(
+        f"intrinsics 应为 [B,3,3] 或 [B,V,3,3]，得到 {intrinsics.shape}"
+    )
+
+
+def fuse_rgb_by_projected_depth(
+    rgb_base: torch.Tensor,
+    rgb_plus: torch.Tensor,
+    alpha_base: torch.Tensor,
+    alpha_plus: torch.Tensor,
+    relative_pose: torch.Tensor,
+    base_depth: torch.Tensor,
+    plus_depth: torch.Tensor,
+    intrinsics: torch.Tensor,
+    rel_depth_tau: float = 0.12,
+    occ_ratio: float = 0.05,
+    no_proj_base_conf: float = 0.10,
+    no_proj_plus_conf: float = 1.00,
+    base_front_base_conf: float = 1.00,
+    base_front_plus_conf: float = 0.10,
+    plus_front_base_conf: float = 0.10,
+    plus_front_plus_conf: float = 1.00,
+    consistent_base_min: float = 0.15,
+    consistent_base_gain: float = 0.85,
+    consistent_plus_conf: float = 0.20,
+    first_view_base_prior: float = 0.95,
+    first_view_plus_prior: float = 0.05,
+    eps: float = 1e-8,
+    return_debug: bool = False,
+):
+    """
+    基于 first-frame stereo depth 的 geometry-aware base/plus RGB fusion.
+
+    约定与 interleave_left_right* 一致：
+    [..., -2] = first 左
+    [..., -1] = first 右
+    其前是交替 [左,右,左,右,...]
+
+    Args:
+        rgb_base / rgb_plus:
+            [B, V, 3, H, W]
+        alpha_base / alpha_plus:
+            [B, V, H, W] 或 [B, V, 1, H, W]
+        relative_pose:
+            [B, V, 4, 4], c2w
+        base_depth / plus_depth:
+            [B, V, H, W]
+        intrinsics:
+            [B, 3, 3] 或 [B, V, 3, 3]
+
+    Returns:
+        w_base:   [B, V, 1, H, W]
+        w_plus:   [B, V, 1, H, W]
+        fused_rgb:[B, V, 3, H, W]
+        debug(optional): dict
+    """
+    if rgb_base.shape != rgb_plus.shape:
+        raise ValueError(f"rgb shape mismatch: {rgb_base.shape} vs {rgb_plus.shape}")
+
+    B, V, _, H, W = rgb_base.shape
+
+    if base_depth.shape != (B, V, H, W):
+        raise ValueError(f"base_depth should be {(B, V, H, W)}, got {base_depth.shape}")
+    if plus_depth.shape != (B, V, H, W):
+        raise ValueError(f"plus_depth should be {(B, V, H, W)}, got {plus_depth.shape}")
+    if relative_pose.shape != (B, V, 4, 4):
+        raise ValueError(f"relative_pose should be {(B, V, 4, 4)}, got {relative_pose.shape}")
+
+    dtype = rgb_base.dtype
+    device = rgb_base.device
+
+    idx_first_l = V - 2
+    idx_first_r = V - 1
+
+    alpha_b = _alpha_to_bv1hw(alpha_base, rgb_base)   # [B,V,1,H,W]
+    alpha_p = _alpha_to_bv1hw(alpha_plus, rgb_base)   # [B,V,1,H,W]
+
+    base_conf_all = []
+    plus_conf_all = []
+
+    dbg_proj_depth = []
+    dbg_proj_valid = []
+    dbg_rel_err_proj_plus = []
+    dbg_rel_err_proj_base = []
+    dbg_consistent = []
+    dbg_plus_front = []
+    dbg_base_front = []
+
+    for b in range(B):
+        base_conf_views = []
+        plus_conf_views = []
+
+        proj_depth_views = []
+        proj_valid_views = []
+        rel_err_pp_views = []
+        rel_err_pb_views = []
+        consistent_views = []
+        plus_front_views = []
+        base_front_views = []
+
+        for v in range(V):
+            src_idx = idx_first_l if (v % 2 == 0) else idx_first_r
+
+            depth_src = base_depth[b, src_idx]      # first-frame stereo depth
+            base_d = base_depth[b, v]               # base target-view depth
+            plus_d = plus_depth[b, v]               # plus target-view depth
+
+            T_src = relative_pose[b, src_idx]
+            T_tgt = relative_pose[b, v]
+
+            K_src = _get_intrinsic(intrinsics, b, src_idx)
+            K_tgt = _get_intrinsic(intrinsics, b, v)
+
+            if v == src_idx:
+                proj_d = depth_src.clone()
+            else:
+                proj_d = _forward_warp_depth_splat(
+                    depth_src=depth_src,
+                    T_src_c2w=T_src,
+                    T_tgt_c2w=T_tgt,
+                    K_src=K_src,
+                    K_tgt=K_tgt,
+                )
+
+            valid = torch.isfinite(proj_d) & (proj_d > 1e-6) & (proj_d < 1e5)
+
+            # 相对误差：projected depth vs plus/base depth
+            rel_err_proj_plus = torch.abs(proj_d - plus_d) / (plus_d + eps)
+            rel_err_proj_base = torch.abs(proj_d - base_d) / (base_d + eps)
+
+            # 连续几何匹配分数
+            soft_match_plus = torch.exp(-rel_err_proj_plus / rel_depth_tau)
+            soft_match_base = torch.exp(-rel_err_proj_base / rel_depth_tau)
+
+            # 深度前后关系
+            # depth 越小越靠近相机
+            plus_front = valid & (proj_d > plus_d * (1.0 + occ_ratio))
+            base_front = valid & (plus_d > proj_d * (1.0 + occ_ratio))
+
+            # 二者接近，没有强前后冲突
+            consistent = valid & (~plus_front) & (~base_front)
+
+            # 初始化
+            base_conf = torch.zeros_like(plus_d, dtype=dtype, device=device)
+            plus_conf = torch.zeros_like(plus_d, dtype=dtype, device=device)
+
+            # --------------------------------------------------
+            # case 0: first-frame 自身视角，强偏向 base
+            # --------------------------------------------------
+            if v == src_idx:
+                base_conf.fill_(first_view_base_prior)
+                plus_conf.fill_(first_view_plus_prior)
+
+            else:
+                # --------------------------------------------------
+                # case 1: no projection support
+                # --------------------------------------------------
+                base_conf = torch.where(
+                    ~valid,
+                    torch.full_like(base_conf, no_proj_base_conf),
+                    base_conf,
+                )
+                plus_conf = torch.where(
+                    ~valid,
+                    torch.full_like(plus_conf, no_proj_plus_conf),
+                    plus_conf,
+                )
+
+                # --------------------------------------------------
+                # case 2: consistent region
+                # base 信 projected-vs-base consistency
+                # plus 给一个较低但非 0 的保留分
+                # --------------------------------------------------
+                consistent_base_conf = (
+                    consistent_base_min + consistent_base_gain * soft_match_base
+                ).clamp(0.0, 1.0)
+
+                base_conf = torch.where(
+                    consistent,
+                    consistent_base_conf,
+                    base_conf,
+                )
+                plus_conf = torch.where(
+                    consistent,
+                    torch.full_like(plus_conf, consistent_plus_conf) * soft_match_plus,
+                    plus_conf,
+                )
+
+                # --------------------------------------------------
+                # case 3: plus 更靠近相机，更像 target-view 可见前景
+                # --------------------------------------------------
+                base_conf = torch.where(
+                    plus_front,
+                    torch.full_like(base_conf, plus_front_base_conf),
+                    base_conf,
+                )
+                plus_conf = torch.where(
+                    plus_front,
+                    torch.full_like(plus_conf, plus_front_plus_conf),
+                    plus_conf,
+                )
+
+                # --------------------------------------------------
+                # case 4: projected depth 更靠近相机，base 更像前景可见面
+                # 同时参考 projected-vs-base 的匹配程度
+                # --------------------------------------------------
+                base_front_conf = (
+                    base_front_base_conf * soft_match_base
+                ).clamp(0.0, 1.0)
+
+                plus_front_for_base_conf = (
+                    base_front_plus_conf * soft_match_plus
+                ).clamp(0.0, 1.0)
+
+                base_conf = torch.where(
+                    base_front,
+                    base_front_conf,
+                    base_conf,
+                )
+                plus_conf = torch.where(
+                    base_front,
+                    plus_front_for_base_conf,
+                    plus_conf,
+                )
+
+            # alpha 只作为可见性/coverage 修正，不主导几何判决
+            w_base_raw = (alpha_b[b, v, 0] * base_conf).clamp(min=0.0)
+            w_plus_raw = (alpha_p[b, v, 0] * plus_conf).clamp(min=0.0)
+
+            base_conf_views.append(w_base_raw)
+            plus_conf_views.append(w_plus_raw)
+
+            proj_depth_views.append(proj_d)
+            proj_valid_views.append(valid.to(dtype))
+            rel_err_pp_views.append(rel_err_proj_plus)
+            rel_err_pb_views.append(rel_err_proj_base)
+            consistent_views.append(consistent.to(dtype))
+            plus_front_views.append(plus_front.to(dtype))
+            base_front_views.append(base_front.to(dtype))
+
+        base_conf_all.append(torch.stack(base_conf_views, dim=0))
+        plus_conf_all.append(torch.stack(plus_conf_views, dim=0))
+
+        dbg_proj_depth.append(torch.stack(proj_depth_views, dim=0))
+        dbg_proj_valid.append(torch.stack(proj_valid_views, dim=0))
+        dbg_rel_err_proj_plus.append(torch.stack(rel_err_pp_views, dim=0))
+        dbg_rel_err_proj_base.append(torch.stack(rel_err_pb_views, dim=0))
+        dbg_consistent.append(torch.stack(consistent_views, dim=0))
+        dbg_plus_front.append(torch.stack(plus_front_views, dim=0))
+        dbg_base_front.append(torch.stack(base_front_views, dim=0))
+
+    w_base = torch.stack(base_conf_all, dim=0)   # [B,V,H,W]
+    w_plus = torch.stack(plus_conf_all, dim=0)   # [B,V,H,W]
+
+    denom = w_base + w_plus + eps
+    w_base = (w_base / denom).unsqueeze(2)       # [B,V,1,H,W]
+    w_plus = (w_plus / denom).unsqueeze(2)       # [B,V,1,H,W]
+
+    fused_rgb = w_base * rgb_base + w_plus * rgb_plus
+
+    if not return_debug:
+        return w_base, w_plus, fused_rgb
+
+    debug = {
+        "projected_depth": torch.stack(dbg_proj_depth, dim=0),          # [B,V,H,W]
+        "projected_valid": torch.stack(dbg_proj_valid, dim=0),          # [B,V,H,W]
+        "rel_err_proj_plus": torch.stack(dbg_rel_err_proj_plus, dim=0), # [B,V,H,W]
+        "rel_err_proj_base": torch.stack(dbg_rel_err_proj_base, dim=0), # [B,V,H,W]
+        "consistent_mask": torch.stack(dbg_consistent, dim=0),          # [B,V,H,W]
+        "plus_front_mask": torch.stack(dbg_plus_front, dim=0),          # [B,V,H,W]
+        "base_front_mask": torch.stack(dbg_base_front, dim=0),          # [B,V,H,W]
+    }
+
+    return w_base, w_plus, fused_rgb, debug
+
 
 
 
