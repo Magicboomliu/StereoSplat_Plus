@@ -1,11 +1,10 @@
-Baseline_Preserving_Fusion_SETUP01(){
+Baseline_Preserving_Fusion_Simple_Alpha(){
 
 cd ../../..
 
-
 cd codes/Validation
 config_path="/home/zliu/IROS2026/Diff-StereoSplat/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others/StereoSplat_Plus/Baseline_Preserving_Fusion/Center_Last/Oracle_Upper_Bound"
+output_folder="/data1/zliu/IROS26/Compared_With_Others/StereoSplat_Plus/Baseline_Preserving_Fusion/Center_Last/Simple_Alpha"
 val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -18,7 +17,7 @@ prompt="remove degradation"
 timestep=199
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file gpu_config_1.yaml stereosplat_plus/stereosplat_baseline_preserving_fusion_oracle.py \
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate launch --config-file gpu_config_0.yaml stereosplat_plus/stereosplat_baseline_perserving_fusion_simple_alpha.py \
     --config_path  $config_path \
     --output_folder $output_folder \
     --val_filelist $val_filelist \
@@ -39,6 +38,4 @@ TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 accelerate la
 }
 
 
-
-
-Baseline_Preserving_Fusion_SETUP01
+Baseline_Preserving_Fusion_Simple_Alpha

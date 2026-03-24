@@ -16,7 +16,6 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
-
 import sys
 sys.path.append("..")
 torch.autograd.set_detect_anomaly(True)
@@ -25,16 +24,11 @@ from torch import Tensor,nn
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import json
-
 # define the models
 from models_lab.VolumeFusion.volumefusion_revision import VolumeFusionRevision
-from models_lab.diffix3D.model import Difix
-
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-import skimage.io
-
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
 
 def saved_into_json(data_dict,path):
     with open(path, "w") as f:
@@ -116,15 +110,14 @@ def kitti_colormap(disparity, maxval=-1):
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 
+
 def main(args):
     
-    # CFG Configurations Here
     
     cfg = Config.fromfile(args.config_path)
-    cfg.work_dir = args.output_folder    
-    cfg.prompt = args.prompt
-    cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
-    
+    cfg.work_dir = args.output_folder
+
+
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -165,8 +158,6 @@ def main(args):
     
     dataset = getattr(datasets, dataset_config.dataset_name)
     
-    
-    
     if args.output_vis:
         val_filelist = args.demo_filelist
     else:
@@ -196,6 +187,7 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
 
+
     # Define the Model/Optimizer/Schduler Here
     my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -205,17 +197,7 @@ def main(args):
                                     camera_args=cfg.camera_args,
                                     dataset_params=cfg.dataset_params,
                                     use_checkpoint=cfg.use_checkpoint)
-    
-    # loading the pretrained diffix3d models.
-    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
 
-    pretrained_diffix_model = Difix(
-        pretrained_name=None,
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref)
-    
-    pretrained_diffix_model.set_eval()
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
     )
@@ -235,36 +217,10 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print('Can\'t find checkpoint {}. Randomly initialize model parameters anyway.'.format(args.load_from))
-        
-    pretrained_diffix_model.to(accelerator.device)
     
     
-    evaluation_results_g_base = {
-        "psnr": 0,
-        "ssim": 0,
-        "lpips": 0,
-        "absrel": 0,
-        "sqrel": 0,
-        "rmse_log": 0,
-    }
-    evaluation_results_g_plus = {
-        "psnr": 0,
-        "ssim": 0,
-        "lpips": 0,
-        "absrel": 0,
-        "sqrel": 0,
-        "rmse_log": 0,
-    }
-    evaluation_results_g_fusion = {
-        "psnr": 0,
-        "ssim": 0,
-        "lpips": 0,
-        "absrel": 0,
-        "sqrel": 0,
-        "rmse_log": 0,
-    }
-
-
+    view_num = 2
+    matching_nums = 2
     
     with torch.no_grad():
         my_model.eval()
@@ -272,47 +228,14 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-            
-            evaluation_results_stat = my_model.stereosplat_plus_baseline_preserving_fusion_oracle(
-                                            batch,
+            my_model.Creating_Finetuning_Dataset_For_Difix3D_With_Pose_Conditioning_Prompt(batch,
                                             args.output_folder,
                                             bin_token_list,
                                             cfg=cfg,
-                                            start_images_views=2,
-                                            use_diffix3d=args.use_diffix3d,
-                                            diffix3d_network=pretrained_diffix_model,
-                                            use_ref=args.use_ref,
+                                            view_num=view_num,
+                                            matching_nums=matching_nums,
                                             vis=args.output_vis)
             
-            current_evaluation_results_dict_g_base = evaluation_results_stat["G_base"]
-            current_evaluation_results_dict_g_plus = evaluation_results_stat["G_plus"]
-            current_evaluation_results_dict_g_fusion = evaluation_results_stat["G_fusion"]
-            
-            for key in current_evaluation_results_dict_g_base.keys():
-                evaluation_results_g_base[key] += current_evaluation_results_dict_g_base[key]
-            for key in current_evaluation_results_dict_g_plus.keys():
-                evaluation_results_g_plus[key] += current_evaluation_results_dict_g_plus[key]
-            for key in current_evaluation_results_dict_g_fusion.keys():
-                evaluation_results_g_fusion[key] += current_evaluation_results_dict_g_fusion[key]
-            batch_idx += 1
-        
-            
-        for key in evaluation_results_g_base.keys():
-            evaluation_results_g_base[key] /= batch_idx
-        for key in evaluation_results_g_plus.keys():
-            evaluation_results_g_plus[key] /= batch_idx
-        for key in evaluation_results_g_fusion.keys():
-            evaluation_results_g_fusion[key] /= batch_idx
-            
-        results_dict = {
-            "G_base": evaluation_results_g_base,
-            "G_plus": evaluation_results_g_plus,
-            "G_fusion": evaluation_results_g_fusion,
-        }
-        
-        saved_into_json(data_dict=results_dict,
-                        path=os.path.join(args.output_folder,"metric.json"))
-        
 
 
 def get_mean(list):
@@ -326,15 +249,9 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
+    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
-    
-    parser.add_argument('--pretrained_diffix_model_path', type=str, default="")
-    parser.add_argument('--timestep', type=int, default=199)
-    parser.add_argument('--prompt', type=str, default="remove degradation")
-    parser.add_argument('--use_ref', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d', action='store_true', default=False)
-    parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
 
     parser.add_argument(
         "--output_vis",
@@ -345,5 +262,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
-
+    
+    
     main(args)

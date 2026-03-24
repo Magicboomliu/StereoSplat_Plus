@@ -263,8 +263,7 @@ def main(args):
         "sqrel": 0,
         "rmse_log": 0,
     }
-
-
+    
     
     with torch.no_grad():
         my_model.eval()
@@ -273,7 +272,7 @@ def main(args):
             # process the current folder
             bin_token_list = batch['bin_token']
             
-            evaluation_results_stat = my_model.stereosplat_plus_baseline_preserving_fusion_oracle(
+            evaluation_results_stat = my_model.stereosplat_plus_baseline_preserving_simple_alpha_fusion(
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
