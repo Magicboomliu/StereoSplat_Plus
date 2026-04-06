@@ -10,7 +10,6 @@ from PIL import Image
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from tqdm import tqdm
 
-from model_ref import DifixRef
 from dataset_pose_cond import KITTI360_Restoration_Dataset
 from ssim_torch import ssim as ssim_torch
 
@@ -32,7 +31,6 @@ def resolve_split(payload: Dict, split: str) -> Dict:
 
 
 def get_paths_from_item(item: Dict) -> Tuple[str, str, str]:
-    # 兼容两套字段命名
     image_path = item.get("image", item.get("input_image"))
     target_path = item.get("target_image", item.get("output_image"))
     ref_path = item.get("ref_image", None)
@@ -61,92 +59,41 @@ def compute_psnr_ssim(pred: Image.Image, gt: Image.Image) -> Tuple[float, float]
     return float(psnr), float(ssim)
 
 
-def build_model(args):
-    if args.use_model_type not in {"huggingface", "local"}:
-        raise ValueError("--use_model_type must be 'huggingface' or 'local'")
-
-    if args.use_model_type == "huggingface":
-        model_name = args.model_name
-        model_path = None
-    else:
-        # 对齐训练脚本：local 模式优先使用 --model_name（等价 pretrained_name_or_path）
-        # 同时用 --model_path 作为 pretrained_path（可为 "None"/None）
-        model_name = args.model_name if args.model_name else "nvidia/difix_ref"
-        model_path = args.model_path
-
-    # 本评测脚本默认且强制使用 ref 模型（DifixRef）
-    model = DifixRef(
-        pretrained_name=model_name,
-        pretrained_path=model_path,
-        lora_rank_vae=args.lora_rank_vae,
-        timestep=args.timestep,
-        mv_unet=args.mv_unet,
-        deterministic_vae_encode=not args.stochastic_forward,
-        deterministic_scheduler_step=not args.stochastic_forward,
-    )
-    model.set_eval()
-    return model
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_test_filename", type=str, required=True, help="Path to dataset json")
     parser.add_argument("--split", type=str, default="test", choices=["train", "test"], help="Split to evaluate")
-    parser.add_argument("--model_name", type=str, default="nvidia/difix_ref", help="HF model name")
-    parser.add_argument("--model_path", type=str, default=None, help="Local checkpoint .pkl (for --use_model_type local)")
-    parser.add_argument("--height", type=int, default=112, help="Model input height")
-    parser.add_argument("--width", type=int, default=544, help="Model input width")
-    parser.add_argument("--ablation_study_name", type=str, default="eval_run", help="Run tag")
+    parser.add_argument("--height", type=int, default=112, help="Train-like input height")
+    parser.add_argument("--width", type=int, default=544, help="Train-like input width")
+    parser.add_argument("--ablation_study_name", type=str, default="baseline_no_model", help="Run tag")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--timestep", type=int, default=199, help="Diffusion timestep")
-    parser.add_argument("--lora_rank_vae", type=int, default=4, help="Match train_difix_revision_with_ref.py")
-    parser.add_argument("--mv_unet", action="store_true", help="Match train_difix_revision_with_ref.py")
-    parser.add_argument(
-        "--stochastic_forward",
-        action="store_true",
-        help="Match train behavior; default is deterministic forward",
-    )
-    parser.add_argument("--use_model_type", type=str, default="local", help="huggingface or local")
     parser.add_argument("--output_folder", type=str, required=True, help="Directory to save evaluation results")
-    parser.add_argument(
-        "--output_json_name",
-        type=str,
-        default="metrics.json",
-        help="Single output JSON filename under output_folder",
-    )
-    parser.add_argument("--save_predictions", action="store_true", help="Save per-sample model outputs")
+    parser.add_argument("--output_json_name", type=str, default="baseline_metrics.json", help="Single output JSON filename")
     parser.add_argument("--max_samples", type=int, default=-1, help="Evaluate first N samples, -1 means all")
     parser.add_argument(
         "--eval_mode",
         type=str,
-        default="train_like",
+        default="original_res",
         choices=["train_like", "original_res"],
-        help="train_like: strict match to training validation pipeline; original_res: sample()+PIL metrics",
+        help="train_like: match training preprocessing; original_res: compute metrics on original images",
     )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     os.makedirs(args.output_folder, exist_ok=True)
-    pred_dir = os.path.join(args.output_folder, "predictions")
-    if args.save_predictions:
-        os.makedirs(pred_dir, exist_ok=True)
 
-    model = build_model(args)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lpips_net = lpips.LPIPS(net="vgg").to(device).eval()
-    
-    print("model building is ok.")
 
     results = []
     l_psnr, l_ssim, l_lpips = [], [], []
 
     if args.eval_mode == "train_like":
-        # 严格对齐训练/验证：复用同数据预处理、同 forward(prompt_tokens)、同第0视图度量空间
         dataset = KITTI360_Restoration_Dataset(
             dataset_path=args.input_test_filename,
             split=args.split,
-            tokenizer=model.tokenizer,
+            tokenizer=None,
             height=args.height,
             width=args.width,
             use_relative_pose=False,
@@ -155,37 +102,29 @@ if __name__ == "__main__":
             dataset.img_ids = dataset.img_ids[: args.max_samples]
         dl = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
-        for batch_idx, batch in enumerate(tqdm(dl, desc=f"Evaluating {args.split} (train_like)")):
-            x_src = batch["conditioning_pixel_values"].to(device)
+        for batch_idx, batch in enumerate(tqdm(dl, desc=f"Baseline {args.split} (train_like)")):
+            x_src = batch["conditioning_pixel_values"].to(device)  # [B,V,C,H,W]
             x_tgt = batch["output_pixel_values"].to(device)
-            prompt_tokens = batch["input_ids"].to(device)
+
+            # 与训练验证一致：只评估第0视图
+            x_src0 = x_src[:, 0]
+            x_tgt0 = x_tgt[:, 0]
 
             with torch.no_grad():
-                x_pred = model(x_src, prompt_tokens=prompt_tokens)
-                # 与训练验证一致：只评估第0视图
-                x_pred0 = x_pred[:, 0]
-                x_tgt0 = x_tgt[:, 0]
-                mse = torch.mean((x_pred0.float() - x_tgt0.float()) ** 2)
+                mse = torch.mean((x_src0.float() - x_tgt0.float()) ** 2)
                 psnr = psnr_from_mse_neg1_to1(mse)
                 ssim = float(
                     ssim_torch(
-                        torch.clamp(x_pred0.float() * 0.5 + 0.5, 0.0, 1.0),
+                        torch.clamp(x_src0.float() * 0.5 + 0.5, 0.0, 1.0),
                         torch.clamp(x_tgt0.float() * 0.5 + 0.5, 0.0, 1.0),
                         data_range=1.0,
                         size_average=True,
                     ).item()
                 )
-                lpips_val = float(lpips_net(x_pred0.float(), x_tgt0.float()).mean().item())
+                lpips_val = float(lpips_net(x_src0.float(), x_tgt0.float()).mean().item())
 
             sample_id = dataset.img_ids[batch_idx]
             image_path, target_path, ref_path = get_paths_from_item(dataset.data[sample_id])
-            if ref_path is None:
-                raise KeyError(f"Sample {sample_id} missing ref_image, but evaluation requires ref_image.")
-            if args.save_predictions:
-                # train_like：与度量一致，保存网络分辨率下第 0 视图的预测（[-1,1] -> RGB PNG）
-                pred01 = torch.clamp(x_pred0.float().squeeze(0) * 0.5 + 0.5, 0.0, 1.0)
-                pred_u8 = (pred01.cpu().permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
-                Image.fromarray(pred_u8).save(os.path.join(pred_dir, f"{sample_id}.png"))
             l_psnr.append(psnr)
             l_ssim.append(ssim)
             l_lpips.append(lpips_val)
@@ -207,26 +146,13 @@ if __name__ == "__main__":
         if args.max_samples > 0:
             items = items[: args.max_samples]
 
-        for data_id, data_item in tqdm(items, desc=f"Evaluating {args.split} (original_res)"):
+        for data_id, data_item in tqdm(items, desc=f"Baseline {args.split} (original_res)"):
             image_path, target_path, ref_path = get_paths_from_item(data_item)
-            prompt = data_item.get("prompt", "")
-
             input_img = Image.open(image_path).convert("RGB")
             target_img = Image.open(target_path).convert("RGB")
-            if ref_path is None:
-                raise KeyError(f"Sample {data_id} missing ref_image, but evaluation requires ref_image.")
-            ref_img = Image.open(ref_path).convert("RGB")
 
-            with torch.no_grad():
-                pred_img = model.sample(
-                    image=input_img,
-                    width=args.width,
-                    height=args.height,
-                    ref_image=ref_img,
-                    timesteps=None,
-                    prompt=prompt,
-                    prompt_tokens=None,
-                )
+            # baseline: pred == input
+            pred_img = input_img
 
             psnr, ssim = compute_psnr_ssim(pred_img, target_img)
             pred_t = pil_to_neg1_tensor(pred_img, device)
@@ -249,22 +175,14 @@ if __name__ == "__main__":
                 }
             )
 
-            if args.save_predictions:
-                pred_img.save(os.path.join(pred_dir, f"{data_id}.png"))
-
     summary = {
         "ablation_study_name": args.ablation_study_name,
         "dataset": args.input_test_filename,
         "split": args.split,
         "num_samples": len(results),
-        "model_name": args.model_name,
-        "model_path": args.model_path,
-        "use_model_type": args.use_model_type,
-        "use_ref": True,
         "eval_mode": args.eval_mode,
         "height": args.height,
         "width": args.width,
-        "timestep": args.timestep,
         "mean_psnr": float(np.mean(l_psnr)) if l_psnr else None,
         "mean_ssim": float(np.mean(l_ssim)) if l_ssim else None,
         "mean_lpips": float(np.mean(l_lpips)) if l_lpips else None,
@@ -282,3 +200,4 @@ if __name__ == "__main__":
     print(f"Mean LPIPS: {summary['mean_lpips']:.6f}")
     print(f"Saved to  : {out_path}")
     print("=" * 60)
+

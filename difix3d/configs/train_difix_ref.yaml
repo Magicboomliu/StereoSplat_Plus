@@ -1,0 +1,13 @@
+## Model-related config (can be overridden by CLI flags)
+pretrained_model_name_or_path: "nvidia/difix_ref"
+pretrained_model_path: null
+lora_rank_vae: 4
+timestep: 199
+mv_unet: false
+stochastic_forward: false
+
+## Training knobs (optional to keep here; CLI can still override)
+mixed_precision: "no"   # "no" | "fp16" | "bf16"
+gradient_checkpointing: false
+enable_xformers_memory_efficient_attention: true
+allow_tf32: true

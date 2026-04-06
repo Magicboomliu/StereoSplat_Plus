@@ -1,0 +1,49 @@
+[project]
+authors = [{name = "MagicBoomLiu4GPUs", email = "zliu@ok.sc.e.titech.ac.jp"}]
+dependencies = ["matplotlib>=3.10.8,<4"]
+name = "difix3d"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.system-requirements]
+# Let pixi know the machine/environment targets CUDA 11.7 for GPU builds.
+cuda = "11.7"
+
+[tool.pixi.dependencies]
+# Keep Python aligned with requires-python (>=3.11)
+python = "3.11.*"
+
+# Pytorch (conda-forge) GPU build + CUDA pin (recommended in pixi docs)
+pytorch-gpu = "*"
+torchvision = "*"
+cuda-version = "11.7.*"
+xformers = "*"
+scikit-image = ">=0.26.0,<0.27"
+triton = ">=2.0.0,<3"
+setuptools = ">=82.0.1,<83"
+
+[tool.pixi.pypi-dependencies]
+difix3d = { path = ".", editable = true }
+
+# Python deps mirrored from repo-level requirements.txt
+pyyaml = "*"
+torchmetrics = "*"
+wandb = "*"
+imageio = "*"
+imageio-ffmpeg = "*"
+einops = "*"
+lpips = "*"
+peft = "==0.9.0"
+diffusers = "==0.25.1"
+huggingface-hub = "==0.25.1"
+transformers = "==4.38.0"
+
+[tool.pixi.tasks]
