@@ -36,8 +36,6 @@ def _apply_yaml_defaults(parser: argparse.ArgumentParser, config_path):
     parser.set_defaults(**cfg)
 
 
-
-
 def main(args):
     # Set log_with based on use_wandb flag
     log_with = args.report_to if args.use_wandb else None
