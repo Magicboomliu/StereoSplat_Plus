@@ -174,6 +174,10 @@ class DifixRef(torch.nn.Module):
                 _sd_unet[k] = sd["state_dict_unet"][k]
             unet.load_state_dict(_sd_unet)
 
+            # Keep metadata for future checkpointing
+            self.lora_rank_vae = sd.get("rank_vae", lora_rank_vae)
+            self.target_modules_vae = sd.get("vae_lora_target_modules", [])
+
         elif pretrained_name is None and pretrained_path is None:
             print("Initializing model with random weights")
             target_modules_vae = []

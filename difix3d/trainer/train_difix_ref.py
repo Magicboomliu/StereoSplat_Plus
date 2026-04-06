@@ -413,11 +413,6 @@ if __name__ == "__main__":
     
     # update the default args with the command line args
     args = parser.parse_args()
-
-    print(args.pretrained_model_path)
-    quit()
-
-
     main(args)
 
 
