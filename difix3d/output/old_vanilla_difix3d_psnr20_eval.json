@@ -1,0 +1,18 @@
+{
+  "split": "test",
+  "num_samples": 5805,
+  "height": 112,
+  "width": 544,
+  "pretrained_name": "nvidia/difix_ref",
+  "pretrained_path": "/data1/zliu/KITTI360_Completed/checkpoints/model_50001.pkl",
+  "before": {
+    "psnr_mean": 22.426198811323033,
+    "ssim_mean": 0.7525893973441703,
+    "lpips_mean": 0.22607462784655644
+  },
+  "after": {
+    "psnr_mean": 22.68460824732845,
+    "ssim_mean": 0.7559416555516377,
+    "lpips_mean": 0.2171773389212845
+  }
+}
