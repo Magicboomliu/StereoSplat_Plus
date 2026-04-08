@@ -247,6 +247,22 @@ class DifixRef(torch.nn.Module):
         
 
 
+    @property
+    def device(self) -> torch.device:
+        # Diffusers pipelines expect modules to expose a canonical device.
+        try:
+            return next(self.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    @property
+    def dtype(self) -> torch.dtype:
+        # Diffusers' DiffusionPipeline.to() checks module.dtype; provide it for compatibility.
+        try:
+            return next(self.parameters()).dtype
+        except StopIteration:
+            return torch.float32
+
     def _ddpm_prev_sample_mean_only(self, model_output, sample):
         """DDPM 反向一步只取均值 μ，不加 randn 随机方差项（与 diffusers step 第 6 节之前一致）。"""
         sched = self.sched
