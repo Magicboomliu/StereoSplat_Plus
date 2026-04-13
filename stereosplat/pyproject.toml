@@ -80,6 +80,9 @@ rasterizer-clone = "test -d diff-gaussian-rasterization || git clone --recursive
 # pip(>=25/26) 对 -e 走 PEP660；该仓库后端不支持 build_editable，所以改为非 editable 安装
 rasterizer-install = { cmd = "python -m pip install ./diff-gaussian-rasterization --no-build-isolation", depends-on = ["rasterizer-clone"] }
 
+# install local diffusers (vendored)
+diffusers-install = { cmd = "python -m pip install ./diffusers", depends-on = ["bootstrap"] }
+
 # common requirements（如果你的 requirements.txt 在别的目录，请改成正确路径）
 pip-req = "python -m pip install -r requirements.txt"
 
@@ -94,4 +97,4 @@ mmdet-install = { cmd = "mim install 'mmdet>=3.0.0,<3.3.0'", depends-on = ["mmla
 mmdet3d-install = { cmd = "mim install 'mmdet3d==1.4.0'", depends-on = ["mmlab-bootstrap"] }
 
 # 一键：基础 + rasterizer + requirements + mmcv + mmdet3d
-setup = { depends-on = ["bootstrap", "install-self", "rasterizer-install", "pip-req", "mmcv-install", "mmdet-install", "mmdet3d-install"] }
+setup = { depends-on = ["bootstrap", "install-self", "rasterizer-install", "diffusers-install", "pip-req", "mmcv-install", "mmdet-install", "mmdet3d-install"] }
