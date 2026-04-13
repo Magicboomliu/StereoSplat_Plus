@@ -3,8 +3,9 @@ cd ../../..
 
 pwd
 
+export PYTHONPATH="$(pwd):${PYTHONPATH}"
 pixi run python trainer/train_kitti360_stereosplat.py
-# cd codes
+
 # configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
 # work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models"
 # resume_from="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models/checkpoint-93000/"
