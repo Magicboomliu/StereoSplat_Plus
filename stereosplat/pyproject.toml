@@ -15,6 +15,7 @@ platforms = ["linux-64"]
 
 [tool.pixi.environments]
 # 用不同 environment 隔离 feature，运行时用 -e 选择
+default = { features = ["common", "cu118"] }
 cu118 = { features = ["common", "cu118"] }
 
 [tool.pixi.dependencies]
