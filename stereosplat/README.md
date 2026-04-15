@@ -4,6 +4,7 @@
 
 - Linux (`linux-64`)
 - `git`
+- A NVIDIA GPU(>12G)
 
 ## Install Pixi
 
