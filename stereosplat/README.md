@@ -37,15 +37,11 @@ Notes:
 - The script uses `pixi run -e cu118 ...` internally.
 - Optional overrides (paths, `exp_name`, W&B settings, etc.) are defined at the top of `scripts/train/stereosplat/train.sh`.
 
-## Validation (render inside bin)
+## Validation 
 
-We provide a simple validation/evaluation entrypoint script that renders forward views and writes averaged metrics to a json file.
+- evaluations feedforward 
 
 ```bash
 cd stereosplat/scripts/evaluation/stereosplat
 sh render_inside_bin.sh
 ```
-
-Notes:
-- Edit paths (config/output/filelists/checkpoint) at the top of `scripts/evaluation/stereosplat/render_inside_bin.sh`.
-- Metrics are saved to `--output_folder/metric.json` (when not using `--output_vis`).
