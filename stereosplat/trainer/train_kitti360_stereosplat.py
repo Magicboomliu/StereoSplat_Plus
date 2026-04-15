@@ -28,9 +28,92 @@ from stereosplat.models_lab.StereoSplat.stereosplat import StereoSplat
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 from tqdm import tqdm
+import importlib
 
+def _make_side_dict(factory):
+    return {"left": factory(), "right": factory()}
 
+def _make_rgb_meter():
+    return RGB_Quality_Meter(psnr=0.0, ssim=0.0)
 
+def _make_depth_meter():
+    return Depth_Quality_Meter(mae=0.0, mse=0.0)
+
+def _make_stage_meters():
+    # output rgb/depth for center/first/last + input depth (left/right)
+    return {
+        "rgb": {
+            "center": _make_side_dict(_make_rgb_meter),
+            "first": _make_side_dict(_make_rgb_meter),
+            "last": _make_side_dict(_make_rgb_meter),
+        },
+        "depth": {
+            "center": _make_side_dict(_make_depth_meter),
+            "first": _make_side_dict(_make_depth_meter),
+            "last": _make_side_dict(_make_depth_meter),
+        },
+        "input_depth": _make_side_dict(_make_depth_meter),
+    }
+
+def _update_stage_meters(stage_meters, rgb_dict, depth_dict, input_depth_dict):
+    # rgb_dict: {center_view/first_view/last_view: {left/right: {psnr,ssim}}}
+    # depth_dict: {center_view/first_view/last_view: {left/right: {mae,mse}}}
+    view_key_map = {
+        "center": "center_view",
+        "first": "first_view",
+        "last": "last_view",
+    }
+    for view_short, view_key in view_key_map.items():
+        for side in ("left", "right"):
+            stage_meters["rgb"][view_short][side].update(
+                rgb_dict[view_key][side]["psnr"],
+                rgb_dict[view_key][side]["ssim"],
+            )
+            stage_meters["depth"][view_short][side].update(
+                mae=depth_dict[view_key][side]["mae"],
+                mse=depth_dict[view_key][side]["mse"],
+            )
+    for side in ("left", "right"):
+        stage_meters["input_depth"][side].update(
+            mae=input_depth_dict["input_depth"][side]["mae"],
+            mse=input_depth_dict["input_depth"][side]["mse"],
+        )
+
+def _finalize_meters(obj):
+    # Convert meter objects to stats dicts in-place-compatible manner
+    if isinstance(obj, dict):
+        return {k: _finalize_meters(v) for k, v in obj.items()}
+    if hasattr(obj, "get_stats"):
+        return obj.get_stats()
+    return obj
+
+def _extract_wandb_metrics(prefix: str, results_dict: dict) -> dict:
+    out = {}
+    for view in ("center", "first", "last"):
+        rgb_key = f"rgb_{view}"
+        depth_key = f"depth_{view}"
+        rgb = results_dict.get(rgb_key, {})
+        depth = results_dict.get(depth_key, {})
+        for side in ("left", "right"):
+            rgb_stats = rgb.get(side, {})
+            depth_stats = depth.get(side, {})
+            if "psnr" in rgb_stats:
+                out[f"{prefix}/{rgb_key}/{side}/psnr"] = float(rgb_stats["psnr"])
+            if "ssim" in rgb_stats:
+                out[f"{prefix}/{rgb_key}/{side}/ssim"] = float(rgb_stats["ssim"])
+            if "mae" in depth_stats:
+                out[f"{prefix}/{depth_key}/{side}/mae"] = float(depth_stats["mae"])
+            if "mse" in depth_stats:
+                out[f"{prefix}/{depth_key}/{side}/mse"] = float(depth_stats["mse"])
+
+    input_depth = results_dict.get("input_depth", {})
+    for side in ("left", "right"):
+        stats = input_depth.get(side, {})
+        if "mae" in stats:
+            out[f"{prefix}/input_depth/{side}/mae"] = float(stats["mae"])
+        if "mse" in stats:
+            out[f"{prefix}/input_depth/{side}/mse"] = float(stats["mse"])
+    return out
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -63,6 +146,36 @@ def main(args):
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
+
+    # -------- Optional CLI overrides (if provided) --------
+    # exp_name / output_dir
+    if getattr(args, "exp_name", None):
+        cfg.exp_name = args.exp_name
+    if getattr(args, "output_dir", None):
+        cfg.output_dir = args.output_dir
+
+    # dataset-related overrides (mirror stereosplat configs)
+    if not hasattr(cfg, "dataset_params") or cfg.dataset_params is None:
+        cfg.dataset_params = dict()
+
+    def _set_if_not_none(key: str, value):
+        if value is not None:
+            cfg.dataset_params[key] = value
+            setattr(cfg, key, value)
+
+    _set_if_not_none("datapath", getattr(args, "datapath", None))
+    _set_if_not_none("train_filelist", getattr(args, "train_filelist", None))
+    _set_if_not_none("val_filelist", getattr(args, "val_filelist", None))
+    _set_if_not_none("test_filelist", getattr(args, "test_filelist", None))
+    _set_if_not_none("sequence", getattr(args, "sequence", None))
+    _set_if_not_none("data_version", getattr(args, "data_version", None))
+    _set_if_not_none("supp_view_nums", getattr(args, "supp_view_nums", None))
+
+    if getattr(args, "world_center", None) is not None:
+        cfg.world_center = args.world_center
+
+    if getattr(args, "unimatch_weights_path", None) is not None:
+        cfg.unimatch_weights_path = args.unimatch_weights_path
     
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -70,20 +183,34 @@ def main(args):
         project_dir=cfg.work_dir, 
         logging_dir=os.path.join(cfg.work_dir, 'logs')
     )
+    tracker_enabled = bool(getattr(args, "use_wandb", False))
     accelerator = Accelerator(
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         mixed_precision=cfg.mixed_precision,
-        log_with=cfg.report_to,
+        log_with=("wandb" if tracker_enabled else None),
         project_config=accelerator_project_config,
         kwargs_handlers=[kwargs]
     )
 
-    if accelerator.is_main_process:
+    if tracker_enabled and accelerator.is_main_process:
+        # Prefer CLI args (passed from train.sh). Fall back to defaults.
+        wandb_project = getattr(args, "wandb_project", None) or "volumefusion"
+        wandb_entity = getattr(args, "wandb_entity", None)
+        wandb_mode = getattr(args, "wandb_mode", None)
+        wandb_run_name = getattr(args, "wandb_run_name", None) or cfg.exp_name
+
+        wandb_api_key = getattr(args, "wandb_api_key", None)
+        if wandb_api_key:
+            os.environ["WANDB_API_KEY"] = wandb_api_key
         accelerator.init_trackers(
-            project_name='volumefusion', 
+            project_name=wandb_project,
             # config=config,
             init_kwargs={
-                "wandb":{'name': cfg.exp_name},
+                "wandb": {
+                    "name": wandb_run_name,
+                    **({"entity": wandb_entity} if wandb_entity else {}),
+                    **({"mode": wandb_mode} if wandb_mode else {}),
+                },
             }
         )
 
@@ -92,18 +219,20 @@ def main(args):
         set_seed(cfg.seed + accelerator.local_process_index)
 
 
-    if cfg.world_center is not None:
-        if cfg.world_center=="Center_LiDAR":
-            import data.KITTI360_CenterCam_Ref.dataloader as datasets
-        elif cfg.world_center=="First_Cam0":
-            import data.KITTI360_FirstCam_Ref.dataloader as datasets
-        elif cfg.world_center=="First_LiDAR":
-            import data.KITTI360_FirstLiDAR_Ref.dataloader as datasets
-        elif cfg.world_center=="First_LiDAR_3_Uniform":
-            import data.KITTI360_FisrtLiDAR_Random.dataloader as datasets
-    else:
-        import data.KITTI360_CenterCam_Ref.dataloader as datasets
+    def _dataset_module_for_world_center(world_center: str | None) -> str:
+        # 统一从 stereosplat.data.<dataset>.dataloader 导入，避免依赖顶层 stereosplat.KITTI360_* 别名模块
+        if world_center is None or world_center == "Center_LiDAR":
+            return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
+        if world_center == "First_Cam0":
+            return "stereosplat.data.KITTI360_FirstCam_Ref.dataloader"
+        if world_center == "First_LiDAR":
+            return "stereosplat.data.KITTI360_FirstLiDAR_Ref.dataloader"
+        if world_center == "First_LiDAR_3_Uniform":
+            return "stereosplat.data.KITTI360_FisrtLiDAR_Random.dataloader"
+        # 默认回退到 CenterCam_Ref
+        return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
 
+    datasets = importlib.import_module(_dataset_module_for_world_center(getattr(cfg, "world_center", None)))
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
@@ -171,10 +300,9 @@ def main(args):
         val_dataset, dataset_config.batch_size_val, shuffle=False,
         num_workers=dataset_config.num_workers_val
     )
-
-
+    
     # Define the Model/Optimizer/Schduler Here
-    my_model = VolumeFusionRevision(backbone=cfg.model.backbone,
+    my_model = StereoSplat(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
                                     costvolume_gs=cfg.model.costvolume_gs,
                                     volume_gs=cfg.model.volume_gs,
@@ -217,6 +345,7 @@ def main(args):
     my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
         my_model, optimizer, train_dataloader, val_dataloader, scheduler
     )
+    
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
 
@@ -259,7 +388,6 @@ def main(args):
     if accelerator.is_main_process:
         print('work dir: ', args.work_dir)
         print("max iteration steps: ",cfg.max_train_steps)
-
 
     # training along the iterations.
     print_freq = cfg.print_freq
@@ -347,53 +475,12 @@ def main(args):
                 if global_iter % cfg.val_freq == 0:
                     my_model.eval()
                     if accelerator.is_main_process:
-                        
-                        #=========================================================================#
-                        output_rgb_meter_center_fusion = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_first_fusion = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_last_fusion ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_depth_meter_center_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_first_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_last_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        input_depth_meter_fusion = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        #=========================================================================#
-                        output_rgb_meter_center_vol = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_first_vol = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_last_vol ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_depth_meter_center_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_first_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_last_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        input_depth_meter_vol = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        #=========================================================================#
-                        output_rgb_meter_center_cv = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                   "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_first_cv = {"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                  "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_rgb_meter_last_cv ={"left":RGB_Quality_Meter(psnr=0.0,ssim=0.0),
-                                                "right":RGB_Quality_Meter(psnr=0.0,ssim=0.0)}
-                        output_depth_meter_center_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_first_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        output_depth_meter_last_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-                        input_depth_meter_cv = {"left": Depth_Quality_Meter(mae=0.0,mse=0.0),
-                                                    "right": Depth_Quality_Meter(mae=0.0,mse=0.0)}
-            
+                        meters = {
+                            "fusion": _make_stage_meters(),
+                            "volume": _make_stage_meters(),
+                            "cv": _make_stage_meters(),
+                        }
+                        stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
                         
                         for i_iter_val, batch_val in enumerate(val_dataloader):
                             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
@@ -418,196 +505,45 @@ def main(args):
                                 
       
                                 
-                                # saved the intermeidate results here for the RGB Here
-                                output_rgb_meter_center_view_left_psnr = output_rgb_meter_dict['center_view']['left']['psnr']
-                                output_rgb_meter_center_view_left_ssim = output_rgb_meter_dict['center_view']['left']['ssim']
-                                output_rgb_meter_center_view_right_psnr = output_rgb_meter_dict['center_view']['right']['psnr']
-                                output_rgb_meter_center_view_right_ssim = output_rgb_meter_dict['center_view']['right']['ssim']
-                                
-                                output_rgb_meter_first_view_left_psnr = output_rgb_meter_dict['first_view']['left']['psnr']
-                                output_rgb_meter_first_view_left_ssim = output_rgb_meter_dict['first_view']['left']['ssim']   
-                                output_rgb_meter_first_view_right_psnr = output_rgb_meter_dict['first_view']['right']['psnr']
-                                output_rgb_meter_first_view_right_ssim = output_rgb_meter_dict['first_view']['right']['ssim']
-
-                                output_rgb_meter_last_view_left_psnr = output_rgb_meter_dict['last_view']['left']['psnr']
-                                output_rgb_meter_last_view_left_ssim = output_rgb_meter_dict['last_view']['left']['ssim']   
-                                output_rgb_meter_last_view_right_psnr = output_rgb_meter_dict['last_view']['right']['psnr']
-                                output_rgb_meter_last_view_right_ssim = output_rgb_meter_dict['last_view']['right']['ssim']
-
-                                output_depth_meter_center_view_left_mae = output_depth_meter_dict['center_view']['left']['mae']
-                                output_depth_meter_center_view_left_mse = output_depth_meter_dict['center_view']['left']['mse']
-                                output_depth_meter_center_view_right_mae = output_depth_meter_dict['center_view']['right']['mae']
-                                output_depth_meter_center_view_right_mse = output_depth_meter_dict['center_view']['right']['mse']
-
-                                output_depth_meter_first_view_left_mae = output_depth_meter_dict['first_view']['left']['mae']
-                                output_depth_meter_first_view_left_mse = output_depth_meter_dict['first_view']['left']['mse']
-                                output_depth_meter_first_view_right_mae = output_depth_meter_dict['first_view']['right']['mae']
-                                output_depth_meter_first_view_right_mse = output_depth_meter_dict['first_view']['right']['mse']
-
-                                output_depth_meter_last_view_left_mae = output_depth_meter_dict['last_view']['left']['mae']
-                                output_depth_meter_last_view_left_mse = output_depth_meter_dict['last_view']['left']['mse']
-                                output_depth_meter_last_view_right_mae = output_depth_meter_dict['last_view']['right']['mae']
-                                output_depth_meter_last_view_right_mse = output_depth_meter_dict['last_view']['right']['mse']
-
-                                input_depth_meter_left_mae = input_depth_meter_dict['input_depth']['left']['mae']
-                                input_depth_meter_left_mse = input_depth_meter_dict['input_depth']['left']['mse']
-                                input_depth_meter_right_mae = input_depth_meter_dict['input_depth']['right']['mae']
-                                input_depth_meter_right_mse = input_depth_meter_dict['input_depth']['right']['mse']  
-                                
-                                if i==0:
-                                    output_rgb_meter_center_fusion['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
-                                    output_rgb_meter_center_fusion['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
-                                    output_rgb_meter_first_fusion['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
-                                    output_rgb_meter_first_fusion['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
-                                    output_rgb_meter_last_fusion["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
-                                    output_rgb_meter_last_fusion["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
-                                    
-                                    output_depth_meter_center_fusion["left"].update(mae=output_depth_meter_center_view_left_mae,
-                                                                            mse=output_depth_meter_center_view_left_mse)
-                                    output_depth_meter_center_fusion["right"].update(mae=output_depth_meter_center_view_right_mae,
-                                                                            mse=output_depth_meter_center_view_right_mse)
-                                    output_depth_meter_first_fusion["left"].update(mae=output_depth_meter_first_view_left_mae,
-                                                                            mse=output_depth_meter_first_view_left_mse)
-                                    output_depth_meter_first_fusion["right"].update(mae=output_depth_meter_first_view_right_mae,
-                                                                            mse=output_depth_meter_first_view_right_mse)
-                                    output_depth_meter_last_fusion["left"].update(mae=output_depth_meter_last_view_left_mae,
-                                                                            mse=output_depth_meter_last_view_left_mse)
-                                    output_depth_meter_last_fusion["right"].update(mae=output_depth_meter_last_view_right_mae,
-                                                                            mse=output_depth_meter_last_view_right_mse)
-                                    input_depth_meter_fusion['left'].update(mae=input_depth_meter_left_mae,
-                                                                    mse=input_depth_meter_left_mse)
-                                    input_depth_meter_fusion['right'].update(mae=input_depth_meter_right_mae,
-                                                                    mse=input_depth_meter_right_mse)
-                                if i==1:
-                                    output_rgb_meter_center_vol['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
-                                    output_rgb_meter_center_vol['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
-                                    output_rgb_meter_first_vol['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
-                                    output_rgb_meter_first_vol['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
-                                    output_rgb_meter_last_vol["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
-                                    output_rgb_meter_last_vol["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
-                                    
-                                    output_depth_meter_center_vol["left"].update(mae=output_depth_meter_center_view_left_mae,
-                                                                            mse=output_depth_meter_center_view_left_mse)
-                                    output_depth_meter_center_vol["right"].update(mae=output_depth_meter_center_view_right_mae,
-                                                                            mse=output_depth_meter_center_view_right_mse)
-                                    output_depth_meter_first_vol["left"].update(mae=output_depth_meter_first_view_left_mae,
-                                                                            mse=output_depth_meter_first_view_left_mse)
-                                    output_depth_meter_first_vol["right"].update(mae=output_depth_meter_first_view_right_mae,
-                                                                            mse=output_depth_meter_first_view_right_mse)
-                                    output_depth_meter_last_vol["left"].update(mae=output_depth_meter_last_view_left_mae,
-                                                                            mse=output_depth_meter_last_view_left_mse)
-                                    output_depth_meter_last_vol["right"].update(mae=output_depth_meter_last_view_right_mae,
-                                                                            mse=output_depth_meter_last_view_right_mse)
-                                    input_depth_meter_vol['left'].update(mae=input_depth_meter_left_mae,
-                                                                    mse=input_depth_meter_left_mse)
-                                    input_depth_meter_vol['right'].update(mae=input_depth_meter_right_mae,
-                                                                    mse=input_depth_meter_right_mse)
-                                
-                                if i==2:
-                                    output_rgb_meter_center_cv['left'].update(output_rgb_meter_center_view_left_psnr,output_rgb_meter_center_view_left_ssim)
-                                    output_rgb_meter_center_cv['right'].update(output_rgb_meter_center_view_right_psnr,output_rgb_meter_center_view_right_ssim)
-                                    output_rgb_meter_first_cv['left'].update(output_rgb_meter_first_view_left_psnr,output_rgb_meter_first_view_left_ssim)
-                                    output_rgb_meter_first_cv['right'].update(output_rgb_meter_first_view_right_psnr,output_rgb_meter_first_view_right_ssim)
-                                    output_rgb_meter_last_cv["left"].update(output_rgb_meter_last_view_left_psnr,output_rgb_meter_last_view_left_ssim)
-                                    output_rgb_meter_last_cv["right"].update(output_rgb_meter_last_view_right_psnr,output_rgb_meter_last_view_right_ssim)
-                                    
-                                    output_depth_meter_center_cv["left"].update(mae=output_depth_meter_center_view_left_mae,
-                                                                            mse=output_depth_meter_center_view_left_mse)
-                                    output_depth_meter_center_cv["right"].update(mae=output_depth_meter_center_view_right_mae,
-                                                                            mse=output_depth_meter_center_view_right_mse)
-                                    output_depth_meter_first_cv["left"].update(mae=output_depth_meter_first_view_left_mae,
-                                                                            mse=output_depth_meter_first_view_left_mse)
-                                    output_depth_meter_first_cv["right"].update(mae=output_depth_meter_first_view_right_mae,
-                                                                            mse=output_depth_meter_first_view_right_mse)
-                                    output_depth_meter_last_cv["left"].update(mae=output_depth_meter_last_view_left_mae,
-                                                                            mse=output_depth_meter_last_view_left_mse)
-                                    output_depth_meter_last_cv["right"].update(mae=output_depth_meter_last_view_right_mae,
-                                                                            mse=output_depth_meter_last_view_right_mse)
-                                    input_depth_meter_cv['left'].update(mae=input_depth_meter_left_mae,
-                                                                    mse=input_depth_meter_left_mse)
-                                    input_depth_meter_cv['right'].update(mae=input_depth_meter_right_mae,
-                                                                    mse=input_depth_meter_right_mse)
+                                stage = stage_by_index.get(i)
+                                if stage is None:
+                                    continue
+                                _update_stage_meters(
+                                    meters[stage],
+                                    output_rgb_meter_dict,
+                                    output_depth_meter_dict,
+                                    input_depth_meter_dict,
+                                )
                             
                         
-                        # for this
-                        output_rgb_meter_center_fusion['left'] = output_rgb_meter_center_fusion['left'].get_stats()
-                        output_rgb_meter_center_fusion['right'] = output_rgb_meter_center_fusion['right'].get_stats()
-                        output_rgb_meter_first_fusion['left'] = output_rgb_meter_first_fusion['left'].get_stats()
-                        output_rgb_meter_first_fusion['right'] = output_rgb_meter_first_fusion['right'].get_stats()
-                        output_rgb_meter_last_fusion['left'] = output_rgb_meter_last_fusion['left'].get_stats()
-                        output_rgb_meter_last_fusion['right'] = output_rgb_meter_last_fusion['right'].get_stats()
-                        output_depth_meter_center_fusion['left'] = output_depth_meter_center_fusion['left'].get_stats()
-                        output_depth_meter_center_fusion['right'] = output_depth_meter_center_fusion['right'].get_stats()
-                        output_depth_meter_first_fusion['left'] = output_depth_meter_first_fusion['left'].get_stats()
-                        output_depth_meter_first_fusion['right'] = output_depth_meter_first_fusion['right'].get_stats()    
-                        output_depth_meter_last_fusion['left'] = output_depth_meter_last_fusion['left'].get_stats()
-                        output_depth_meter_last_fusion['right'] = output_depth_meter_last_fusion['right'].get_stats()
-                        input_depth_meter_fusion['left'] = input_depth_meter_fusion['left'].get_stats()
-                        input_depth_meter_fusion['right'] = input_depth_meter_fusion['right'].get_stats()
-
-                        output_rgb_meter_center_vol['left'] = output_rgb_meter_center_vol['left'].get_stats()
-                        output_rgb_meter_center_vol['right'] = output_rgb_meter_center_vol['right'].get_stats()
-                        output_rgb_meter_first_vol['left'] = output_rgb_meter_first_vol['left'].get_stats()
-                        output_rgb_meter_first_vol['right'] = output_rgb_meter_first_vol['right'].get_stats()
-                        output_rgb_meter_last_vol['left'] = output_rgb_meter_last_vol['left'].get_stats()
-                        output_rgb_meter_last_vol['right'] = output_rgb_meter_last_vol['right'].get_stats()
-                        output_depth_meter_center_vol['left'] = output_depth_meter_center_vol['left'].get_stats()
-                        output_depth_meter_center_vol['right'] = output_depth_meter_center_vol['right'].get_stats()
-                        output_depth_meter_first_vol['left'] = output_depth_meter_first_vol['left'].get_stats()
-                        output_depth_meter_first_vol['right'] = output_depth_meter_first_vol['right'].get_stats()    
-                        output_depth_meter_last_vol['left'] = output_depth_meter_last_vol['left'].get_stats()
-                        output_depth_meter_last_vol['right'] = output_depth_meter_last_vol['right'].get_stats()
-                        input_depth_meter_vol['left'] = input_depth_meter_vol['left'].get_stats()
-                        input_depth_meter_vol['right'] = input_depth_meter_vol['right'].get_stats()
-                        
-
-
-                        output_rgb_meter_center_cv['left'] = output_rgb_meter_center_cv['left'].get_stats()
-                        output_rgb_meter_center_cv['right'] = output_rgb_meter_center_cv['right'].get_stats()
-                        output_rgb_meter_first_cv['left'] = output_rgb_meter_first_cv['left'].get_stats()
-                        output_rgb_meter_first_cv['right'] = output_rgb_meter_first_cv['right'].get_stats()
-                        output_rgb_meter_last_cv['left'] = output_rgb_meter_last_cv['left'].get_stats()
-                        output_rgb_meter_last_cv['right'] = output_rgb_meter_last_cv['right'].get_stats()
-                        output_depth_meter_center_cv['left'] = output_depth_meter_center_cv['left'].get_stats()
-                        output_depth_meter_center_cv['right'] = output_depth_meter_center_cv['right'].get_stats()
-                        output_depth_meter_first_cv['left'] = output_depth_meter_first_cv['left'].get_stats()
-                        output_depth_meter_first_cv['right'] = output_depth_meter_first_cv['right'].get_stats()    
-                        output_depth_meter_last_cv['left'] = output_depth_meter_last_cv['left'].get_stats()
-                        output_depth_meter_last_cv['right'] = output_depth_meter_last_cv['right'].get_stats()
-                        input_depth_meter_cv['left'] = input_depth_meter_cv['left'].get_stats()
-                        input_depth_meter_cv['right'] = input_depth_meter_cv['right'].get_stats()
-
+                        stats = {k: _finalize_meters(v) for k, v in meters.items()}
 
                         results_dict_fusion = {
-                            "rgb_center": output_rgb_meter_center_fusion,
-                            "rgb_first": output_rgb_meter_first_fusion,
-                            "rgb_last": output_rgb_meter_last_fusion,
-                            "depth_center":output_depth_meter_center_fusion,
-                            "depth_first":output_depth_meter_first_fusion,
-                            "depth_last":output_depth_meter_last_fusion,
-                            "input_depth":input_depth_meter_fusion
-                            
+                            "rgb_center": stats["fusion"]["rgb"]["center"],
+                            "rgb_first": stats["fusion"]["rgb"]["first"],
+                            "rgb_last": stats["fusion"]["rgb"]["last"],
+                            "depth_center": stats["fusion"]["depth"]["center"],
+                            "depth_first": stats["fusion"]["depth"]["first"],
+                            "depth_last": stats["fusion"]["depth"]["last"],
+                            "input_depth": stats["fusion"]["input_depth"],
                         }
                         results_dict_volume = {
-                            "rgb_center": output_rgb_meter_center_vol,
-                            "rgb_first": output_rgb_meter_first_vol,
-                            "rgb_last": output_rgb_meter_last_vol,
-                            "depth_center":output_depth_meter_center_vol,
-                            "depth_first":output_depth_meter_first_vol,
-                            "depth_last":output_depth_meter_last_vol,
-                            "input_depth":input_depth_meter_vol
-                            
+                            "rgb_center": stats["volume"]["rgb"]["center"],
+                            "rgb_first": stats["volume"]["rgb"]["first"],
+                            "rgb_last": stats["volume"]["rgb"]["last"],
+                            "depth_center": stats["volume"]["depth"]["center"],
+                            "depth_first": stats["volume"]["depth"]["first"],
+                            "depth_last": stats["volume"]["depth"]["last"],
+                            "input_depth": stats["volume"]["input_depth"],
                         }
-    
                         results_dict_cv = {
-                            "rgb_center": output_rgb_meter_center_cv,
-                            "rgb_first": output_rgb_meter_first_cv,
-                            "rgb_last": output_rgb_meter_last_cv,
-                            "depth_center":output_depth_meter_center_cv,
-                            "depth_first":output_depth_meter_first_cv,
-                            "depth_last":output_depth_meter_last_cv,
-                            "input_depth":input_depth_meter_cv
-                            
+                            "rgb_center": stats["cv"]["rgb"]["center"],
+                            "rgb_first": stats["cv"]["rgb"]["first"],
+                            "rgb_last": stats["cv"]["rgb"]["last"],
+                            "depth_center": stats["cv"]["depth"]["center"],
+                            "depth_first": stats["cv"]["depth"]["first"],
+                            "depth_last": stats["cv"]["depth"]["last"],
+                            "input_depth": stats["cv"]["input_depth"],
                         }
                         
                         saved_into_json(data_dict=results_dict_fusion,
@@ -618,6 +554,13 @@ def main(args):
 
                         saved_into_json(data_dict=results_dict_cv,
                                         path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
+
+                        if tracker_enabled:
+                            wandb_logs = {}
+                            wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
+                            wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
+                            wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
+                            accelerator.log(wandb_logs, step=global_iter)
                         
                     my_model.train()
 
@@ -639,8 +582,9 @@ def main(args):
 
             global_iter += 1
 
-            # dump loss log to tensorboard
-            accelerator.log(logs, step=global_iter)
+            # dump loss log to wandb (if enabled)
+            if tracker_enabled:
+                accelerator.log(logs, step=global_iter)
 
             data_time_s = time.time()
             time_s = time.time()
@@ -660,6 +604,50 @@ if __name__ == '__main__':
     parser.add_argument('--py-config', required=True)
     parser.add_argument('--work-dir', type=str, required=True)
     parser.add_argument('--resume-from', type=str, default='')
+
+    # Optional overrides (take precedence over cfg file if provided)
+    parser.add_argument('--exp-name', type=str, default=None)
+    parser.add_argument('--output-dir', type=str, default=None)
+
+    parser.add_argument('--datapath', type=str, default=None)
+    parser.add_argument('--train-filelist', type=str, default=None)
+    parser.add_argument('--val-filelist', type=str, default=None)
+    parser.add_argument('--test-filelist', type=str, default=None)
+    parser.add_argument('--sequence', type=str, default=None)
+    parser.add_argument('--data-version', type=str, default=None)
+    parser.add_argument('--supp-view-nums', type=int, default=None)
+    parser.add_argument(
+        '--world-center',
+        type=str,
+        default=None,
+        help='Center_LiDAR | First_Cam0 | First_LiDAR | First_LiDAR_3_Uniform',
+    )
+    parser.add_argument('--unimatch-weights-path', type=str, default=None)
+    parser.add_argument(
+        '--use-wandb',
+        action='store_true',
+        help='Enable Weights & Biases logging via accelerate trackers',
+    )
+    parser.add_argument('--wandb-entity', type=str, default=None)
+    parser.add_argument('--wandb-project', type=str, default=None)
+    parser.add_argument(
+        '--wandb-mode',
+        type=str,
+        default=None,
+        help='online | offline | disabled',
+    )
+    parser.add_argument(
+        '--wandb-api-key',
+        type=str,
+        default=None,
+        help='Optional. Prefer `wandb login` over passing key in args.',
+    )
+    parser.add_argument(
+        '--wandb-run-name',
+        type=str,
+        default=None,
+        help='If set, overrides wandb run name (otherwise uses cfg.exp_name).',
+    )
     args = parser.parse_args()
     
     ngpus = torch.cuda.device_count()

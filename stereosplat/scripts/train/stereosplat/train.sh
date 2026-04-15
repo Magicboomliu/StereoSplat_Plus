@@ -1,23 +1,60 @@
 Train_Stereosplat_On_KITTI360(){
 cd ../../..
 
-pwd
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
+configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
+work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models"
+resume_from="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
 
+# Optional overrides (leave empty to use cfg defaults)
+exp_name="input_invariant_stereosplat_kitti360_stereo_114x544"
+output_dir="/data1/zliu/StereoSplat_Pixi/KITTI360_Complete/RandomView_RandomSample/visualization"
+datapath="/data1/StereoDatasets/KITTI/KITTI360"
+train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
+val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+sequence='2013_05_28_drive_0000_sync'
+data_version="bin_infos_8.0_FirstLIDAR"
+supp_view_nums=6
+world_center="First_LiDAR_3_Uniform" 
+unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+
+
+use_wandb=false
+# W&B settings (only used when use_wandb=true)
+# 推荐：不要把 key 写进脚本；更安全的做法是先执行 `wandb login` 或在 shell 里 export WANDB_API_KEY
+wandb_api_key="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"
+wandb_entity="liuzihua1004"
+wandb_project="StereoSplat"
+# online | offline | disabled
+wandb_mode="online"
+wandb_run_name="input_invariant_stereosplat_kitti360_default"
+
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 export PYTHONPATH="$(pwd):${PYTHONPATH}"
-pixi run python trainer/train_kitti360_stereosplat.py
 
-# configs_path="/home/zliu/Project2025/FeedStereoGS/codes/configs/Models_Lab/VolumeFusion/volumefusion_revision_complete_kitti360.py"
-# work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models"
-# resume_from="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models/checkpoint-93000/"
+pixi run -e cu118 accelerate launch --config-file $accelerate_config_path trainer/train_kitti360_stereosplat.py \
+    --py-config $configs_path \
+    --work-dir  $work_dir \
+    --resume-from $resume_from \
+    ${exp_name:+--exp-name "$exp_name"} \
+    ${output_dir:+--output-dir "$output_dir"} \
+    ${datapath:+--datapath "$datapath"} \
+    ${train_filelist:+--train-filelist "$train_filelist"} \
+    ${val_filelist:+--val-filelist "$val_filelist"} \
+    ${test_filelist:+--test-filelist "$test_filelist"} \
+    ${sequence:+--sequence "$sequence"} \
+    ${data_version:+--data-version "$data_version"} \
+    ${supp_view_nums:+--supp-view-nums $supp_view_nums} \
+    ${world_center:+--world-center "$world_center"} \
+    ${unimatch_weights_path:+--unimatch-weights-path "$unimatch_weights_path"} \
+    $([ "$use_wandb" = true ] && echo --use-wandb) \
+    $([ "$use_wandb" = true ] && [ -n "$wandb_entity" ] && echo --wandb-entity "$wandb_entity") \
+    $([ "$use_wandb" = true ] && [ -n "$wandb_project" ] && echo --wandb-project "$wandb_project") \
+    $([ "$use_wandb" = true ] && [ -n "$wandb_mode" ] && echo --wandb-mode "$wandb_mode") \
+    $([ "$use_wandb" = true ] && [ -n "$wandb_run_name" ] && echo --wandb-run-name "$wandb_run_name") \
+    $([ "$use_wandb" = true ] && [ -n "$wandb_api_key" ] && echo --wandb-api-key "$wandb_api_key")
 
-# #configs 
-# # - Single GPU YAML: accelerate_config_singleGPU.yaml
-# # - Multi GPUs YAML: accelerate_config.yaml
-# export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
-# TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1  accelerate launch --config-file accelerate_config.yaml train_kitti360_stereosplat.py \
-#     --py-config $configs_path \
-#     --work-dir  $work_dir \
-#     --resume-from $resume_from
 }
 
 

@@ -23,3 +23,16 @@ cd stereosplat
 pixi install
 pixi run setup
 ```
+
+## Train StereoSplat (KITTI-360)
+
+We provide a simple training entrypoint script.
+
+```bash
+cd stereosplat/scripts/train/stereosplat
+sh train.sh
+```
+
+Notes:
+- The script uses `pixi run -e cu118 ...` internally.
+- Optional overrides (paths, `exp_name`, W&B settings, etc.) are defined at the top of `scripts/train/stereosplat/train.sh`.
