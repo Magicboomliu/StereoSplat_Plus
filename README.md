@@ -1,4 +1,4 @@
-StereoSplat Plus (Pixi Version)
+# StereoSplat Plus (Pixi Version)
 
 This repository contains three commonly used components:
 
