@@ -1,0 +1,18 @@
+{
+  "split": "test",
+  "num_samples": 5805,
+  "height": 112,
+  "width": 544,
+  "pretrained_name": "nvidia/difix_ref",
+  "pretrained_path": "/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl",
+  "before": {
+    "psnr_mean": 22.426198811323033,
+    "ssim_mean": 0.7525893973441703,
+    "lpips_mean": 0.22607462784655644
+  },
+  "after": {
+    "psnr_mean": 23.20534053924991,
+    "ssim_mean": 0.7800513297293743,
+    "lpips_mean": 0.2872498305641198
+  }
+}

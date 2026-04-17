@@ -1,14 +1,11 @@
-Get_Rendered_RGBS_Depths_Metrics(){
-
-
+StereoSplat_2Views_Eval(){
 cd ../../..
 # Run from stereosplat project root
-
 accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
 configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/StereoSplat_2Views/forward_views"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat/2views/"
 val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"
-demo_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/demo_more.txt"
+demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
@@ -28,4 +25,4 @@ pixi run -e cu118 accelerate launch --config-file $accelerate_config_path valida
 
 }
 
-Get_Rendered_RGBS_Depths_Metrics
+StereoSplat_2Views_Eval

@@ -3,16 +3,15 @@ cd ../../..
 
 accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
 configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-work_dir="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/saved_models"
+work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/"
+output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/use_gt_views/"
 resume_from="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
-
 # Optional overrides (leave empty to use cfg defaults)
 exp_name="input_invariant_stereosplat_kitti360_stereo_114x544"
-output_dir="/data1/zliu/StereoSplat_Pixi/KITTI360_Complete/RandomView_RandomSample/visualization"
 datapath="/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+train_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/all.txt"
+val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo.txt"
+test_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6

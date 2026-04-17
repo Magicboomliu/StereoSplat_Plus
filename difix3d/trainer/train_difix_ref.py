@@ -19,11 +19,13 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
 import wandb
 from difix3d import DifixRef,load_ckpt_from_state_dict,save_ckpt
+
+# define the dataset here
 from difix3d.dataset import KITTI360_Restoration_Dataset
 from difix3d.loss import restoration_losses
-
 from difix3d.utils.image_quality_meter import psnr_neg1_to_1
 from difix3d.utils.utils import Convert_Tensor_to_Image
+
 
 
 def _apply_yaml_defaults(parser: argparse.ArgumentParser, config_path):

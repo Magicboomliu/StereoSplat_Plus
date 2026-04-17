@@ -4,7 +4,7 @@ accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/
 validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/Diff-StereoSplatV2/forward_views_alls_no_diffix"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus/default_manner_old_finetuned/"
 val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -44,7 +44,7 @@ accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/
 validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/Diff-StereoSplatV2/fss"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus/default_manner_new_finetuned/"
 val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
@@ -75,6 +75,6 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" "$va
 
 }
 
-# Render_All_Inside_Bin_Views_StereoSplatPlus_Old
+Render_All_Inside_Bin_Views_StereoSplatPlus_Old
 
-Render_All_Inside_Bin_Views_StereoSplatPlus_New
+#Render_All_Inside_Bin_Views_StereoSplatPlus_New
