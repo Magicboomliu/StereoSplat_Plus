@@ -80,8 +80,9 @@ rasterizer-clone = "test -d diff-gaussian-rasterization || git clone --recursive
 # pip(>=25/26) 对 -e 走 PEP660；该仓库后端不支持 build_editable，所以改为非 editable 安装
 rasterizer-install = { cmd = "python -m pip install ./diff-gaussian-rasterization --no-build-isolation", depends-on = ["rasterizer-clone"] }
 
-# install local diffusers (vendored)
-diffusers-install = { cmd = "python -m pip install ./diffusers", depends-on = ["bootstrap"] }
+# install diffusers pinned for difix3d compatibility
+# difix3d pixi env pins: diffusers==0.25.1, huggingface-hub==0.25.1, transformers==4.38.0, peft==0.9.0
+diffusers-install = { cmd = "python -m pip install -U 'diffusers==0.25.1' 'huggingface-hub==0.25.1' 'transformers==4.38.0' 'peft==0.9.0' 'requests==2.28.1'", depends-on = ["bootstrap"] }
 
 # common requirements（如果你的 requirements.txt 在别的目录，请改成正确路径）
 pip-req = "python -m pip install -r requirements.txt"

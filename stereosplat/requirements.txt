@@ -1,7 +1,6 @@
 tyro
 einops
 accelerate
-gradio
 imageio
 imageio-ffmpeg
 moviepy==1.0.3
