@@ -31,7 +31,7 @@ We provide a simple training entrypoint script.
 
 ```bash
 cd stereosplat/scripts/train/stereosplat
-sh train.sh
+bash train.sh
 ```
 
 Notes:
@@ -44,5 +44,19 @@ Notes:
 
 ```bash
 cd stereosplat/scripts/evaluation/stereosplat
-sh render_inside_bin.sh
+bash render_inside_bin.sh
 ```
+
+## StereoSplat Plus inference / evaluation (with Difix3D restoration)
+
+This entrypoint runs the StereoSplat validation pipeline with optional Difix3D-based restoration.
+
+```bash
+cd stereosplat/scripts/evaluation/stereosplat_plus
+bash render_inside_bin.sh
+```
+
+Notes:
+- This script uses `pixi run -e cu118 ...` internally.
+- Optional flags can be appended in the script (e.g., `--use_diffix3d`, `--use_ref`, `--output_vis`,
+  `--deterministic_vae_encode`, `--deterministic_scheduler_step`).
