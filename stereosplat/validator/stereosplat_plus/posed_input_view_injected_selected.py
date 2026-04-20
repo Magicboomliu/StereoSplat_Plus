@@ -18,6 +18,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import sys
 from pathlib import Path
+
 # Runnable from any cwd:
 # - `stereosplat/tools/` (helper module) under stereosplat root
 # - `stereosplat/difix3d/src/` (so we can `import difix3d` without pip-installing it)
@@ -66,6 +67,7 @@ def _maybe_init_wandb(accelerator: Accelerator, args, cfg) -> bool:
         },
     )
     return True
+
 
 def _dataset_module_for_world_center(world_center: str | None) -> str:
     if world_center is None or world_center == "Center_LiDAR":
@@ -157,8 +159,12 @@ def kitti_colormap(disparity, maxval=-1):
 def main(args):
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
+    
     cfg.prompt = args.prompt
+    
     cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
+
+
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator_project_config = ProjectConfiguration(
@@ -234,8 +240,7 @@ def main(args):
     
     # loading the pretrained diffix3d models.
     assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
-     
-    
+
     pretrained_diffix_model = DifixRef(
         pretrained_name="nvidia/difix_ref",
         pretrained_path=args.pretrained_diffix_model_path,
@@ -246,10 +251,11 @@ def main(args):
     )
     
     pretrained_diffix_model.set_eval()
-    
-    
-    
-    
+
+
+
+
+
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
     )
@@ -271,10 +277,14 @@ def main(args):
         print("Can't find checkpoint. Randomly initialize model parameters anyway.")
         
     pretrained_diffix_model.to(accelerator.device)
-    
-    print("successfully loading the pretrained difix from {}".fomart(args.pretrained_diffix_model_path))
-    
 
+    print("========================================")
+    print("Successfully loading the pretrained StereoSplat from {}".format(args.pretrained_model_path))
+
+    # Loaded the StereoSplat Model
+    print("========================================")
+    print("Successfully loading the pretrained Diffix3d model from {}".format(args.pretrained_diffix_model_path))
+    
     # performance metrics for the rendered RGBs
     evaluate_results_average_dict_rgb = {
         "first_view_psnr_average": 0,
@@ -306,6 +316,10 @@ def main(args):
         "all_view_Sq_Rel_average": 0,
         "all_view_RMSE_log_average": 0,
     }
+
+    current_pseduo_ratio_index = args.pseudo_ratio
+    
+
     
     with torch.no_grad():
         my_model.eval()
@@ -313,18 +327,33 @@ def main(args):
         for batch in tqdm(val_dataloader):
             # process the current folder
             bin_token_list = batch['bin_token']
-            evaluation_results_stat = my_model.validation_on_the_forward_views_progressive_iter_once_revised(
+            
+            if args.use_gt_view:
+                evaluation_results_stat = my_model.oracle_upper_bound_ablation(
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
+                                            pseudo_ratio_index= current_pseduo_ratio_index,
                                             cfg=cfg,
                                             start_images_views=2,
                                             use_diffix3d=args.use_diffix3d,
                                             diffix3d_network=pretrained_diffix_model,
                                             use_ref=args.use_ref,
                                             vis=args.output_vis)
-
-            
+            else:
+                evaluation_results_stat = my_model.stereosplatplus_difix3d_pose_view_selection_injection(
+                                            batch,
+                                            args.output_folder,
+                                            bin_token_list,
+                                            pseudo_ratio_index= current_pseduo_ratio_index,
+                                            cfg=cfg,
+                                            start_images_views=2,
+                                            use_diffix3d=args.use_diffix3d,
+                                            diffix3d_network=pretrained_diffix_model,
+                                            use_ref=args.use_ref,
+                                            vis=args.output_vis)
+                
+    
             current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
             current_evaluate_results_dict_depth = evaluation_results_stat["Depth"]
             
@@ -358,6 +387,7 @@ def main(args):
 
 def get_mean(list):
     return sum(list)*1.0/len(list)
+
     
 if __name__ == '__main__':
     # Training settings
@@ -367,13 +397,19 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
+    
     parser.add_argument('--ablation_type', type=str)
     parser.add_argument('--dataset_type', type=str)
-    
+
     parser.add_argument('--pretrained_diffix_model_path', type=str, default="")
     parser.add_argument('--timestep', type=int, default=199)
     parser.add_argument('--prompt', type=str, default="remove degradation")
     parser.add_argument('--use_ref', action='store_true', default=False)
+    
+    parser.add_argument('--use_gt_view', 
+                        action='store_true', 
+                        default=False)
+    
     parser.add_argument('--use_diffix3d', action='store_true', default=False)
     parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
     parser.add_argument('--deterministic_vae_encode', action='store_true', default=False)
@@ -383,18 +419,28 @@ if __name__ == '__main__':
         "--output_vis",
         action="store_true",
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
-    ) # visualize the outputs image
+    )  # visualize the outputs image
 
-    # Optional W&B logging (same style as rendered_views_inside_bin)
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-entity", type=str, default=None)
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-mode", type=str, default=None, help="online | offline | disabled")
     parser.add_argument("--wandb-api-key", type=str, default=None)
     parser.add_argument("--wandb-run-name", type=str, default=None)
-    
+
+    parser.add_argument(
+        "--pseudo_ratio",
+        type=str,
+        nargs="*",
+        default=[],
+        help="List of values, e.g. --list_arg a b c",
+    )
+
     args = parser.parse_args()
     ngpus = torch.cuda.device_count()
     args.gpus = ngpus
-
+    
+    args.pseudo_ratio = [float(x) for x in args.pseudo_ratio]
+    
+    
     main(args)

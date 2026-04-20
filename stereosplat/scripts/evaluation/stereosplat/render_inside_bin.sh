@@ -1,7 +1,7 @@
 StereoSplat_2Views_Eval(){
 cd ../../..
 # Run from stereosplat project root
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_0.yaml"
 configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
 output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat/2views/"
 val_filelist="/home/zliu/IROS2026/Diff-StereoSplat/filenames/kitti360/train_complete/val.txt"
@@ -9,7 +9,6 @@ demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereospl
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
-
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 \

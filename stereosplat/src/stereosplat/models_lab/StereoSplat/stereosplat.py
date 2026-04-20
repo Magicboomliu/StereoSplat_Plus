@@ -6329,8 +6329,6 @@ class StereoSplat(BaseModule):
         output_rgb = output_batch_dict['output_imgs']
         sparse_depth_gt = output_batch_dict['output_sparse_depth']  
         
-        
-        
 
         '''Do the visualization and the evaluation here'''
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
@@ -6338,8 +6336,7 @@ class StereoSplat(BaseModule):
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
-        
-
+    
         # first view
         rendered_images_first_stereo = rendered_images_fusion[:,-2:,:,:,:]
         gt_images_first_stereo = rendered_images_gt[:,-2:,:,:,:]
@@ -6357,8 +6354,6 @@ class StereoSplat(BaseModule):
         gt_images_center_stereo = rendered_images_gt[:,-6:-4,:,:,:]
         renderded_depth_center_stereo = rendered_depth_fusion[:,-6:-4,:,:]
         gt_depth_center_stereo = sparse_depth_gt[:,-6:-4,:,:]
-        
-
         
         # all view
         rendered_images_all_stereo = rendered_images_fusion
@@ -8038,7 +8033,7 @@ class StereoSplat(BaseModule):
     
     # FIXME： Please Delete in the future, this version is just to select the
     # best selection from finetuned diffix3d and the stereosplat 
-    def stereosplat_plus_gt_pose_once_progressive_inference_with_difix3d(self,
+    def stereosplatplus_difix3d_pose_view_selection_injection(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -8679,6 +8674,9 @@ class StereoSplat(BaseModule):
                 clip_dpt.write_videofile(dump_path_dpt, codec='libx264', preset='medium', logger=None)
         
         return evaluation_results_stat
+
+
+
 
     # FIXME: Please Delete in the Future, this verison is just for baseline preserving fusion debugging purpose.
     def stereosplat_plus_baseline_preserving_fusion_oracle(self,
