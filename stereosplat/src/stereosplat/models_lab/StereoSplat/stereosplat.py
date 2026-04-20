@@ -8676,6 +8676,788 @@ class StereoSplat(BaseModule):
         return evaluation_results_stat
 
 
+    # FIXME: the post fusion codes
+    def stereosplatplus_difix3d_based_posed_post_fusion(self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views = 2,
+                                        pseudo_ratio_index = [],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        mode='upper_bound',
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        
+        
+        bin_token_name = bin_token_list[0][:-4]
+        
+        if start_images_views == 2:
+            view_num = 2
+            matching_nums = 2
+        else:
+            raise NotImplementedError
+        
+        # First Time Iteration rendered images from the first frame stereo
+        with torch.no_grad():
+            input_batch_dict,output_batch_dict =self.prepare_input_multiview(batch=batch,
+                                                                        view_num=view_num,
+                                                                         matching_nums=matching_nums)
+            
+            start_time1 = time.time()
+            img =input_batch_dict["imgs"] #[B,6,3,H,W]
+            height,width = img.shape[-2:]
+            bs = img.shape[0]   
+            
+            # Cache the *input stereo* cameras (first stereo pair) for later frustum-based mixing.
+            # `prepare_input_multiview(view_num=2)` returns two views ordered by `index=[0,3]`.
+            # These extrinsics are cam2world matrices.
+            input_stereo_c2w = input_batch_dict["extrinsics"][:, :2].clone()      # [B,2,4,4]
+            input_stereo_K = input_batch_dict["intrinsics"][:, :2].clone()        # [B,2,3,3]
+            input_stereo_hw = (height, width)
+            
+            
+            img_feats = self.extract_img_feat(img=img)
+            gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                            images_feat=img_feats[0])
+
+            # volume-gs prediction
+            pc_range = self.dataset_params.pc_range
+            x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+            # batch-wise saved the gaussain-pixel and the feature-pixel
+            gaussians_cv_mask, gaussians_feat_mask = [], []
+            for b in range(bs):
+                mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                            (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                            (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+                # get the valid gaussains in the pixel splat
+                gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+                # get the valid feature in the pixel splat
+                gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+                gaussians_cv_mask.append(gaussians_cv_mask_i)
+                gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv_base = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume_base = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all_base = torch.cat([gaussians_cv_base, gaussians_volume_base], dim=1)
+        bs = gaussians_all_base.shape[0] # batch size is 2
+        
+        #  rendere all the images/ intrinsics and extrinsics
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+        
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all_base,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )
+
+        rendered_results_fuse = render_pkg_fuse
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+        output_rgb = output_batch_dict['output_imgs'] # This is the GT Images
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+
+
+        '''Do the visualization and the evaluation here'''
+        rendered_images_fusion = interleave_left_right(rendered_color_fuse)
+        rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+        rendered_images_gt = interleave_left_right(output_rgb)
+
+        rendered_images_first_stereo = rendered_images_fusion[:,-2:,:,:,:]
+        gt_images_first_stereo = rendered_images_gt[:,-2:,:,:,:]
+        renderded_depth_first_stereo = rendered_depth_fusion[:,-2:,:,:]
+        gt_depth_first_stereo = sparse_depth_gt[:,-2:,:,:]
+        
+        # last view
+        rendered_images_last_stereo = rendered_images_fusion[:,-4:-2,:,:,:]
+        gt_images_last_stereo = rendered_images_gt[:,-4:-2,:,:,:]
+        renderded_depth_last_stereo = rendered_depth_fusion[:,-4:-2,:,:]
+        gt_depth_last_stereo = sparse_depth_gt[:,-4:-2,:,:]
+        
+        # center view
+        rendered_images_center_stereo = rendered_images_fusion[:,-6:-4,:,:,:]
+        gt_images_center_stereo = rendered_images_gt[:,-6:-4,:,:,:]
+        renderded_depth_center_stereo = rendered_depth_fusion[:,-6:-4,:,:]
+        gt_depth_center_stereo = sparse_depth_gt[:,-6:-4,:,:]
+        
+        rendered_images_base = rendered_images_fusion
+        rendered_depth_base = rendered_depth_fusion
+    
+        
+        # Run the Second Round
+        input_batch_dict,output_batch_dict =self.prepare_tripleview_by_ratio_index(
+                                                batch=batch,
+                                                pseudo_ratio_index=pseudo_ratio_index)
+        
+    
+        if use_diffix3d:
+            
+            # reference image here
+            left_image_ref = input_batch_dict["imgs"][0,0,:,:,:]
+            right_image_ref = input_batch_dict["imgs"][0,1,:,:,:]
+            left_image_ref = left_image_ref.permute(1,2,0).cpu().numpy()
+            right_image_ref = right_image_ref.permute(1,2,0).cpu().numpy()
+            left_image_ref = (left_image_ref*255).astype(np.uint8)
+            right_image_ref = (right_image_ref*255).astype(np.uint8)
+            left_image_ref_pil = Image.fromarray(left_image_ref)
+            right_image_ref_pil = Image.fromarray(right_image_ref)
+            
+            
+            # default using center and the last frame as the input.
+            if pseudo_ratio_index[0]==0.5 and pseudo_ratio_index[1]==1.0:
+                # implemented with the finetuned diffix3d model here
+                raw_center_left = rendered_images_center_stereo[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_center_left = (raw_center_left*255).astype(np.uint8)
+                raw_center_left_pil = Image.fromarray(raw_center_left)
+                
+                raw_center_right = rendered_images_center_stereo[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_center_right = (raw_center_right*255).astype(np.uint8)
+                raw_center_right_pil = Image.fromarray(raw_center_right)
+                
+                raw_last_left = rendered_images_last_stereo[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_last_left = (raw_last_left*255).astype(np.uint8)
+                raw_last_left_pil = Image.fromarray(raw_last_left)
+                
+                raw_last_right = rendered_images_last_stereo[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_last_right = (raw_last_right*255).astype(np.uint8)
+                raw_last_right_pil = Image.fromarray(raw_last_right)
+                
+                
+                with torch.no_grad():
+                    
+                    enhanced_center_left_pil = diffix3d_network.sample(
+                        raw_center_left_pil,
+                        height=112,
+                        width=544,
+                        ref_image=left_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_center_right_pil = diffix3d_network.sample(
+                        raw_center_right_pil,
+                        height=112,
+                        width=544,
+                        ref_image=right_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_last_left_pil = diffix3d_network.sample(
+                        raw_last_left_pil,
+                        height=112,
+                        width=544,
+                        ref_image=left_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_last_right_pil = diffix3d_network.sample(
+                        raw_last_right_pil,
+                        height=112,
+                        width=544,
+                        ref_image=right_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    
+                    
+                    enhance_center_left_tensor = convert_pil_to_tensor(enhanced_center_left_pil)
+                    enhance_center_right_tensor = convert_pil_to_tensor(enhanced_center_right_pil)
+                    enhance_last_left_tensor = convert_pil_to_tensor(enhanced_last_left_pil)
+                    enhance_last_right_tensor = convert_pil_to_tensor(enhanced_last_right_pil)
+                    enhanced_center_and_last_stereo_frames = torch.cat([enhance_center_left_tensor, 
+                                                                        enhance_center_right_tensor, 
+                                                                        enhance_last_left_tensor, 
+                                                                        enhance_last_right_tensor], dim=1)
+                    
+                    input_batch_dict["imgs"][:,2:,:,:,:] = enhanced_center_and_last_stereo_frames
+
+            
+            else:
+                # imnplement with the finetuned difix3d model here.
+                raw_rendered_rest_images = rendered_images_fusion[:,:-6,:,:,:]
+                raw_rendered_rest_images = torch.cat([rendered_images_first_stereo, 
+                                                      raw_rendered_rest_images,
+                                                      rendered_images_last_stereo], dim=1)
+                
+                raw_rendered_rest_stereo_pair_nums = raw_rendered_rest_images.shape[1] // 2
+                
+                raw_second_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[0]) * 2
+                raw_second_frame_right_id = raw_second_frame_left_id + 1
+                
+                raw_third_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[1]) * 2
+                raw_third_frame_right_id = raw_third_frame_left_id + 1
+                
+                
+                # replaced with the new images
+                raw_second_frames_stereo_images = raw_rendered_rest_images[:,raw_second_frame_left_id:raw_second_frame_right_id+1,:,:,:]
+                raw_third_frames_stereo_images = raw_rendered_rest_images[:,raw_third_frame_left_id:raw_third_frame_right_id+1,:,:,:]               
+                
+                
+                
+                raw_second_frame_left = raw_second_frames_stereo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_second_frame_left = (raw_second_frame_left*255).astype(np.uint8)
+                raw_second_frame_left_pil = Image.fromarray(raw_second_frame_left)
+                
+                raw_second_frame_right = raw_second_frames_stereo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_second_frame_right = (raw_second_frame_right*255).astype(np.uint8)
+                raw_second_frame_right_pil = Image.fromarray(raw_second_frame_right)
+                
+                raw_third_frame_left = raw_third_frames_stereo_images[0,0,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_third_frame_left = (raw_third_frame_left*255).astype(np.uint8)
+                raw_third_frame_left_pil = Image.fromarray(raw_third_frame_left)
+                
+                raw_third_frame_right = raw_third_frames_stereo_images[0,1,:,:,:].permute(1,2,0).cpu().numpy()
+                raw_third_frame_right = (raw_third_frame_right*255).astype(np.uint8)
+                raw_third_frame_right_pil = Image.fromarray(raw_third_frame_right)
+                
+                
+                with torch.no_grad():
+                    enhanced_second_left_pil = diffix3d_network.sample(
+                        raw_second_frame_left_pil,
+                        height=112,
+                        width=544,
+                        ref_image=left_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_second_right_pil = diffix3d_network.sample(
+                        raw_second_frame_right_pil,
+                        height=112,
+                        width=544,
+                        ref_image=right_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_third_left_pil = diffix3d_network.sample(
+                        raw_third_frame_left_pil,
+                        height=112,
+                        width=544,
+                        ref_image=left_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    enhanced_third_right_pil = diffix3d_network.sample(
+                        raw_third_frame_right_pil,
+                        height=112,
+                        width=544,
+                        ref_image=right_image_ref_pil,
+                        prompt=cfg.prompt
+                    )
+                    
+                    enhance_second_left_tensor = convert_pil_to_tensor(enhanced_second_left_pil)
+                    enhance_second_right_tensor = convert_pil_to_tensor(enhanced_second_right_pil)
+                    enhance_third_left_tensor = convert_pil_to_tensor(enhanced_third_left_pil)
+                    enhance_third_right_tensor = convert_pil_to_tensor(enhanced_third_right_pil)
+                    enhanced_second_and_third_stereo_frames = torch.cat([enhance_second_left_tensor, 
+                                                                        enhance_second_right_tensor, 
+                                                                        enhance_third_left_tensor, 
+                                                                        enhance_third_right_tensor], dim=1)
+        
+                input_batch_dict["imgs"][:,2:,:,:,:] = enhanced_second_and_third_stereo_frames
+
+        
+        else:
+            if pseudo_ratio_index[0]==0.5 and pseudo_ratio_index[1]==1.0:
+                
+                raw_center_and_last_stereo_frames = torch.cat([rendered_images_center_stereo, 
+                                                               rendered_images_last_stereo], dim=1)
+                input_batch_dict["imgs"][:,2:,:,:,:] = raw_center_and_last_stereo_frames
+            
+            else:
+                
+                raw_rendered_rest_images = rendered_images_fusion[:,:-6,:,:,:]
+                raw_rendered_rest_images = torch.cat([rendered_images_first_stereo, 
+                                                      raw_rendered_rest_images,
+                                                      rendered_images_last_stereo], dim=1)
+                
+                raw_rendered_rest_stereo_pair_nums = raw_rendered_rest_images.shape[1] // 2
+                
+                raw_second_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[0]) * 2
+                raw_second_frame_right_id = raw_second_frame_left_id + 1
+                
+                raw_third_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[1]) * 2
+                raw_third_frame_right_id = raw_third_frame_left_id + 1
+                
+                
+                # replaced with the new images
+                raw_second_frames_stereo_images = raw_rendered_rest_images[:,raw_second_frame_left_id:raw_second_frame_right_id+1,:,:,:]
+                raw_third_frames_stereo_images = raw_rendered_rest_images[:,raw_third_frame_left_id:raw_third_frame_right_id+1,:,:,:]               
+                
+
+                
+                input_batch_dict["imgs"][:,2:4,:,:,:] = raw_second_frames_stereo_images
+                input_batch_dict["imgs"][:,4:,:,:,:] = raw_third_frames_stereo_images
+                
+                
+        # second time inference here for progressive infernece.
+        img = input_batch_dict["imgs"]
+        height, width = img.shape[-2:]
+        bs = img.shape[0]
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv, gaussians_feat, pred_depths = self.costvolume_gs(input_batch_dict, cfg=cfg,
+                                                                      images_feat=img_feats[0])
+
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                           (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                           (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+
+        gaussians_volume = self.volume_gs(
+            [img_feats[0]],
+            input_batch_dict['extrinsics'],
+            gaussians_cv_mask,
+            gaussians_feat_mask,
+            input_batch_dict["img_metas"])
+        
+        
+        # stereosplat 
+        gaussians_cv_plus = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume_plus = sanitize_gaussians_tensor(gaussians_volume)
+        gaussians_all_plus = torch.cat([gaussians_cv_plus, gaussians_volume_plus], dim=1)
+        bs = gaussians_all_plus.shape[0]
+        
+        
+        if mode == "upper_bound":
+            render_c2w = output_batch_dict["output_c2ws"]
+            intrinsics = input_batch_dict['intrinsics'].clone()
+            output_intrinsics = intrinsics[:, 0:1, :, :].repeat(1, render_c2w.shape[1], 1, 1)
+            render_fovxs = output_batch_dict["output_fovxs"]
+            render_fovys = output_batch_dict["output_fovys"]
+
+            render_pkg_fuse = self.renderer.render(
+                gaussians=gaussians_all_plus,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+
+            rendered_results_fuse = render_pkg_fuse
+            rendered_color_fuse = rendered_results_fuse['image']
+            rendered_depth_fuse = rendered_results_fuse['depth']
+            rendered_alpha_fuse = rendered_results_fuse['alpha']
+            rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+            rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+            rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
+            rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
+
+            output_rgb = output_batch_dict['output_imgs']
+            sparse_depth_gt = output_batch_dict['output_sparse_depth']
+
+            rendered_images_fusion = interleave_left_right(rendered_color_fuse)
+            rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+            sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
+            rendered_images_gt = interleave_left_right(output_rgb)
+            
+
+            rendered_images_plus = rendered_images_fusion
+            rendered_depth_plus = rendered_depth_fusion
+            
+            
+            all_rgb_eval_info_base = metrics_mean(pred = rendered_images_base,
+                                            gt = rendered_images_gt)
+            all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                            pred = rendered_depth_base,
+                                                            gt = sparse_depth_gt)
+            all_rgb_eval_info_plus = metrics_mean(pred = rendered_images_plus,
+                                            gt = rendered_images_gt)
+            all_rgb_eval_info_plus_depth = depth_metrics_absrel_sqrel_rmse_log(
+                                                            pred = rendered_depth_plus,
+                                                            gt = sparse_depth_gt)
+
+            # oracle G_base and G_plus fusion version
+            base_mask,plus_mask, fusion_image = fuse_rgb_by_gt_error(
+                rgb1 = rendered_images_base,
+                rgb2 = rendered_images_plus,
+                gt = rendered_images_gt
+            )
+            
+            
+            fusion_depth = rendered_depth_base * base_mask.squeeze(2) + rendered_depth_plus * plus_mask.squeeze(2)
+        
+            all_rgb_eval_info_fusion = metrics_mean(pred = fusion_image,
+                                            gt = rendered_images_gt)
+            all_depth_eval_info_fusion = depth_metrics_absrel_sqrel_rmse_log(
+                                                            pred = fusion_depth,
+                                                            gt = sparse_depth_gt)
+            
+            
+
+            eval_base_dict = {
+                "psnr": all_rgb_eval_info_base['psnr'].data.item(),
+                "ssim": all_rgb_eval_info_base['ssim'].data.item(),
+                "lpips": all_rgb_eval_info_base['lpips'].data.item(),
+                "absrel": all_rgb_eval_info_base_depth['AbsRel'].data.item(),
+                "sqrel": all_rgb_eval_info_base_depth['SqRel'].data.item(),
+                "rmse_log": all_rgb_eval_info_base_depth['RMSE_log'].data.item(),
+            }
+            
+            eval_fusion_dict = {
+                "psnr": all_rgb_eval_info_fusion['psnr'].data.item(),
+                "ssim": all_rgb_eval_info_fusion['ssim'].data.item(),
+                "lpips": all_rgb_eval_info_fusion['lpips'].data.item(),
+                "absrel": all_depth_eval_info_fusion['AbsRel'].data.item(),
+                "sqrel": all_depth_eval_info_fusion['SqRel'].data.item(),
+                "rmse_log": all_depth_eval_info_fusion['RMSE_log'].data.item(),
+            }
+            
+            final_eval_dict ={
+                "G_base": eval_base_dict,
+                "G_fusion": eval_fusion_dict,
+            }
+            
+        elif mode == "kepted_lecay":
+            # Build a mixed gaussian set:
+            # - keep base gaussians inside the input-stereo FOV (either of the two cameras)
+            # - use plus gaussians outside the input-stereo FOV
+            #
+            # Motivation: input-stereo constrained region is usually more reliable in `gaussians_all_base`,
+            # while `gaussians_all_plus` may better cover regions outside the input stereo frusta.
+            #
+            # Also compute `G_base` here to keep the validator return contract consistent.
+
+            all_rgb_eval_info_base = metrics_mean(pred=rendered_images_base, gt=rendered_images_gt)
+            all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                pred=rendered_depth_base,
+                gt=sparse_depth_gt,
+            )
+            eval_base_dict = {
+                "psnr": all_rgb_eval_info_base["psnr"].data.item(),
+                "ssim": all_rgb_eval_info_base["ssim"].data.item(),
+                "lpips": all_rgb_eval_info_base["lpips"].data.item(),
+                "absrel": all_rgb_eval_info_base_depth["AbsRel"].data.item(),
+                "sqrel": all_rgb_eval_info_base_depth["SqRel"].data.item(),
+                "rmse_log": all_rgb_eval_info_base_depth["RMSE_log"].data.item(),
+            }
+
+            def _in_input_stereo_fov_mask(
+                xyz_world: torch.Tensor,  # [B, N, 3]
+                c2w: torch.Tensor,        # [B, 2, 4, 4]
+                K: torch.Tensor,          # [B, 2, 3, 3]
+                hw: tuple[int, int],
+            ) -> torch.Tensor:
+                H, W = hw
+                B, N, _ = xyz_world.shape
+                device = xyz_world.device
+                dtype = xyz_world.dtype
+
+                ones = torch.ones((B, N, 1), device=device, dtype=dtype)
+                xyz1 = torch.cat([xyz_world, ones], dim=-1)  # [B, N, 4]
+
+                # world -> cam for the two input stereo cameras
+                w2c = torch.linalg.inv(c2w)  # [B,2,4,4]
+                # [B,2,N,4] = [B,2,4,4] @ [B,1,N,4,1]
+                cam = (w2c.unsqueeze(2) @ xyz1[:, None, :, :, None]).squeeze(-1)  # [B,2,N,4]
+                x = cam[..., 0]
+                y = cam[..., 1]
+                z = cam[..., 2]
+
+                # project
+                fx = K[..., 0, 0].unsqueeze(-1)  # [B,2,1]
+                fy = K[..., 1, 1].unsqueeze(-1)
+                cx = K[..., 0, 2].unsqueeze(-1)
+                cy = K[..., 1, 2].unsqueeze(-1)
+
+                eps = torch.finfo(dtype).eps
+                z_safe = torch.clamp(z, min=eps)
+                u = fx * (x / z_safe) + cx
+                v = fy * (y / z_safe) + cy
+
+                in_front = z > 0
+                in_img = (u >= 0) & (u <= (W - 1)) & (v >= 0) & (v <= (H - 1))
+                visible = in_front & in_img  # [B,2,N]
+
+                # inside if visible in either of the two stereo cameras
+                return visible.any(dim=1)  # [B,N]
+
+            base_xyz = gaussians_all_base[..., :3]
+            plus_xyz = gaussians_all_plus[..., :3]
+
+            base_inside = _in_input_stereo_fov_mask(
+                xyz_world=base_xyz,
+                c2w=input_stereo_c2w,
+                K=input_stereo_K,
+                hw=input_stereo_hw,
+            )
+            plus_inside = _in_input_stereo_fov_mask(
+                xyz_world=plus_xyz,
+                c2w=input_stereo_c2w,
+                K=input_stereo_K,
+                hw=input_stereo_hw,
+            )
+
+            mixed_gaussians = []
+            for b in range(bs):
+                g_base_keep = gaussians_all_base[b][base_inside[b]]
+                g_plus_keep = gaussians_all_plus[b][~plus_inside[b]]
+                mixed_gaussians.append(torch.cat([g_base_keep, g_plus_keep], dim=0))
+
+            # pad to a batch tensor (variable length per batch is possible); current code uses B=1 in eval,
+            # so we keep it simple and stack when shapes match.
+            if bs == 1:
+                gaussians_all_plus_mixed = mixed_gaussians[0][None, ...]
+            else:
+                # fallback: pad to max length
+                max_n = max(g.shape[0] for g in mixed_gaussians)
+                feat_dim = mixed_gaussians[0].shape[-1]
+                gaussians_all_plus_mixed = torch.zeros((bs, max_n, feat_dim), device=gaussians_all_plus.device, dtype=gaussians_all_plus.dtype)
+                for b, g in enumerate(mixed_gaussians):
+                    gaussians_all_plus_mixed[b, : g.shape[0]] = g
+                    
+
+            # Render with the mixed gaussians and report metrics as `G_fusion` (keep validator contract).
+            render_pkg_mix = self.renderer.render(
+                gaussians=gaussians_all_plus_mixed,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+            rendered_color_mix = torch.clamp(render_pkg_mix["image"], min=0, max=1.0)
+            rendered_depth_mix = torch.clamp(render_pkg_mix["depth"].squeeze(2), min=0, max=150)
+
+            rendered_images_mix = interleave_left_right(rendered_color_mix)
+            rendered_depth_mix = interleave_left_right_depth(rendered_depth_mix)
+
+            all_rgb_eval_info_mix = metrics_mean(pred=rendered_images_mix, gt=rendered_images_gt)
+            all_depth_eval_info_mix = depth_metrics_absrel_sqrel_rmse_log(pred=rendered_depth_mix, gt=sparse_depth_gt)
+
+            eval_fusion_dict = {
+                "psnr": all_rgb_eval_info_mix["psnr"].data.item(),
+                "ssim": all_rgb_eval_info_mix["ssim"].data.item(),
+                "lpips": all_rgb_eval_info_mix["lpips"].data.item(),
+                "absrel": all_depth_eval_info_mix["AbsRel"].data.item(),
+                "sqrel": all_depth_eval_info_mix["SqRel"].data.item(),
+                "rmse_log": all_depth_eval_info_mix["RMSE_log"].data.item(),
+            }
+
+            final_eval_dict = {
+                "G_base": eval_base_dict,
+                "G_fusion": eval_fusion_dict,
+            }
+        
+        
+        elif mode == "stereo_fov_depth60_rpix1_repalce":
+            # Fusion v2 (requested):
+            # - Keep "good" base gaussians.
+            # - Replace "bad" base gaussians inside stereo FOV when they are far and tiny in pixel-space.
+            # - Use plus gaussians to cover:
+            #   (a) outside stereo FOV
+            #   (b) outside base pc_range
+            #   (c) the "far & tiny" region inside stereo FOV (to replace removed base points)
+            #
+            # Heuristics:
+            # - depth: camera-space z (meters)
+            # - pixel radius: approx max(scale_xyz) projected by fx/fy divided by z
+            depth_thresh_m = 60.0
+            r_pix_thresh = 2.0  # pixels (KITTI-like, 112x544 in our difix3d usage)
+
+            # Compute `G_base` to keep the validator return contract consistent.
+            all_rgb_eval_info_base = metrics_mean(pred=rendered_images_base, gt=rendered_images_gt)
+            all_rgb_eval_info_base_depth = depth_metrics_absrel_sqrel_rmse_log(
+                pred=rendered_depth_base,
+                gt=sparse_depth_gt,
+            )
+            eval_base_dict = {
+                "psnr": all_rgb_eval_info_base["psnr"].data.item(),
+                "ssim": all_rgb_eval_info_base["ssim"].data.item(),
+                "lpips": all_rgb_eval_info_base["lpips"].data.item(),
+                "absrel": all_rgb_eval_info_base_depth["AbsRel"].data.item(),
+                "sqrel": all_rgb_eval_info_base_depth["SqRel"].data.item(),
+                "rmse_log": all_rgb_eval_info_base_depth["RMSE_log"].data.item(),
+            }
+
+            def _in_pc_range(xyz: torch.Tensor, pc_range) -> torch.Tensor:
+                # xyz: [B,N,3] -> [B,N] bool
+                x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+                return (
+                    (xyz[..., 0] >= x_start) & (xyz[..., 0] <= x_end)
+                    & (xyz[..., 1] >= y_start) & (xyz[..., 1] <= y_end)
+                    & (xyz[..., 2] >= z_start) & (xyz[..., 2] <= z_end)
+                )
+
+            def _project_uvzr(
+                xyz_world: torch.Tensor,  # [B,N,3]
+                scale_xyz: torch.Tensor,  # [B,N,3]
+                c2w: torch.Tensor,        # [B,2,4,4]
+                K: torch.Tensor,          # [B,2,3,3]
+                hw: tuple[int, int],
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                """
+                Returns:
+                  inside_any: [B,N] bool, whether projects inside either stereo view and z>0
+                  z_min:      [B,N] float, min positive z across views (inf if behind both)
+                  r_pix_max:  [B,N] float, max projected radius across views (0 if behind both)
+                  inside_per: [B,2,N] bool
+                """
+                H, W = hw
+                B, N, _ = xyz_world.shape
+                device = xyz_world.device
+                dtype = xyz_world.dtype
+
+                ones = torch.ones((B, N, 1), device=device, dtype=dtype)
+                xyz1 = torch.cat([xyz_world, ones], dim=-1)  # [B,N,4]
+                w2c = torch.linalg.inv(c2w)  # [B,2,4,4]
+                cam = (w2c.unsqueeze(2) @ xyz1[:, None, :, :, None]).squeeze(-1)  # [B,2,N,4]
+                x = cam[..., 0]
+                y = cam[..., 1]
+                z = cam[..., 2]
+
+                fx = K[..., 0, 0].unsqueeze(-1)  # [B,2,1]
+                fy = K[..., 1, 1].unsqueeze(-1)
+                cx = K[..., 0, 2].unsqueeze(-1)
+                cy = K[..., 1, 2].unsqueeze(-1)
+
+                eps = torch.finfo(dtype).eps
+                z_safe = torch.clamp(z, min=eps)
+                u = fx * (x / z_safe) + cx
+                v = fy * (y / z_safe) + cy
+
+                in_front = z > 0
+                in_img = (u >= 0) & (u <= (W - 1)) & (v >= 0) & (v <= (H - 1))
+                inside_per = in_front & in_img  # [B,2,N]
+                inside_any = inside_per.any(dim=1)  # [B,N]
+
+                # z_min over the two cameras (only where in_front)
+                z_pos = torch.where(in_front, z, torch.full_like(z, float("inf")))
+                z_min = z_pos.min(dim=1).values  # [B,N]
+
+                # approximate pixel radius: max(fx,fy) * max(scale_xyz) / z
+                # scale is world-space; this is a heuristic.
+                s = torch.clamp(scale_xyz, min=1e-6)
+                s_max = s.max(dim=-1).values  # [B,N]
+                f_max = torch.maximum(fx.squeeze(-1), fy.squeeze(-1))  # [B,2]
+                # [B,2,N]
+                r_pix = (f_max[:, :, None] * s_max[:, None, :]) / z_safe
+                r_pix = torch.where(in_front, r_pix, torch.zeros_like(r_pix))
+                r_pix_max = r_pix.max(dim=1).values  # [B,N]
+
+                return inside_any, z_min, r_pix_max, inside_per
+
+            pc_range = self.dataset_params.pc_range
+
+            base_xyz = gaussians_all_base[..., 0:3]
+            base_scale = gaussians_all_base[..., 11:14]
+            plus_xyz = gaussians_all_plus[..., 0:3]
+            plus_scale = gaussians_all_plus[..., 11:14]
+
+            base_in_pc = _in_pc_range(base_xyz, pc_range)
+            plus_in_pc = _in_pc_range(plus_xyz, pc_range)
+
+            base_inside, base_zmin, base_rpix, _ = _project_uvzr(
+                xyz_world=base_xyz,
+                scale_xyz=base_scale,
+                c2w=input_stereo_c2w,
+                K=input_stereo_K,
+                hw=input_stereo_hw,
+            )
+            plus_inside, plus_zmin, plus_rpix, _ = _project_uvzr(
+                xyz_world=plus_xyz,
+                scale_xyz=plus_scale,
+                c2w=input_stereo_c2w,
+                K=input_stereo_K,
+                hw=input_stereo_hw,
+            )
+
+            base_far_tiny = (base_zmin > depth_thresh_m) & (base_rpix < r_pix_thresh)
+            plus_far_tiny = (plus_zmin > depth_thresh_m) & (plus_rpix < r_pix_thresh)
+
+            # Base:
+            # keep points that are either inside stereo FOV or within pc_range (volume support),
+            # but allow replacement of inside-FOV points that are far & tiny and NOT within pc_range.
+            base_replace = base_inside & base_far_tiny & (~base_in_pc)
+            base_keep = (base_inside | base_in_pc) & (~base_replace)
+
+            # Plus:
+            # keep points that cover outside-FOV or outside-pc_range, plus far&tiny inside-FOV to replace removed base.
+            plus_keep = (~plus_inside) | (~plus_in_pc) | (plus_inside & plus_far_tiny)
+
+            mixed_gaussians = []
+            for b in range(bs):
+                g_base_keep = gaussians_all_base[b][base_keep[b]]
+                g_plus_keep = gaussians_all_plus[b][plus_keep[b]]
+                mixed_gaussians.append(torch.cat([g_base_keep, g_plus_keep], dim=0))
+            
+
+            if bs == 1:
+                gaussians_all_plus_mixed = mixed_gaussians[0][None, ...]
+            else:
+                max_n = max(g.shape[0] for g in mixed_gaussians)
+                feat_dim = mixed_gaussians[0].shape[-1]
+                gaussians_all_plus_mixed = torch.zeros(
+                    (bs, max_n, feat_dim),
+                    device=gaussians_all_plus.device,
+                    dtype=gaussians_all_plus.dtype,
+                )
+                for b, g in enumerate(mixed_gaussians):
+                    gaussians_all_plus_mixed[b, : g.shape[0]] = g
+
+            render_pkg_mix = self.renderer.render(
+                gaussians=gaussians_all_plus_mixed,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None,
+            )
+            rendered_color_mix = torch.clamp(render_pkg_mix["image"], min=0, max=1.0)
+            rendered_depth_mix = torch.clamp(render_pkg_mix["depth"].squeeze(2), min=0, max=150)
+
+            rendered_images_mix = interleave_left_right(rendered_color_mix)
+            rendered_depth_mix = interleave_left_right_depth(rendered_depth_mix)
+
+            all_rgb_eval_info_mix = metrics_mean(pred=rendered_images_mix, gt=rendered_images_gt)
+            all_depth_eval_info_mix = depth_metrics_absrel_sqrel_rmse_log(pred=rendered_depth_mix, gt=sparse_depth_gt)
+
+            eval_fusion_dict = {
+                "psnr": all_rgb_eval_info_mix["psnr"].data.item(),
+                "ssim": all_rgb_eval_info_mix["ssim"].data.item(),
+                "lpips": all_rgb_eval_info_mix["lpips"].data.item(),
+                "absrel": all_depth_eval_info_mix["AbsRel"].data.item(),
+                "sqrel": all_depth_eval_info_mix["SqRel"].data.item(),
+                "rmse_log": all_depth_eval_info_mix["RMSE_log"].data.item(),
+            }
+
+            final_eval_dict = {
+                "G_base": eval_base_dict,
+                "G_fusion": eval_fusion_dict,
+            }
+        
+        
+        else:
+            raise NotImplementedError("The mode is not implemented yet")
+
+        return final_eval_dict
 
 
     # FIXME: Please Delete in the Future, this verison is just for baseline preserving fusion debugging purpose.
