@@ -41,10 +41,10 @@ from torchmetrics.functional.image import structural_similarity_index_measure as
 
 import json
 from pathlib import Path
-
 import numpy as np
-
 from .debug import save_debug_visualizations
+
+import random
 
 
 def write_pose_to_json(pose, json_path: str) -> None:
@@ -598,11 +598,9 @@ class StereoSplat(BaseModule):
         bin_token_name = batch['bin_token']
         input_cam_batch_data = batch['inputs_pix']                                 
         input_batch_data = batch['inputs']
-        
         input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        
 
-        
-        
         input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
         input_camera_extrinsics = input_cam_batch_data['c2w'] #(B,V,4,4)
         
@@ -850,6 +848,9 @@ class StereoSplat(BaseModule):
         input_batch_data = batch['inputs']
         
         input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        
+        
+        
         input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
         input_camera_extrinsics = input_cam_batch_data['c2w'] #(B,V,4,4)
         
@@ -1284,6 +1285,612 @@ class StereoSplat(BaseModule):
         else:
             raise NotImplementedError
 
+    
+    
+    def forward_to_3dgs(self,input_batch_dict,cfg=None):
+        
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]    
+        height,width = img.shape[-2:]
+        bs = img.shape[0]
+    
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                
+        # perform the cost volume-based 
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
+        
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+        
+
+        
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        return gaussians_all
+
+
+
+    def prepare_input_multiview_stage2(self,
+                                batch,
+                                view_num=2,
+                                matching_nums=2):
+        
+        device_id = self.device
+        input_batch_dict = dict()
+        output_batch_dict = dict()
+        
+        input_batch_dict_for_psuedo_view_rendering = dict()
+        
+        # dict_keys(['ck', 'c2w', 'cx', 'cy', 'fx', 'fy', 'rays_o', 'rays_d', 'depth_m', 'conf_m', 'sparse_gt_depth']
+        # dict_keys(['rgb', 'c2w', 'fovx', 'fovy', 'rays_o', 'rays_d', 
+                    # 'input_image_path', 'depth', 'depth_m', 'conf_m', 
+                                        #'sparse_gt_depth'])
+        bin_token_name = batch['bin_token']
+        input_cam_batch_data = batch['inputs_pix']  
+        
+        
+        
+        # GT Input Information                               
+        input_batch_data = batch['inputs']
+        input_rgb =  input_batch_data['rgb'] # torch.Size([1, 2, 3, 224, 840]) #(B,V,3,H,W)
+        input_camera_intrinsics = input_cam_batch_data['ck'] #(B,V,3,3) 
+        input_camera_extrinsics = input_cam_batch_data['c2w'] #(B,V,4,4)
+        input_psuedo_depth = input_cam_batch_data['depth_m'] #(B,V,H,W)
+        input_sparse_depth = input_cam_batch_data['sparse_gt_depth'] #(B,V,H,W)
+        
+        
+        # Used for Pusedo View Mix Training Input Information.
+        input_camera_c2w_for_psuedo_view_rendering = batch["input_info_for_psuedo_view_rendering"]["c2w"]
+        input_camera_fovx_for_psuedo_view_rendering = batch["input_info_for_psuedo_view_rendering"]["fovx"]
+        input_camera_fovy_for_psuedo_view_rendering = batch["input_info_for_psuedo_view_rendering"]["fovy"]
+        
+
+        
+        stereo_pairs_nums = view_num//2
+        
+        if stereo_pairs_nums == 1:
+            index = [0,3]
+        elif stereo_pairs_nums == 2:
+            index = [0,3,1,4]
+        elif stereo_pairs_nums == 3:
+            index = [0,3,1,4,2,5]
+        else:
+            raise ValueError("stereo_pairs_nums must be 1, 2, or 3")
+        
+
+        
+        input_rgb = input_rgb[:,index,:,:,:]
+        
+
+        input_camera_intrinsics = input_camera_intrinsics[:,index,:,:]
+        input_camera_extrinsics = input_camera_extrinsics[:,index,:,:]
+        input_psuedo_depth = input_psuedo_depth[:,index,:,:]
+        input_sparse_depth = input_sparse_depth[:,index,:,:]
+        
+        
+        # used for the psuedo view rendering index
+        input_camera_c2w_for_psuedo_view_rendering = input_camera_c2w_for_psuedo_view_rendering[:,index,:,:]
+        input_camera_fovx_for_psuedo_view_rendering = input_camera_fovx_for_psuedo_view_rendering[:,index]
+        input_camera_fovy_for_psuedo_view_rendering = input_camera_fovy_for_psuedo_view_rendering[:,index]
+        
+
+            
+        selected_cam_dist_index = self.k_nearest_camera_indices(extrinsics=input_camera_extrinsics,
+                                                                K=matching_nums,
+                                                                pose_type="cam2world",
+                                                                include_self=True)
+        
+        # input_dict
+        input_batch_dict['imgs'] = input_rgb.to(device_id, dtype=self.dtype)
+        input_batch_dict['intrinsics'] = input_camera_intrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['extrinsics'] = input_camera_extrinsics.to(device_id, dtype=self.dtype)
+        input_batch_dict['nn_matrix'] = selected_cam_dist_index.to(device_id, dtype=self.dtype)
+        input_batch_dict['pseudo_depths'] = input_psuedo_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['sparse_depths'] = input_sparse_depth.to(device_id, dtype=self.dtype)
+        input_batch_dict['bin_token_name'] = bin_token_name
+        
+        
+        # input dict 
+        input_batch_dict_for_psuedo_view_rendering['c2w'] = input_camera_c2w_for_psuedo_view_rendering.to(device_id, dtype=self.dtype)
+        input_batch_dict_for_psuedo_view_rendering['fovx'] = input_camera_fovx_for_psuedo_view_rendering.to(device_id, dtype=self.dtype)
+        input_batch_dict_for_psuedo_view_rendering['fovy'] = input_camera_fovy_for_psuedo_view_rendering.to(device_id, dtype=self.dtype)
+        
+        
+        
+        
+        current_w2i = copy.deepcopy(batch['inputs_vol']['w2i'])
+        current_w2i = current_w2i[:,index,:,:]
+        
+        current_input_rgbs = copy.deepcopy(batch["inputs"]["rgb"])
+        current_input_rgbs = current_input_rgbs[:,index,:,:,:]
+        
+        # for volume-gs
+        img_metas = []
+        bs, v, c, h, w = current_input_rgbs.shape
+        for w2i in current_w2i:
+            img_metas.append({"lidar2img": w2i, "img_shape": [[h, w]] * v})
+        input_batch_dict["img_metas"] = img_metas
+        
+        # output dict
+        # for render and loss and eval
+        output_batch_dict["output_imgs"] = batch["outputs"]["rgb"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths"] = batch["outputs"]["depth"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_depths_m"] = batch["outputs"]["depth_m"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_confs_m"] = batch["outputs"]["conf_m"].to(device_id, dtype=self.dtype)        
+        output_batch_dict["output_positions"] = (batch["outputs"]["rays_o"] + batch["outputs"]["rays_d"] * \
+                            batch["outputs"]["depth_m"].unsqueeze(-1)).to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_o"] = batch["outputs"]["rays_o"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_rays_d"] = batch["outputs"]["rays_d"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_c2ws"] = batch["outputs"]["c2w"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovxs"] = batch["outputs"]["fovx"].to(device_id, dtype=self.dtype)
+        output_batch_dict["output_fovys"] = batch["outputs"]["fovy"].to(device_id, dtype=self.dtype)
+        output_batch_dict['output_sparse_depth'] = batch['outputs']['sparse_gt_depth'].to(device_id, dtype=self.dtype)
+        
+
+        return input_batch_dict,input_batch_dict_for_psuedo_view_rendering, output_batch_dict
+
+
+    def forward_stage2(self,batch,
+                mode='train',
+                view_num=4,
+                matching_nums=3,            
+                iter=0,
+                frozen_stage_1_model=None,
+                mix_psuedo_views_ratio=0.5,
+                cfg=None):
+        
+        
+        
+        input_batch_dict,input_batch_dict_for_psuedo_view_rendering, output_batch_dict = self.prepare_input_multiview_stage2(batch=batch,view_num=view_num,
+                                                                         matching_nums=matching_nums)
+    
+
+        img =input_batch_dict["imgs"] #[B,6,3,H,W]    
+        height,width = img.shape[-2:]
+        bs = img.shape[0]
+        
+
+        def create_input_psuedo_views(batch,
+                                      frozen_stage_1_model,
+                                      render_c2w,
+                                      render_fovx,
+                                      render_fovy):
+            
+            
+            input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=2,
+                                                                         matching_nums=2)
+            
+            input_info_for_psuedo_view_rendering = batch["input_info_for_psuedo_view_rendering"]
+            input_info_for_psuedo_view_rendering_c2w = input_info_for_psuedo_view_rendering["c2w"]
+            input_info_for_psuedo_view_rendering_fovx = input_info_for_psuedo_view_rendering["fovx"]
+            input_info_for_psuedo_view_rendering_fovy = input_info_for_psuedo_view_rendering["fovy"]
+            
+            with torch.no_grad():
+                
+                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,14)
+                rendered_psuedo_results = frozen_stage_1_model.renderer.render(
+                    gaussians=stage1_3dgs_output,
+                    c2w=render_c2w,
+                    fovx=render_fovx,
+                    fovy=render_fovy,
+                    rays_o=None,
+                    rays_d=None
+                )
+
+                psuedo_input_views = rendered_psuedo_results['image'] # torch.Size([1, V, 3, 224, 832])
+                
+            return psuedo_input_views
+        
+    
+    
+        psuedo_input_views = create_input_psuedo_views(batch,frozen_stage_1_model,
+                                  render_c2w=input_batch_dict_for_psuedo_view_rendering['c2w'],
+                                  render_fovx=input_batch_dict_for_psuedo_view_rendering['fovx'],
+                                  render_fovy=input_batch_dict_for_psuedo_view_rendering['fovy'])
+        
+    
+        
+        # random select at least 
+        use_mix_psuedo_views = random.random()
+        
+        
+        if use_mix_psuedo_views <= mix_psuedo_views_ratio:
+            img[:,2:,:,:,:] = psuedo_input_views[:,2:,:,:,:]
+        
+        
+        input_pseudo_depth = input_batch_dict['pseudo_depths']
+        input_sparse_gt_depth = input_batch_dict['sparse_depths']
+        img_feats = self.extract_img_feat(img=img) # feature list----> 4 layers
+                
+        # perform the cost volume-based 
+        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
+                                                          images_feat=img_feats[0])
+        
+
+        # volume-gs prediction
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        # batch-wise saved the gaussain-pixel and the feature-pixel
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
+                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
+                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
+            # get the valid gaussains in the pixel splat
+            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
+            # get the valid feature in the pixel splat
+            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
+            gaussians_cv_mask.append(gaussians_cv_mask_i)
+            gaussians_feat_mask.append(gaussians_feat_mask_i)
+        
+
+
+        gaussians_volume = self.volume_gs(
+                [img_feats[0]],
+                input_batch_dict['extrinsics'],
+                gaussians_cv_mask,
+                gaussians_feat_mask,
+                input_batch_dict["img_metas"])
+        
+
+        
+        # Make Sure the estimate gaussains are valid
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+        
+        
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0] # batch size is 2
+        
+        # doing rendering here
+        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
+        intrinsics = input_batch_dict['intrinsics']
+        intrinsics = intrinsics.clone()     
+        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        render_fovxs = output_batch_dict["output_fovxs"] # [B,6*3]
+        render_fovys = output_batch_dict["output_fovys"] # [B,6*3]
+        
+
+        # return a dicts: rendered images and rendered alphs and rendered depth
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None
+        )  
+
+        rendered_results_fuse = render_pkg_fuse
+        
+        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
+        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
+        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
+        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        
+        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        
+
+        
+        
+        if mode =='train' or mode=='val':
+            render_pkg_cv = self.renderer.render(
+                gaussians=gaussians_cv,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+
+            rendered_color_cv = render_pkg_cv['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth_cv = render_pkg_cv['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth_cv = rendered_depth_cv.squeeze(2)
+            rendered_color_cv = torch.clamp(rendered_color_cv,min=0,max=1.0)
+            rendered_depth_cv = torch.clamp(rendered_depth_cv,min=0,max=150)
+
+
+            render_pkg_volume = self.renderer.render(
+                gaussians=gaussians_volume,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+
+            rendered_color_volume = render_pkg_volume['image'] # torch.Size([1, V, 3, 224, 832])
+            rendered_depth_volume = render_pkg_volume['depth'] # torch.Size([1, V, 1, 224, 832])
+            rendered_depth_volume = rendered_depth_volume.squeeze(2)
+            rendered_color_volume = torch.clamp(rendered_color_volume,min=0,max=1.0)
+            rendered_depth_volume = torch.clamp(rendered_depth_volume,min=0,max=150)
+            
+            
+        else:
+            render_pkg_cv, render_pkg_volume = None, None
+            rendered_color_volume = None
+            rendered_color_cv = None
+            
+            rendered_depth_cv = None
+            rendered_depth_volume = None
+        
+        
+        # Loss Function Here
+
+        loss = 0.0
+        loss_terms = {}
+        def set_loss(key, split, loss_value, loss_weight=1.0):
+            loss_terms[f"{split}/loss_{key}"] = loss_value.item()
+            loss_terms[f"{split}/loss_{key}_w"] = loss_value.item() * loss_weight
+
+        # GT Information For Supervision
+        output_rgb = output_batch_dict['output_imgs']
+        rgb_gt = output_rgb
+        pseudo_depth_gt = output_batch_dict['output_depths_m']
+        sparse_depth_gt = output_batch_dict['output_sparse_depth']
+        valid_mask_01 = sparse_depth_gt>0
+        valid_mask_01_float = valid_mask_01.float()
+        
+        # use this
+        fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        
+        
+        # Loss
+        if mode=='train' or mode=='val':
+        
+            output_intrinsics_recovered = output_intrinsics.clone()
+            fusion_gt_pointmap = get_pointmap_from_depth(depth=fusion_pseudo_with_sparse_gt,
+                                                         intrinsics=output_intrinsics_recovered,
+                                                         c2w=render_c2w
+                                                         )
+            
+            mask_dptm = (fusion_gt_pointmap[..., 0] >= x_start) & (fusion_gt_pointmap[..., 0] <= x_end) & \
+                        (fusion_gt_pointmap[..., 1] >= y_start) & (fusion_gt_pointmap[..., 1] <= y_end) & \
+                        (fusion_gt_pointmap[..., 2] >= z_start) & (fusion_gt_pointmap[..., 2] <= z_end)
+            mask_dptm = mask_dptm.float()
+            
+            pred_depth = pred_depths
+            
+            ## RGB Loss Here
+            cost_volume_branch_loss = 0.0
+            trip_plane_branch_loss = 0.0
+            fusion_branch_loss = 0.0
+            depth_estimation_branch_loss = 0.0
+            
+            
+            
+            # ==================== Depth Estimation Loss =====================
+            if self.losses_params.depth_estimation:
+                if self.losses_params.gt_depth_type=='sparse':
+                    
+                    valid_mask_01 = input_sparse_gt_depth>0
+                    valid_mask_02 = input_sparse_gt_depth<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.bool()
+                    sparse_depth_estimation_loss = F.l1_loss(input_sparse_gt_depth[valid_mask],pred_depth[valid_mask])            
+                    depth_estimation_loss = sparse_depth_estimation_loss
+                    
+                elif self.losses_params.gt_depth_type=='pseudo':
+                    
+                    valid_mask_01 = input_pseudo_depth>0
+                    valid_mask_02 = input_pseudo_depth<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.float()
+                    pseudo_depth_estimation_loss =Custom_Depth_Loss(depth_pred=pred_depth*valid_mask, 
+                                                              depth_gt=input_pseudo_depth*valid_mask)
+                    # pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_depth[valid_mask],pred_depth[valid_mask])            
+                    depth_estimation_loss = pseudo_depth_estimation_loss
+                    
+                elif self.losses_params.gt_depth_type =='sparse_pseudo':
+                    
+                    valid_mask_01 = input_sparse_gt_depth>0
+                    valid_mask_01_float = valid_mask_01.float()
+                    
+                    input_pseudo_gt_fusion_depth = input_sparse_gt_depth * valid_mask_01_float \
+                                + (1-valid_mask_01_float)*input_pseudo_depth
+                    valid_mask_02 = input_pseudo_gt_fusion_depth>0
+                    valid_mask_03 = input_pseudo_gt_fusion_depth<150
+                    valid_mask = valid_mask_02 * valid_mask_03
+                    valid_mask = valid_mask.float()
+                    
+
+
+                    pseudo_depth_estimation_loss =Custom_Depth_Loss(depth_pred=pred_depth*valid_mask, 
+                                                              depth_gt=input_pseudo_gt_fusion_depth*valid_mask)
+                    
+                    # pseudo_depth_estimation_loss = F.l1_loss(input_pseudo_gt_fusion_depth[valid_mask],pred_depth[valid_mask])            
+                    depth_estimation_loss = pseudo_depth_estimation_loss
+                
+                depth_estimation_branch_loss +=depth_estimation_loss
+                
+            else:
+                depth_estimation_branch_loss = depth_estimation_branch_loss * 0.0
+            
+            set_loss("depth_est_loss", mode, depth_estimation_branch_loss, 
+                     self.losses_params.depth_est_sup_dict.branch_weight)
+            
+            # ==================== RGB Loss Here =====================
+            if self.losses_params.use_fusion: # Must
+                
+                if self.losses_params.use_volume:
+                    rec_loss_vol = (rgb_gt * mask_dptm.unsqueeze(2) - render_pkg_volume["image"] * mask_dptm.unsqueeze(2)) ** 2
+                    trip_plane_branch_loss = trip_plane_branch_loss+ (rec_loss_vol.mean() * self.losses_params.volume_sup_dict.weight_recon_vol)
+                    set_loss("recon_vol", mode, rec_loss_vol.mean(), self.losses_params.volume_sup_dict.weight_recon_vol)
+                
+                if self.losses_params.use_cv:
+                    rec_loss_cv = (rgb_gt-render_pkg_cv['image'])**2
+                    cost_volume_branch_loss = cost_volume_branch_loss + (rec_loss_cv.mean() * self.losses_params.cv_sup_dict.weight_recon_cv)
+                    set_loss("recon_cv",mode,cost_volume_branch_loss.mean(),
+                             self.losses_params.cv_sup_dict.weight_recon_cv) 
+                
+
+                rec_loss = (rgb_gt - render_pkg_fuse["image"]) ** 2
+                fusion_branch_loss = loss + (rec_loss.mean() * self.losses_params.fusion_sup_dict.weight_recon)
+                set_loss("recon_fusion", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
+                
+            else:
+                raise NotImplementedError
+
+            # ==================== Preception Loss Here ================
+            if self.losses_params.use_fusion: # Must
+                if self.losses_params.use_volume:
+                    current_height, current_width = rgb_gt.shape[-2:]
+                    preception_loss_volume = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width),
+                                                        render_pkg_volume["image"].reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width)
+                                                        )
+                    trip_plane_branch_loss = trip_plane_branch_loss+ (preception_loss_volume.mean() \
+                                        * self.losses_params.volume_sup_dict.weight_perceptual_vol)
+                    set_loss("perceptual_vol", mode, preception_loss_volume.mean(), 
+                                self.losses_params.volume_sup_dict.weight_perceptual_vol)
+                    
+
+                if self.losses_params.use_cv:
+                    current_height, current_width = rgb_gt.shape[-2:]
+                    preception_loss_cv = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width),
+                                                        render_pkg_cv["image"].reshape(-1,3,current_height,current_width)
+                                                        )
+                    cost_volume_branch_loss = cost_volume_branch_loss + (preception_loss_cv.mean() \
+                                        * self.losses_params.cv_sup_dict.weight_perceptual_cv)
+                    set_loss("perceptual_cv", mode, preception_loss_cv.mean(), 
+                                self.losses_params.cv_sup_dict.weight_perceptual_cv)
+                
+
+                current_height, current_width = rgb_gt.shape[-2:]
+                preception_loss_fuse = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width),
+                                                    render_pkg_fuse["image"].reshape(-1,3,current_height,current_width)
+                                                    )
+                fusion_branch_loss = fusion_branch_loss + (preception_loss_fuse.mean() \
+                                    * self.losses_params.fusion_sup_dict.weight_perceptual)
+                
+                set_loss("perceptual_fusion", mode, preception_loss_fuse.mean(), 
+                            self.losses_params.fusion_sup_dict.weight_perceptual)
+                
+            else:
+                raise NotImplementedError
+        
+             # ==================== Rendered Depth Loss ================
+            
+            if self.losses_params.use_fusion: # Must
+                
+                if self.losses_params.gt_depth_type=='sparse':
+                    valid_mask_01 = sparse_depth_gt>0
+                    valid_mask_02 = sparse_depth_gt<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.bool()
+                    rendered_gt_depth = sparse_depth_gt * valid_mask.float()
+                    
+                elif self.losses_params.gt_depth_type=='pseudo':
+                    valid_mask_01 = pseudo_depth_gt>0
+                    valid_mask_02 = pseudo_depth_gt<120
+                    valid_mask = valid_mask_01 * valid_mask_02
+                    valid_mask = valid_mask.bool()
+                    rendered_gt_depth = pseudo_depth_gt * valid_mask.float()
+                    
+                    
+                elif self.losses_params.gt_depth_type =='sparse_pseudo':
+                    valid_mask_01 = sparse_depth_gt>0
+                    valid_mask_01_float = valid_mask_01.float()
+                    fusion_pseudo_with_sparse_gt = valid_mask_01_float * sparse_depth_gt + (1-valid_mask_01_float) * pseudo_depth_gt 
+                    
+                    valid_mask_02 = fusion_pseudo_with_sparse_gt >0
+                    valid_mask_03 = fusion_pseudo_with_sparse_gt < 150
+                    valid_mask = valid_mask_02 * valid_mask_03
+                    valid_mask = valid_mask.bool()
+                    
+                    rendered_gt_depth = fusion_pseudo_with_sparse_gt  * valid_mask.float()
+                    
+                else:
+                    raise NotImplementedError
+                
+                
+                
+                if self.losses_params.use_volume:
+                    
+                    depth_abs_loss_vol = torch.abs(render_pkg_volume["depth"].squeeze(2)*mask_dptm - rendered_gt_depth*mask_dptm)
+                    depth_abs_loss_vol = depth_abs_loss_vol.mean()
+                    trip_plane_branch_loss = trip_plane_branch_loss +\
+                                self.losses_params.volume_sup_dict.weight_depth_abs_vol * depth_abs_loss_vol
+                    set_loss("depth_abs_volume", mode, depth_abs_loss_vol, 
+                                        self.losses_params.volume_sup_dict.weight_depth_abs_vol)
+                    
+                    
+                if self.losses_params.use_cv:
+                    depth_abs_loss_cv = torch.abs(render_pkg_cv["depth"].squeeze(2) - rendered_gt_depth)
+                    depth_abs_loss_cv = depth_abs_loss_cv.mean()
+                    cost_volume_branch_loss = cost_volume_branch_loss +\
+                                self.losses_params.cv_sup_dict.weight_depth_abs_cv * depth_abs_loss_cv
+                    set_loss("depth_abs_cv", mode, depth_abs_loss_cv, self.losses_params.cv_sup_dict.weight_depth_abs_cv)
+            
+       
+                depth_abs_loss = torch.abs(render_pkg_fuse["depth"].squeeze(2) - rendered_gt_depth)
+                depth_abs_loss = depth_abs_loss.mean()
+                fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
+                set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+            
+            
+            else:
+                raise NotImplementedError
+                
+            
+            loss =cost_volume_branch_loss * self.losses_params.cv_sup_dict.branch_weight + \
+                        trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
+                            fusion_branch_loss * self.losses_params.fusion_sup_dict.branch_weight + \
+                                depth_estimation_branch_loss * self.losses_params.depth_est_sup_dict.branch_weight
+            
+            
+            rendered_fusion_list = [rendered_color_fuse,rendered_depth_fuse]
+            rendered_volume_list = [rendered_color_volume,rendered_depth_volume]
+            rendered_cv_list = [rendered_color_cv,rendered_depth_cv]
+            
+            
+            if mode=='train':
+                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_list
+            
+            elif mode=='val':
+                return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_list,pred_depth,input_sparse_gt_depth,output_rgb,sparse_depth_gt,img
+            
+        elif mode=='test':
+            return rendered_fusion_list
+
+        else:
+            raise NotImplementedError
+    
     
     def validation_step(self, batch, val_result_savedir,cfg=None):
         

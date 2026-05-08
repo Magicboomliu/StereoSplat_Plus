@@ -30,6 +30,69 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 from tqdm import tqdm
 import importlib
 
+def _strip_prefix_if_present(state_dict: dict, prefix: str) -> dict:
+    if not state_dict:
+        return state_dict
+    keys = list(state_dict.keys())
+    if all(k.startswith(prefix) for k in keys):
+        return {k[len(prefix):]: v for k, v in state_dict.items()}
+    return state_dict
+
+def _load_state_dict_any(path: str, map_location: str = "cpu") -> dict:
+    if path is None or str(path).strip() == "":
+        raise ValueError("args.stage_1_model_path is empty.")
+
+    p = os.path.expanduser(path)
+    if osp.isdir(p):
+        candidates = [
+            "model.safetensors",
+            "pytorch_model.bin",
+            "pytorch_model.safetensors",
+            "model.bin",
+            "model.pt",
+            "model.pth",
+        ]
+        chosen = None
+        for c in candidates:
+            cp = osp.join(p, c)
+            if osp.exists(cp):
+                chosen = cp
+                break
+        if chosen is None:
+            raise FileNotFoundError(
+                f"Could not find a model file in directory: {p}. "
+                f"Tried: {', '.join(candidates)}"
+            )
+        p = chosen
+
+    if not osp.exists(p):
+        raise FileNotFoundError(f"stage_1_model_path not found: {p}")
+
+    if p.endswith(".safetensors"):
+        try:
+            from safetensors.torch import load_file as _safe_load_file
+        except Exception as e:
+            raise ImportError(
+                "Loading .safetensors requires `safetensors`. "
+                "Install it or provide a .pt/.pth/.bin checkpoint."
+            ) from e
+        state_dict = _safe_load_file(p, device=map_location)
+    else:
+        obj = torch.load(p, map_location=map_location)
+        if isinstance(obj, dict) and isinstance(obj.get("state_dict"), dict):
+            state_dict = obj["state_dict"]
+        elif isinstance(obj, dict) and isinstance(obj.get("model"), dict):
+            state_dict = obj["model"]
+        elif isinstance(obj, dict):
+            state_dict = obj
+        else:
+            raise ValueError(f"Unsupported checkpoint format at: {p} (type={type(obj)})")
+
+    # Common wrappers from DDP / accelerate / custom save
+    state_dict = _strip_prefix_if_present(state_dict, "module.")
+    state_dict = _strip_prefix_if_present(state_dict, "model.")
+    return state_dict
+
 def _make_side_dict(factory):
     return {"left": factory(), "right": factory()}
 
@@ -217,8 +280,8 @@ def main(args):
     # If passed along, set the training seed now.
     if cfg.seed is not None:
         set_seed(cfg.seed + accelerator.local_process_index)
-
-
+        
+        
     def _dataset_module_for_world_center(world_center: str | None) -> str:
         # 统一从 stereosplat.data.<dataset>.dataloader 导入，避免依赖顶层 stereosplat.KITTI360_* 别名模块
         if world_center is None or world_center == "Center_LiDAR":
@@ -229,6 +292,8 @@ def main(args):
             return "stereosplat.data.KITTI360_FirstLiDAR_Ref.dataloader"
         if world_center == "First_LiDAR_3_Uniform":
             return "stereosplat.data.KITTI360_FisrtLiDAR_Random.dataloader"
+        if world_center == "First_Stage2":
+            return "stereosplat.data.KITTI360_First_LiDAR_Random_Stage2.dataloader"
         # 默认回退到 CenterCam_Ref
         return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
 
@@ -301,6 +366,36 @@ def main(args):
         num_workers=dataset_config.num_workers_val
     )
     
+    ############################ Stage 1 Pretrained Model Here : Frozen, Just for Creating Psuedo Views, Not Optimized ###########################################
+    frozen_stage_1_model = StereoSplat(backbone=cfg.model.backbone,
+                                    neck=cfg.model.neck,
+                                    costvolume_gs=cfg.model.costvolume_gs,
+                                    volume_gs=cfg.model.volume_gs,
+                                    losses_params=cfg.model.losses_params,
+                                    camera_args=cfg.camera_args,
+                                    dataset_params=cfg.dataset_params,
+                                    use_checkpoint=cfg.use_checkpoint)
+    if args.stage_1_model_path is None:
+        raise ValueError(
+            "You must pass `--stage_1_model_path` (checkpoint dir or weights file) "
+            "to load the frozen stage-1 model."
+        )
+    accelerator.print(f"[Stage1] loading frozen model from: {args.stage_1_model_path}")
+    sd_stage1 = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
+    incompatible = frozen_stage_1_model.load_state_dict(sd_stage1, strict=True)
+    accelerator.print(
+        f"[Stage1] loaded. missing={len(incompatible.missing_keys)}, "
+        f"unexpected={len(incompatible.unexpected_keys)}"
+    )
+    # Freeze stage-1 model (used only for pseudo view creation)
+    frozen_stage_1_model.eval()
+    for p in frozen_stage_1_model.parameters():
+        p.requires_grad_(False)
+    
+
+    
+    ############################ Stage 2 Psuedo-GT-Mix Training Model Here ###########################################
+    
     # Define the Model/Optimizer/Schduler Here
     my_model = StereoSplat(backbone=cfg.model.backbone,
                                     neck=cfg.model.neck,
@@ -342,9 +437,12 @@ def main(args):
 
 
     # move to the accelerate
-    my_model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
+    my_model, optimizer, train_dataloader, val_dataloader, scheduler= accelerator.prepare(
         my_model, optimizer, train_dataloader, val_dataloader, scheduler
     )
+    
+    frozen_stage_1_model.to(accelerator.device)
+    frozen_stage_1_model.eval()
     
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
@@ -353,6 +451,7 @@ def main(args):
     epoch = 0
     global_iter = 0
     first_epoch = 0
+
 
 
     # Potentially load in the weights and states from a previous save
@@ -373,6 +472,7 @@ def main(args):
             else:
                 path = None
 
+
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
@@ -388,6 +488,7 @@ def main(args):
     if accelerator.is_main_process:
         print('work dir: ', args.work_dir)
         print("max iteration steps: ",cfg.max_train_steps)
+        
 
     # training along the iterations.
     print_freq = cfg.print_freq
@@ -419,23 +520,24 @@ def main(args):
                     view_num = 6
                     matching_nums = 5
                     
-                
-                print(sample_view_nums)
-                print("Ok SO Far")
-                quit()
-                
-
+            
                 try:
                     if args.gpus <= 1:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", 
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward_stage2(batch, "train", 
                                                                                                                         view_num=view_num,
                                                                                                                         matching_nums=matching_nums,
-                                                                                                                         iter=global_iter, cfg=cfg)
+                                                                                                                         iter=global_iter,
+                                                                                                                         frozen_stage_1_model=frozen_stage_1_model,
+                                                                                                                         mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
+                                                                                                                         cfg=cfg)
                     else:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", 
+                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward_stage2(batch, "train", 
                                                                                                                                view_num=view_num,
                                                                                                                                matching_nums=matching_nums,
-                                                                                                                               iter=global_iter, cfg=cfg)
+                                                                                                                               iter=global_iter,
+                                                                                                                               frozen_stage_1_model=frozen_stage_1_model,
+                                                                                                                               mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
+                                                                                                                               cfg=cfg)
         
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -610,11 +712,15 @@ if __name__ == '__main__':
     parser.add_argument('--py-config', required=True)
     parser.add_argument('--work-dir', type=str, required=True)
     parser.add_argument('--resume-from', type=str, default='')
+    
+    parser.add_argument('--stage_1_model_path', type=str, default=None)
+    
+    parser.add_argument('--mix_psuedo_views_ratio', type=float, default=0.5)
 
     # Optional overrides (take precedence over cfg file if provided)
     parser.add_argument('--exp-name', type=str, default=None)
     parser.add_argument('--output-dir', type=str, default=None)
-
+    
     parser.add_argument('--datapath', type=str, default=None)
     parser.add_argument('--train-filelist', type=str, default=None)
     parser.add_argument('--val-filelist', type=str, default=None)

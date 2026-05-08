@@ -94,7 +94,6 @@ class KITTI360Dataset(Dataset):
         self.input_additional = True
         
         # there are two kinds of the cameras,
-        
         self.camera_types = [
             "CAM_LEFT",
             "CAM_RIGHT"
@@ -240,10 +239,6 @@ class KITTI360Dataset(Dataset):
         input_fovxs = torch.as_tensor(input_fovxs, dtype=torch.float32) #(6)
         input_fovys = torch.as_tensor(input_fovys, dtype=torch.float32) #(6)
         input_directions = torch.stack(input_directions) #(6,H,W,3)
-
-
-        # shape is [2,H,W,3]
-        # shape is [2,H,W,3]
         input_rays_o, input_rays_d = get_rays(
             input_directions, input_c2ws, keepdim=True, normalize=False)
         
@@ -260,6 +255,12 @@ class KITTI360Dataset(Dataset):
         # ======= Render views from non-key frames for rendering losses ====== #
         output_img_paths, output_c2ws, output_w2cs = [], [], []
         frame_num = len(bin_info["sensor_info"]["LIDAR_TOP"]) # how many frames, if no problems, here should be 7
+        
+        
+        
+        
+        # for the psuedo view rendering
+        
         
         
         
@@ -426,6 +427,14 @@ class KITTI360Dataset(Dataset):
         
         
         input_dict_vol = {"w2i": input_w2is} # volume based methods
+        
+        
+        # this dictionary is for the psuedo view rendering
+        input_info_for_psuedo_view_rendering = {
+            "c2w": input_c2ws,
+            "fovx": input_fovxs,
+            "fovy": input_fovys,
+        }
 
         
         # if self.split=='train':
@@ -451,7 +460,8 @@ class KITTI360Dataset(Dataset):
             "outputs": output_dict,
             "inputs": input_dict,
             "inputs_pix": input_dict_pix,
-            "inputs_vol": input_dict_vol
+            "inputs_vol": input_dict_vol,
+            "input_info_for_psuedo_view_rendering": input_info_for_psuedo_view_rendering
         }
     
     

@@ -2,10 +2,10 @@ Train_Stereosplat_Stage2_On_KITTI360(){
 cd ../../..
 
 accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
-configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
+configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
 work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/"
 output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/"
-resume_from="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+resume_from="None"
 # Optional overrides (leave empty to use cfg defaults)
 exp_name="stereosplat_kitti360_stereo_114x544_stage_2_psuedo_gt_mix_training"
 datapath="/data1/StereoDatasets/KITTI/KITTI360"
@@ -15,8 +15,10 @@ test_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereospl
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
-world_center="First_LiDAR_3_Uniform" 
+world_center="First_Stage2"
 unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/checkpoint-159000/model.safetensors"
+mix_psuedo_views_ratio=0.5
 
 
 use_wandb=false
@@ -36,6 +38,8 @@ pixi run -e cu118 accelerate launch --config-file $accelerate_config_path traine
     --py-config $configs_path \
     --work-dir  $work_dir \
     --resume-from $resume_from \
+    --stage_1_model_path $stage_1_model_path \
+    --mix_psuedo_views_ratio $mix_psuedo_views_ratio \
     ${exp_name:+--exp-name "$exp_name"} \
     ${output_dir:+--output-dir "$output_dir"} \
     ${datapath:+--datapath "$datapath"} \
