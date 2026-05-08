@@ -1,0 +1,42 @@
+.git
+.gitignore
+
+# pixi / python caches
+.pixi
+**/.pixi
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# training logs / outputs
+wandb
+**/wandb
+logs
+**/logs
+outputs
+**/outputs
+
+# large artifacts / checkpoints (adjust if you want them in image)
+pretrained
+**/pretrained
+**/*.ckpt
+**/*.pth
+**/*.pt
+**/*.safetensors
+**/*.bin
+
+# data (usually mounted at runtime)
+data
+dataset
+datasets
+
+# misc
+*.log
+*.tmp
+*.swp
+.DS_Store
+

@@ -1491,10 +1491,6 @@ class StereoSplat(BaseModule):
             input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=2,
                                                                          matching_nums=2)
             
-            input_info_for_psuedo_view_rendering = batch["input_info_for_psuedo_view_rendering"]
-            input_info_for_psuedo_view_rendering_c2w = input_info_for_psuedo_view_rendering["c2w"]
-            input_info_for_psuedo_view_rendering_fovx = input_info_for_psuedo_view_rendering["fovx"]
-            input_info_for_psuedo_view_rendering_fovy = input_info_for_psuedo_view_rendering["fovy"]
             
             with torch.no_grad():
                 
@@ -1513,18 +1509,13 @@ class StereoSplat(BaseModule):
             return psuedo_input_views
         
     
-    
+        # mixing with the psuedo views
         psuedo_input_views = create_input_psuedo_views(batch,frozen_stage_1_model,
                                   render_c2w=input_batch_dict_for_psuedo_view_rendering['c2w'],
                                   render_fovx=input_batch_dict_for_psuedo_view_rendering['fovx'],
                                   render_fovy=input_batch_dict_for_psuedo_view_rendering['fovy'])
-        
-    
-        
         # random select at least 
         use_mix_psuedo_views = random.random()
-        
-        
         if use_mix_psuedo_views <= mix_psuedo_views_ratio:
             img[:,2:,:,:,:] = psuedo_input_views[:,2:,:,:,:]
         
