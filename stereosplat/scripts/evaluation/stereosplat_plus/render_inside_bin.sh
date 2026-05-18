@@ -1,18 +1,18 @@
-Render_All_Inside_Bin_Views_StereoSplat_NoDiffix3D() {
+StereoSplat_Plus_Without_Difix3D() {
 cd ../../..
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_3.yaml"
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_0.yaml"
 validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus/default_manner_no_difix3d/"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/no_difix3d/"
 val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 # pretrained_model_path="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/saved_models/2_4_6_View_Variances/checkpoint-51000/"
-pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/checkpoint-134000/"
 # diffix3d
-pretrained_diffix_model_path="/data1/zliu/KITTI360_Completed/checkpoints/model_50001.pkl"
+pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
 timestep=199
 
@@ -34,9 +34,9 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" "$va
 }
 
 
-Render_All_Inside_Bin_Views_StereoSplatPlus_Old() {
+StereoSplat_Plus_Difix3D_Old() {
 cd ../../..
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_1.yaml"
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_0.yaml"
 validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
@@ -45,10 +45,13 @@ val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereospla
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
+
 # pretrained_model_path="/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/saved_models/2_4_6_View_Variances/checkpoint-51000/"
 pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+
 # diffix3d
 pretrained_diffix_model_path="/data1/zliu/KITTI360_Completed/checkpoints/model_50001.pkl"
+
 prompt="remove degradation"
 timestep=199
 
@@ -74,18 +77,27 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" "$va
 
 }
 
-Render_All_Inside_Bin_Views_StereoSplatPlus_New(){
+
+
+
+StereoSplat_Plus_Difix3D_New(){
+
 cd ../../..
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_2.yaml"
+
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/inference/gpu_1.yaml"
 validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
+
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus/default_manner_new_finetuned/"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_lastest_difix3d/"
 val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
-pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/checkpoint-134000/"
+#pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+
 # diffix3d
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
@@ -111,6 +123,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" "$va
 
 }
 
-# Render_All_Inside_Bin_Views_StereoSplatPlus_Old
-# Render_All_Inside_Bin_Views_StereoSplat_NoDiffix3D
-Render_All_Inside_Bin_Views_StereoSplatPlus_New
+# StereoSplat_Plus_Without_Difix3D
+StereoSplat_Plus_Difix3D_New

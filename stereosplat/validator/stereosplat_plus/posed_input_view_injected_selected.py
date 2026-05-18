@@ -68,7 +68,6 @@ def _maybe_init_wandb(accelerator: Accelerator, args, cfg) -> bool:
     )
     return True
 
-
 def _dataset_module_for_world_center(world_center: str | None) -> str:
     if world_center is None or world_center == "Center_LiDAR":
         return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
@@ -156,14 +155,14 @@ def kitti_colormap(disparity, maxval=-1):
 	return (colored_disp*np.expand_dims((disparity>0),-1)*255).astype(np.uint8)
 
 
+
 def main(args):
+
     cfg = Config.fromfile(args.config_path)
     cfg.work_dir = args.output_folder
     
     cfg.prompt = args.prompt
-    
     cfg.use_diffix3d_postprocessing = args.use_diffix3d_postprocessing
-
 
     logger_mm = MMLogger.get_instance('mmengine', log_level='WARNING')
     kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
@@ -252,22 +251,14 @@ def main(args):
     
     pretrained_diffix_model.set_eval()
 
-
-
-
-
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
     )
 
-
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
         cfg.pretrained_model_path = args.pretrained_model_path
-    if cfg.pretrained_model_path:
-        path = cfg.pretrained_model_path
-    else:
-        path = None
+    path = getattr(cfg, "pretrained_model_path", None) or None
 
     if path:
         accelerator.print(f"Loading from checkpoint {path}")
@@ -281,9 +272,9 @@ def main(args):
     print("========================================")
     print("Successfully loading the pretrained StereoSplat from {}".format(args.pretrained_model_path))
 
-    # Loaded the StereoSplat Model
     print("========================================")
     print("Successfully loading the pretrained Diffix3d model from {}".format(args.pretrained_diffix_model_path))
+
     
     # performance metrics for the rendered RGBs
     evaluate_results_average_dict_rgb = {
@@ -318,7 +309,7 @@ def main(args):
     }
 
     current_pseduo_ratio_index = args.pseudo_ratio
-    
+
 
     
     with torch.no_grad():
@@ -333,7 +324,7 @@ def main(args):
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
-                                            pseudo_ratio_index= current_pseduo_ratio_index,
+                                            pseudo_ratio_index=current_pseduo_ratio_index,
                                             cfg=cfg,
                                             start_images_views=2,
                                             use_diffix3d=args.use_diffix3d,
@@ -345,7 +336,7 @@ def main(args):
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
-                                            pseudo_ratio_index= current_pseduo_ratio_index,
+                                            pseudo_ratio_index=current_pseduo_ratio_index,
                                             cfg=cfg,
                                             start_images_views=2,
                                             use_diffix3d=args.use_diffix3d,
@@ -388,8 +379,10 @@ def main(args):
 def get_mean(list):
     return sum(list)*1.0/len(list)
 
-    
+
+
 if __name__ == '__main__':
+
     # Training settings
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--config_path')

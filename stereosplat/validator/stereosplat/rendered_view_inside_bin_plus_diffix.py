@@ -271,8 +271,7 @@ def main(args):
         print("Can't find checkpoint. Randomly initialize model parameters anyway.")
         
     pretrained_diffix_model.to(accelerator.device)
-    
-    print("successfully loading the pretrained difix from {}".fomart(args.pretrained_diffix_model_path))
+
     
 
     # performance metrics for the rendered RGBs
@@ -306,7 +305,8 @@ def main(args):
         "all_view_Sq_Rel_average": 0,
         "all_view_RMSE_log_average": 0,
     }
-    
+
+
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
@@ -359,8 +359,13 @@ def main(args):
 def get_mean(list):
     return sum(list)*1.0/len(list)
     
+
+
+
 if __name__ == '__main__':
-    # Training settings
+    
+    
+    # training settings
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--config_path')
     parser.add_argument('--output_folder', type=str)
