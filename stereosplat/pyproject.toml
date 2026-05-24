@@ -74,15 +74,18 @@ install-self = { cmd = "python -m pip install -e .", depends-on = ["bootstrap"] 
 # openmim / mmengine（从 pypi solver 挪到 task）
 mmlab-bootstrap = { cmd = "python -m pip install -U openmim mmengine && python -m pip install 'setuptools==60.2.0'", depends-on = ["bootstrap"] }
 
-# 3DGS rasterizer（带 depth 的那个）
-rasterizer-clone = "test -d diff-gaussian-rasterization || git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization"
-# 这个仓库的构建脚本会在构建阶段 import torch；pip 默认 build isolation 会导致隔离环境里找不到 torch
-# pip(>=25/26) 对 -e 走 PEP660；该仓库后端不支持 build_editable，所以改为非 editable 安装
-rasterizer-install = { cmd = "python -m pip install ./diff-gaussian-rasterization --no-build-isolation", depends-on = ["rasterizer-clone"] }
+# 3DGS rasterizer（本地修改版：在 rgb/alpha/depth 基础上增加 conf 渲染）
+# 使用本地目录，不再从 GitHub 克隆；若目录不存在则报错提示
+rasterizer-clone = "test -d diff-gaussian-rasterization || (echo 'ERROR: diff-gaussian-rasterization directory not found. Please extract the zip first.' && exit 1)"
+# 构建脚本在编译阶段 import torch，需 --no-build-isolation。
+# 显式指定 TORCH_CUDA_ARCH_LIST=8.9（RTX 4090, Ada Lovelace），
+# 避免因驱动/runtime 版本不匹配导致 _get_cuda_arch_flags 返回空列表而崩溃。
+rasterizer-install = { cmd = "TORCH_CUDA_ARCH_LIST='8.9' python -m pip install ./diff-gaussian-rasterization --no-build-isolation", depends-on = ["rasterizer-clone"] }
 
 # install diffusers pinned for difix3d compatibility
-# difix3d pixi env pins: diffusers==0.25.1, huggingface-hub==0.25.1, transformers==4.38.0, peft==0.9.0
-diffusers-install = { cmd = "python -m pip install -U 'diffusers==0.25.1' 'huggingface-hub==0.25.1' 'transformers==4.38.0' 'peft==0.9.0' 'requests==2.28.1'", depends-on = ["bootstrap"] }
+# 只 pin diffusers 版本；其余包（huggingface-hub/transformers/peft/requests）由 pip-req 和 mmlab-bootstrap 统一管理，
+# 在此重复 pin 会与 requirements.txt 产生不必要的版本冲突警告。
+diffusers-install = { cmd = "python -m pip install 'diffusers==0.25.1'", depends-on = ["bootstrap"] }
 
 # common requirements（如果你的 requirements.txt 在别的目录，请改成正确路径）
 pip-req = "python -m pip install -r requirements.txt"

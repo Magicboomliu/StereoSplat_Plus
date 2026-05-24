@@ -10,7 +10,7 @@ matplotlib
 packaging
 Pillow
 pygltflib
-rembg[gpu,cli]
+rembg[gpu]
 rich
 safetensors
 scikit-image
