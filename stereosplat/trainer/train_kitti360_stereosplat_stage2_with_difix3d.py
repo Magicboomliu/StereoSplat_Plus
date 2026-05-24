@@ -219,13 +219,13 @@ def sample_2_to_6(n=1, floats=False):
 
 def main(args):
     
-    print("pretrained difix3d: ", args.pretrained_difix3d)
-    quit()
-    
     
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
+
+
+    cfg.prompt = args.prompt
 
     # -------- Optional CLI overrides (if provided) --------
     # exp_name / output_dir
@@ -416,6 +416,23 @@ def main(args):
         p.requires_grad_(False)
     
 
+    #### Pre-Trained Difix3D Model Here ###########################################
+
+    pretrained_diffix_model = DifixRef(
+        pretrained_name="nvidia/difix_ref",
+        pretrained_path=args.pretrained_difix3d,
+        timestep=args.timestep,
+        mv_unet=args.use_ref,
+        deterministic_vae_encode=args.deterministic_vae_encode,
+        deterministic_scheduler_step=args.deterministic_scheduler_step,
+    )
+
+    pretrained_diffix_model.set_eval()
+
+    for p in pretrained_diffix_model.parameters():
+        p.requires_grad_(False)
+
+
     
     ############################ Stage 2 Psuedo-GT-Mix Training Model Here ###########################################
     
@@ -466,7 +483,9 @@ def main(args):
     
     frozen_stage_1_model.to(accelerator.device)
     frozen_stage_1_model.eval()
-    
+    pretrained_diffix_model.to(accelerator.device)
+    pretrained_diffix_model.eval()
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
 
@@ -542,22 +561,24 @@ def main(args):
             try:
                 with accelerator.accumulate(my_model):
                     if args.gpus <= 1:
-                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.forward_stage2(
+                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.forward_stage2_with_difix3d(
                             batch, "train",
                             view_num=view_num,
                             matching_nums=matching_nums,
                             iter=global_iter,
                             frozen_stage_1_model=frozen_stage_1_model,
+                            pretrained_diffix_model=pretrained_diffix_model,
                             mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
                             cfg=cfg)
                     else:
-                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.module.forward_stage2(
+                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.module.forward_stage2_with_difix3d(
                             batch, "train",
                             view_num=view_num,
                             matching_nums=matching_nums,
                             iter=global_iter,
                             frozen_stage_1_model=frozen_stage_1_model,
                             mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
+                            pretrained_diffix_model=pretrained_diffix_model,
                             cfg=cfg)
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
@@ -733,7 +754,14 @@ if __name__ == '__main__':
     
     # difix3d per-trained model
     parser.add_argument("--pretrained_difix3d",type=str,default=None)
-    
+
+    parser.add_argument('--timestep', type=int, default=199)
+    parser.add_argument('--prompt', type=str, default="remove degradation")
+    parser.add_argument('--use_ref', action='store_true', default=False)
+
+    parser.add_argument('--deterministic_vae_encode', action='store_true', default=False)
+    parser.add_argument('--deterministic_scheduler_step', action='store_true', default=False)
+        
     
 
     # Optional overrides (take precedence over cfg file if provided)

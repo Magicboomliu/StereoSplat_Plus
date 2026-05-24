@@ -12,15 +12,14 @@ accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_2.y
 validator_script="validator/stereosplat_plus/posed_input_view_injected_selected_stage2.py"
 
 pseudo_ratio="0.50 1.0"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage_seperated_model/no_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/Mix_Training_With_Difix3D/stereosplat_plus_two_stage_seperated_model/no_difix3d/0.5_1.0"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 
-
-pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/checkpoint-134000/"
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training_with_difix3d/lastest_checkpoints/checkpoint-250000/"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/checkpoint-159000/model.safetensors"
 
@@ -63,7 +62,7 @@ accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_3.y
 validator_script="validator/stereosplat_plus/posed_input_view_injected_selected_stage2.py"
 
 pseudo_ratio="0.50 1.0"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage_seperated_model/with_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/Mix_Training_With_Difix3D/stereosplat_plus_two_stage_seperated_model/with_difix3d/0.5_1.0"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
@@ -71,7 +70,7 @@ ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 
 
-pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/checkpoint-134000/"
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training_with_difix3d/lastest_checkpoints/checkpoint-250000/"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/checkpoint-159000/model.safetensors"
 
@@ -103,8 +102,8 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" "$va
 }
 
 
-# stereosplat_plus_round_2_with_seperated_model_no_difix3d
-stereosplat_plus_round_2_with_seperated_model_with_difix3d
+stereosplat_plus_round_2_with_seperated_model_no_difix3d
+#stereosplat_plus_round_2_with_seperated_model_with_difix3d
 
 
 

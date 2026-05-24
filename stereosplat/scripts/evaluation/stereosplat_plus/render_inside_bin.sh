@@ -89,13 +89,13 @@ validator_script="validator/stereosplat/rendered_view_inside_bin_plus_diffix.py"
 
 # mmengine 配置（仓库 codes 下；与修改后的 Python 中 Difix 的 codes 路径一致）
 config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_lastest_difix3d/"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/Mix_Training_With_Difix3D/stereosplat_plus_two_stage/with_lastest_difix3d/"
 val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/val.txt"
 demo_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo_more.txt"
 ablation_type="NMRFStereo" # "MetricV2" or "NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 
-pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/checkpoint-134000/"
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training_with_difix3d/lastest_checkpoints/checkpoint-250000/"
 #pretrained_model_path="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
 
 # diffix3d

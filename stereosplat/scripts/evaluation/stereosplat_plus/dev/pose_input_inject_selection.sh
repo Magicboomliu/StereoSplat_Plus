@@ -61,7 +61,7 @@ accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.y
 validator_script="validator/stereosplat_plus/posed_input_view_injected_selected.py"
 
 pseudo_ratio="0.50 1.0"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus/dev/posed_view_selection_default_difix3d/0.50_1.0"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/Mix_Training_With_Difix3D/stereosplat_plus/dev/posed_view_selection_default_difix3d/0.50_1.0"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"

@@ -64,7 +64,7 @@ pixi run -e cu118 accelerate launch --config-file $accelerate_config_path traine
 Train_StereoSplat_Stage_2_With_Difix3D_Integrated(){
 cd ../../..
 
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
+accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config.yaml"
 configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
 work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training_with_difix3d/"
 output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training_with_difix3d/"
@@ -85,7 +85,7 @@ pretrained_difix3d="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_P
 mix_psuedo_views_ratio=0.5
 
 
-use_wandb=false
+use_wandb=true
 # W&B settings (only used when use_wandb=true)
 # 推荐：不要把 key 写进脚本；更安全的做法是先执行 `wandb login` 或在 shell 里 export WANDB_API_KEY
 wandb_api_key="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"
@@ -93,7 +93,7 @@ wandb_entity="liuzihua1004"
 wandb_project="StereoSplat"
 # online | offline | disabled
 wandb_mode="online"
-wandb_run_name="input_invariant_stereosplat_stage_2_mix_psuedo_views_no_difix3d_2000_iter_save"
+wandb_run_name="input_invariant_stereosplat_stage_2_mix_psuedo_views_with_difix3d_2000_iter_save"
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 export PYTHONPATH="$(pwd):${PYTHONPATH}"
