@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(pip3 --version)",
+      "Bash(pip --version)",
+      "Bash(conda info *)",
+      "Bash(pixi info *)",
+      "Bash(pixi global *)",
+      "Bash(pixi run *)",
+      "Bash(chmod +x *)"
+    ]
+  }
+}

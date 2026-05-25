@@ -1,0 +1,23 @@
+[workspace]
+name = "diff-gaussian-rasterization"
+version = "0.1.0"
+description = "Differentiable 3D Gaussian Rasterization with depth/alpha/conf rendering"
+channels = ["pytorch", "nvidia", "conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.10,<3.13"
+pytorch = { version = ">=2.1", channel = "pytorch" }
+pytorch-cuda = { version = "12.4.*", channel = "pytorch" }
+cuda-nvcc = { version = "12.4.*", channel = "nvidia" }
+cuda-libraries-dev = { version = "12.4.*", channel = "nvidia" }
+setuptools = "*"
+pip = "*"
+pytest = "*"
+ninja = "*"
+git = "*"
+
+[tasks]
+submodules = "git submodule update --init --recursive"
+build = { cmd = "pip install -e . --no-build-isolation", depends-on = ["submodules"] }
+test = { cmd = "pytest tests/ -v", depends-on = ["build"] }
