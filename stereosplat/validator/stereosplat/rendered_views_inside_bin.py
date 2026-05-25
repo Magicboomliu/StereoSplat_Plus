@@ -24,7 +24,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 import numpy as np
 from torch import Tensor,nn
 from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
@@ -33,7 +33,7 @@ import json
 # define the models
 from stereosplat.models_lab.StereoSplat.stereosplat import StereoSplat
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import importlib
 
 def _maybe_init_wandb(accelerator: Accelerator, args, cfg) -> bool:

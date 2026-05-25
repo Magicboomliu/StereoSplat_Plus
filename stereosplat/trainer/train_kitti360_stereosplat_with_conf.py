@@ -16,7 +16,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, convert_outputs_to_fp32, DistributedType, ProjectConfiguration, InitProcessGroupKwargs
 import warnings
 warnings.filterwarnings("ignore")
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 import numpy as np
 from torch import Tensor,nn
 
@@ -29,6 +29,7 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 from tqdm import tqdm
 import importlib
+import torchvision
 
 def _make_side_dict(factory):
     return {"left": factory(), "right": factory()}
@@ -114,6 +115,29 @@ def _extract_wandb_metrics(prefix: str, results_dict: dict) -> dict:
         if "mse" in stats:
             out[f"{prefix}/input_depth/{side}/mse"] = float(stats["mse"])
     return out
+
+
+def _conf_map_to_wandb_image(conf_map: torch.Tensor):
+    """
+    conf_map: [B, V, H, W] or [B, H, W]
+    Returns a wandb.Image of the first sample, first view, colored with a heatmap.
+    """
+    try:
+        import wandb
+        c = conf_map
+        if c.dim() == 4:
+            c = c[0, 0]   # [H, W]
+        elif c.dim() == 3:
+            c = c[0]
+        c = c.detach().float().cpu().clamp(0, 1)
+        # apply colormap (viridis-like via torchvision)
+        c_np = c.numpy()
+        import matplotlib.cm as cm
+        colored = cm.viridis(c_np)[:, :, :3]   # [H, W, 3]  float64 in [0,1]
+        colored = (colored * 255).astype(np.uint8)
+        return wandb.Image(colored, caption="conf_map (viridis)")
+    except Exception:
+        return None
 
 def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     if not is_main_process:
@@ -369,14 +393,14 @@ def main(args):
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             if len(dirs) > 0:
                 dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-                path = dirs[-1]
+                path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
             else:
                 path = None
 
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
-        global_iter = int(path.split("/")[-2].split("-")[1])
+        global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
         if accelerator.is_main_process:
@@ -421,23 +445,25 @@ def main(args):
 
                 try:
                     if args.gpus <= 1:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list = my_model.forward(batch, "train", 
-                                                                                                                        view_num=view_num,
-                                                                                                                        matching_nums=matching_nums,
-                                                                                                                         iter=global_iter, cfg=cfg)
+                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.forward(batch, "train",
+                                                                                                                            view_num=view_num,
+                                                                                                                            matching_nums=matching_nums,
+                                                                                                                            iter=global_iter, cfg=cfg)
                     else:
-                        loss, logs,rendered_fusion_list,rendered_volume_list,rendered_cv_results_list= my_model.module.forward(batch, "train", 
-                                                                                                                               view_num=view_num,
-                                                                                                                               matching_nums=matching_nums,
-                                                                                                                               iter=global_iter, cfg=cfg)
+                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.module.forward(batch, "train",
+                                                                                                                                   view_num=view_num,
+                                                                                                                                   matching_nums=matching_nums,
+                                                                                                                                   iter=global_iter, cfg=cfg)
+
+                    # rendered_fusion_list = [color, depth, conf(optional)]
+                    conf_map_fuse = rendered_fusion_list[2] if len(rendered_fusion_list) > 2 else None
         
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
                         print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
                         continue  # 跳过当前 batch
 
-                    with torch.autograd.detect_anomaly():
-                        accelerator.backward(loss)
+                    accelerator.backward(loss)
 
                     if accelerator.sync_gradients:
                         grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
@@ -447,9 +473,9 @@ def main(args):
             
                 except RuntimeError as e:
                     if "CUDA out of memory" in str(e):
-                        print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                        print(f"[OOM] iter {global_iter}: {e}")
                         torch.cuda.empty_cache()
-                        continue
+                        raise e  # 直接抛出，避免无限重试同一个 OOM batch
                     else:
                         raise e  # 其他错误照常抛出
             
@@ -482,6 +508,8 @@ def main(args):
                         }
                         stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
                         
+                        conf_val_sum = 0.0
+                        conf_val_count = 0
                         for i_iter_val, batch_val in enumerate(val_dataloader):
                             print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
                             overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
@@ -492,18 +520,36 @@ def main(args):
                 
                             
                             if args.gpus<=1:
-                                # forward here 
-                                # get the psnr, ssim, mae and mse as well as the saved the visualization results
-                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                                metrics_rendered_rgb_list, metrics_rendered_depth_list, metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir, cfg)
                             else:
-                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
+                                metrics_rendered_rgb_list, metrics_rendered_depth_list, metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir, cfg)
+
+                            # --- conf map: forward in val mode to get conf ---
+                            with torch.no_grad():
+                                try:
+                                    _model_ref = my_model if args.gpus <= 1 else my_model.module
+                                    _, _, _val_fusion_list, _, _ = _model_ref.forward(
+                                        batch_val, "train",   # use train mode to get rendered lists without extra returns
+                                        view_num=2, matching_nums=2, iter=global_iter, cfg=cfg)
+                                    if len(_val_fusion_list) > 2:
+                                        _conf = _val_fusion_list[2]   # [B, V, H, W]
+                                        conf_val_sum += _conf.detach().float().mean().item()
+                                        conf_val_count += 1
+                                        # save conf map image for first 3 batches
+                                        if i_iter_val < 3:
+                                            conf_save_path = os.path.join(val_batch_save_dir, "conf_map.png")
+                                            _c = _conf[0, 0].float().cpu().clamp(0, 1).numpy()
+                                            import matplotlib.cm as cm
+                                            _colored = (cm.viridis(_c)[:, :, :3] * 255).astype(np.uint8)
+                                            import PIL.Image
+                                            PIL.Image.fromarray(_colored).save(conf_save_path)
+                                except Exception as _e:
+                                    pass  # conf vis is best-effort
 
                             for i in range(len(metrics_rendered_rgb_list)):
                                 output_rgb_meter_dict = metrics_rendered_rgb_list[i]
                                 output_depth_meter_dict = metrics_rendered_depth_list[i]
                                 input_depth_meter_dict = metrics_estimated_depth_list[i]
-                                
-      
                                 
                                 stage = stage_by_index.get(i)
                                 if stage is None:
@@ -546,6 +592,9 @@ def main(args):
                             "input_depth": stats["cv"]["input_depth"],
                         }
                         
+                        mean_conf_val = conf_val_sum / conf_val_count if conf_val_count > 0 else None
+
+                        results_dict_fusion["mean_conf"] = mean_conf_val
                         saved_into_json(data_dict=results_dict_fusion,
                                         path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
 
@@ -555,11 +604,16 @@ def main(args):
                         saved_into_json(data_dict=results_dict_cv,
                                         path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
 
+                        if logger is not None and mean_conf_val is not None:
+                            logger.info(f"[VAL] step={global_iter}  mean_conf={mean_conf_val:.4f}")
+
                         if tracker_enabled:
                             wandb_logs = {}
                             wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
                             wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
                             wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
+                            if mean_conf_val is not None:
+                                wandb_logs["val/mean_conf"] = mean_conf_val
                             accelerator.log(wandb_logs, step=global_iter)
                         
                     my_model.train()
@@ -573,18 +627,32 @@ def main(args):
                 losses_str = ""
                 for loss_k, loss_v in logs.items():
                     losses_str += ("%s: %.3f, " % (loss_k, loss_v))
+                # show mean conf value for quick sanity check
+                conf_str = ""
+                if conf_map_fuse is not None:
+                    mean_conf = conf_map_fuse.detach().float().mean().item()
+                    conf_str = f"mean_conf: {mean_conf:.3f}, "
                 if logger is not None:
-                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
-                        epoch, i_iter, len(train_dataloader), 
-                        loss.item(), losses_str, grad_norm, lr,
+                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s%sgrad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
+                        epoch, i_iter, len(train_dataloader),
+                        loss.item(), losses_str, conf_str, grad_norm, lr,
                         time_e - time_s, data_time_e - data_time_s
                     ))
 
             global_iter += 1
 
             # dump loss log to wandb (if enabled)
-            if tracker_enabled:
+            if tracker_enabled and accelerator.is_main_process:
                 accelerator.log(logs, step=global_iter)
+                # periodically log conf map as a heatmap image (every 500 iters)
+                if conf_map_fuse is not None and global_iter % 500 == 0:
+                    conf_img = _conf_map_to_wandb_image(conf_map_fuse)
+                    if conf_img is not None:
+                        accelerator.log({"train/conf_map": conf_img}, step=global_iter)
+                # scalar: mean conf value
+                if conf_map_fuse is not None:
+                    accelerator.log({"train/mean_conf": conf_map_fuse.detach().float().mean().item()},
+                                    step=global_iter)
 
             data_time_s = time.time()
             time_s = time.time()

@@ -54,6 +54,7 @@ class VolumeGaussianDecoder(BaseModule):
         self.opacity_act = lambda x: torch.sigmoid(x)
         self.rot_act = lambda x: F.normalize(x, dim=-1)
         self.rgb_act = lambda x: torch.sigmoid(x)
+        self.conf_act = lambda x: torch.sigmoid(x)
 
         # obtain anchor points for gaussians
         gs_anchors = self.get_reference_points(tpv_h * scale_h, tpv_w * scale_w, tpv_z * scale_z, pc_range) # 1, w, h, z, 3
@@ -137,10 +138,9 @@ class VolumeGaussianDecoder(BaseModule):
             gaussians = self.gs_decoder(gaussians)
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
         #print("after decode:{}".format(torch.cuda.memory_allocated(0)))
-        gs_offsets_x = self.pos_act(gaussians[..., :1]) * self.offset_max[0] # bs, w, h, z, 3
-        gs_offsets_y = self.pos_act(gaussians[..., 1:2]) * self.offset_max[1] # bs, w, h, z, 3
-        gs_offsets_z = self.pos_act(gaussians[..., 2:3]) * self.offset_max[2] # bs, w, h, z, 3
-        #gs_offsets = gaussians[..., :3]
+        gs_offsets_x = self.pos_act(gaussians[..., :1]) * self.offset_max[0]
+        gs_offsets_y = self.pos_act(gaussians[..., 1:2]) * self.offset_max[1]
+        gs_offsets_z = self.pos_act(gaussians[..., 2:3]) * self.offset_max[2]
         gs_positions = torch.cat([gs_offsets_x, gs_offsets_y, gs_offsets_z], dim=-1) + self.gs_anchors[:, :, :, :, None, :]
         x = torch.cat([gs_positions, gaussians[..., 3:]], dim=-1)
         rgbs = self.rgb_act(x[..., 3:6])
@@ -149,6 +149,10 @@ class VolumeGaussianDecoder(BaseModule):
         scale_x = self.scale_act(x[..., 11:12]) * self.scale_max[0]
         scale_y = self.scale_act(x[..., 12:13]) * self.scale_max[1]
         scale_z = self.scale_act(x[..., 13:14]) * self.scale_max[2]
+        # conf dim (14): present when gs_dim==15, otherwise pad with neutral 0.5
+        has_conf_dim = x.shape[-1] >= 15
+        conf = self.conf_act(x[..., 14:15]) if has_conf_dim else \
+               torch.full_like(x[..., 13:14], 0.5)
 
         if debug:
             opacity[:] = 1.0
@@ -159,6 +163,7 @@ class VolumeGaussianDecoder(BaseModule):
             rgbs[..., 1] = 0.0
             rgbs[..., 2] = 0.0
 
-        gaussians = torch.cat([gs_positions, rgbs, opacity, rotation, scale_x, scale_y, scale_z], dim=-1) # bs, w, h, z, gpv, 14
+        # layout: mean(0:3)+rgb(3:6)+opacity(6:7)+rotation(7:11)+scale(11:14)+conf(14:15)
+        gaussians = torch.cat([gs_positions, rgbs, opacity, rotation, scale_x, scale_y, scale_z, conf], dim=-1)
     
         return gaussians

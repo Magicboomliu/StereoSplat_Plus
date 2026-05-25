@@ -117,7 +117,8 @@ class Custom_Gaussain_Head(nn.Module):
 
         self.gaussian_regressor = nn.Sequential(*modules)
 
-        self.num_gaussian_parameters = 14
+        # 15 = xyz(3) + rgb(3) + opacity(1) + rotation(4) + scale(3) + conf(1)
+        self.num_gaussian_parameters = 15
         
 
         ''' Feature 2: What is this used for? '''
@@ -143,6 +144,7 @@ class Custom_Gaussain_Head(nn.Module):
         self.scale_act = lambda x: torch.exp(x) * 0.01
         self.rot_act = lambda x: F.normalize(x, dim=-1)
         self.rgb_act = torch.sigmoid
+        self.conf_act = torch.sigmoid
         
         self.delta_clamp = lambda x: x.clamp(-10.0, 6.0)
         self.delta_act = torch.exp
@@ -205,7 +207,7 @@ class Custom_Gaussain_Head(nn.Module):
         
         depths = depth 
         gaussians = rearrange(gaussians, "(b v) c h w -> b (v h w) c",
-                              b=b, v=v, c=self.num_gaussian_parameters) #(B,V*H*W,14)
+                              b=b, v=v, c=self.num_gaussian_parameters) #(B,V*H*W,15)
         
 
 
@@ -214,6 +216,7 @@ class Custom_Gaussain_Head(nn.Module):
         scales = self.scale_act(gaussians[..., 4:7])  # scale, 3-dimension
         rotations = self.rot_act(gaussians[..., 7:11]) # rotations, 4-dimension, quard
         rgbs = self.rgb_act(gaussians[..., 11:14]) # RGB
+        confs = self.conf_act(gaussians[..., 14:15]) # confidence, 1-dimension, in (0,1)
         
         
         if not cfg.used_3D_offset:
@@ -240,7 +243,8 @@ class Custom_Gaussain_Head(nn.Module):
             means = means + delta_world
                 
         
-        gaussians = torch.cat([means, rgbs, opacities, rotations, scales], dim=-1)
+        # layout: mean(0:3) + rgb(3:6) + opacity(6:7) + rotation(7:11) + scale(11:14) + conf(14:15)
+        gaussians = torch.cat([means, rgbs, opacities, rotations, scales, confs], dim=-1)
  
 
         features = rearrange(features, "(b v) c h w -> b (v h w) c", b=b, v=v)

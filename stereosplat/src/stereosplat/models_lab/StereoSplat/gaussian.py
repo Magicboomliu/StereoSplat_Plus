@@ -220,6 +220,10 @@ class GaussianRenderer:
         images = []
         alphas = []
         depths = []
+        conf_maps = []
+
+        # whether this Gaussian tensor carries a per-Gaussian conf (15D) or not (14D)
+        has_conf = gaussians.shape[-1] >= 15
         
         # batch size
         for b in range(B):
@@ -228,7 +232,8 @@ class GaussianRenderer:
             rgbs = gaussians[b, :, 3:6].contiguous().float() # [N, 3]
             opacity = gaussians[b, :, 6:7].contiguous().float() #
             rotations = gaussians[b, :, 7:11].contiguous().float() #旋转四元数
-            scales = gaussians[b, :, 11:].contiguous().float() # 尺度
+            scales = gaussians[b, :, 11:14].contiguous().float() # 尺度 (explicit slice to avoid picking up conf)
+            confs_per_gs = gaussians[b, :, 14:15].contiguous().float().clamp(0.0, 1.0) if has_conf else None
 
             means3D = torch.nan_to_num(means3D, nan=0.0, posinf=1.0, neginf=0.0)
             rgbs = torch.nan_to_num(rgbs, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
@@ -283,8 +288,8 @@ class GaussianRenderer:
 
                 # Rasterize visible Gaussians to image, obtain their radii (on screen).
                 if self.renderer_type == "vanilla":
-                    # 高斯点半径 (radii)（用不上）
-                    rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
+                    # rasterizer returns (color, radii, depth, alpha, conf)
+                    rendered_image, radii, rendered_depth, rendered_alpha, rendered_conf = rasterizer(
                         means3D=means3D,
                         means2D=means2D,
                         shs=None,
@@ -293,6 +298,7 @@ class GaussianRenderer:
                         scales=scales,
                         rotations=rotations,
                         cov3D_precomp=None,
+                        confs=confs_per_gs.squeeze(-1) if has_conf else None,
                     )
                     rendered_normal = None
                 else:
@@ -303,15 +309,18 @@ class GaussianRenderer:
                 images.append(rendered_image)
                 alphas.append(rendered_alpha)
                 depths.append(rendered_depth)
+                conf_maps.append(rendered_conf)
 
         images = torch.stack(images, dim=0).view(B, V, 3, self.resolution[0], self.resolution[1])
         alphas = torch.stack(alphas, dim=0).view(B, V, 1, self.resolution[0], self.resolution[1])
         depths = torch.stack(depths, dim=0).view(B, V, 1, self.resolution[0], self.resolution[1])
+        conf_maps = torch.stack(conf_maps, dim=0).view(B, V, 1, self.resolution[0], self.resolution[1])
 
         return {
-            "image": images, # [B, V, 3, H, W]
-            "alpha": alphas, # [B, V, 1, H, W]
-            "depth": depths
+            "image": images,    # [B, V, 3, H, W]
+            "alpha": alphas,    # [B, V, 1, H, W]
+            "depth": depths,    # [B, V, 1, H, W]
+            "conf": conf_maps,  # [B, V, 1, H, W]  Σ conf_i * α_i * T_i
         }
 
     # save the gaussains attributes
@@ -467,6 +476,9 @@ class GaussianRenderer:
         images = []
         alphas = []
         depths = []
+        conf_maps = []
+
+        has_conf = gaussians.shape[-1] >= 15
         
         # batch size
         for b in range(B):
@@ -475,7 +487,8 @@ class GaussianRenderer:
             rgbs = gaussians[b, :, 3:6].contiguous().float() # [N, 3]
             opacity = gaussians[b, :, 6:7].contiguous().float() #
             rotations = gaussians[b, :, 7:11].contiguous().float() #旋转四元数
-            scales = gaussians[b, :, 11:].contiguous().float() # 尺度
+            scales = gaussians[b, :, 11:14].contiguous().float() # 尺度
+            confs_per_gs = gaussians[b, :, 14:15].contiguous().float().clamp(0.0, 1.0) if has_conf else None
 
             means3D = torch.nan_to_num(means3D, nan=0.0, posinf=1.0, neginf=0.0)
             rgbs = torch.nan_to_num(rgbs, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
@@ -530,8 +543,7 @@ class GaussianRenderer:
 
                 # Rasterize visible Gaussians to image, obtain their radii (on screen).
                 if self.renderer_type == "vanilla":
-                    # 高斯点半径 (radii)（用不上）
-                    rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
+                    rendered_image, radii, rendered_depth, rendered_alpha, rendered_conf = rasterizer(
                         means3D=means3D,
                         means2D=means2D,
                         shs=None,
@@ -540,6 +552,7 @@ class GaussianRenderer:
                         scales=scales,
                         rotations=rotations,
                         cov3D_precomp=None,
+                        confs=confs_per_gs.squeeze(-1) if has_conf else None,
                     )
                     rendered_normal = None
                 else:
@@ -550,13 +563,16 @@ class GaussianRenderer:
                 images.append(rendered_image)
                 alphas.append(rendered_alpha)
                 depths.append(rendered_depth)
+                conf_maps.append(rendered_conf)
 
         images = torch.stack(images, dim=0).view(B, V, 3, new_resolution[0], new_resolution[1])
         alphas = torch.stack(alphas, dim=0).view(B, V, 1, new_resolution[0], new_resolution[1])
         depths = torch.stack(depths, dim=0).view(B, V, 1, new_resolution[0], new_resolution[1])
+        conf_maps = torch.stack(conf_maps, dim=0).view(B, V, 1, new_resolution[0], new_resolution[1])
 
         return {
-            "image": images, # [B, V, 3, H, W]
-            "alpha": alphas, # [B, V, 1, H, W]
-            "depth": depths
+            "image": images,    # [B, V, 3, H, W]
+            "alpha": alphas,    # [B, V, 1, H, W]
+            "depth": depths,    # [B, V, 1, H, W]
+            "conf": conf_maps,  # [B, V, 1, H, W]
         }

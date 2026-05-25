@@ -341,8 +341,15 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     scale = torch.nan_to_num(gaussians[..., 11:14], nan=1.0, posinf=1.0, neginf=1.0)
     scale = torch.clamp(scale, min=1e-6)
 
-    # Concatenate all cleaned parts
-    cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
+    parts = [mean3D, rgb, opacity, rotation, scale]
+
+    # 14:15 conf (optional, only present in 15D layout)
+    if gaussians.shape[-1] >= 15:
+        conf = torch.nan_to_num(gaussians[..., 14:15], nan=0.5, posinf=1.0, neginf=0.0)
+        conf = torch.clamp(conf, 0.0, 1.0)
+        parts.append(conf)
+
+    cleaned = torch.cat(parts, dim=-1)
     return cleaned
 
 def compute_depth_stereo_mae_mse(depth_pred, depth_gt,valid_min=0.0,valid_max=150.0):
@@ -1257,6 +1264,21 @@ class StereoSplat(BaseModule):
                 depth_abs_loss = depth_abs_loss.mean()
                 fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
                 set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+
+                # ==================== Conf Loss (Method B: self-supervised photometric soft label) ==
+                # conf_gt = exp(-lambda * mean_L1(rendered, gt))  [stop gradient]
+                # Accurately rendered regions -> conf_gt ~= 1; poorly rendered -> conf_gt ~= 0.
+                if getattr(self.losses_params, 'use_conf_loss', False):
+                    with torch.no_grad():
+                        l1_err = torch.abs(render_pkg_fuse["image"].detach() - rgb_gt)  # [B,V,3,H,W]
+                        l1_err = l1_err.mean(dim=2, keepdim=True)                        # [B,V,1,H,W]
+                        conf_lambda = getattr(self.losses_params, 'conf_lambda', 10.0)
+                        conf_gt = torch.exp(-conf_lambda * l1_err)                       # (0, 1]
+                    rendered_conf_fuse = render_pkg_fuse["conf"]  # [B,V,1,H,W]
+                    conf_loss = torch.nn.functional.mse_loss(rendered_conf_fuse, conf_gt)
+                    weight_conf = getattr(self.losses_params.fusion_sup_dict, 'weight_conf', 0.1)
+                    fusion_branch_loss = fusion_branch_loss + weight_conf * conf_loss
+                    set_loss("conf_fusion", mode, conf_loss, weight_conf)
             
             
             else:
@@ -1269,7 +1291,7 @@ class StereoSplat(BaseModule):
                                 depth_estimation_branch_loss * self.losses_params.depth_est_sup_dict.branch_weight
             
             
-            rendered_fusion_list = [rendered_color_fuse,rendered_depth_fuse]
+            rendered_fusion_list = [rendered_color_fuse, rendered_depth_fuse, render_pkg_fuse["conf"].squeeze(2)]
             rendered_volume_list = [rendered_color_volume,rendered_depth_volume]
             rendered_cv_list = [rendered_color_cv,rendered_depth_cv]
             
@@ -2667,7 +2689,8 @@ class StereoSplat(BaseModule):
 
 
         rendered_images_fusion = rendered_fusion_list[0] #(1,6,3,H,W)
-        rendered_depth_fusion = rendered_fusion_list[1] #(1,V,H，W)
+        rendered_depth_fusion = rendered_fusion_list[1] #(1,V,H,W)
+        rendered_conf_fusion = rendered_fusion_list[2] if len(rendered_fusion_list) > 2 else None  #(1,V,H,W)
         rendered_images_gt = output_rgb
         sparse_depth_gt = sparse_depth_gt
         
@@ -2675,6 +2698,8 @@ class StereoSplat(BaseModule):
         # change the ordered.
         rendered_images_fusion = interleave_left_right(rendered_images_fusion)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fusion)
+        if rendered_conf_fusion is not None:
+            rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fusion)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(rendered_images_gt)
         
@@ -2883,7 +2908,18 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo,D_gt_tensor=gt_depth_center_stereo)
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
-            
+
+            # conf maps (only when model outputs conf)
+            if rendered_conf_fusion is not None:
+                import matplotlib.cm as cm
+                conf_folder_path = os.path.join(saved_folder_for_visualization, 'rendered_conf')
+                os.makedirs(conf_folder_path, exist_ok=True)
+                for stereo_name, stereo_slice in [('first', slice(-2, None)), ('last', slice(-4, -2)), ('center', slice(-6, -4))]:
+                    conf_stereo = rendered_conf_fusion[:, stereo_slice, :, :]  # (1,2,H,W)
+                    conf_np = conf_stereo.mean(dim=1).squeeze(0).cpu().float().numpy()  # (H,W)
+                    conf_colored = (cm.plasma(conf_np)[:, :, :3] * 255).astype(np.uint8)
+                    skimage.io.imsave(os.path.join(conf_folder_path, f'{stereo_name}_stereo_conf.png'), conf_colored)
+
             
             # rendered videos
             saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')

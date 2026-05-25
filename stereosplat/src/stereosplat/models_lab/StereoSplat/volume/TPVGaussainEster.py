@@ -99,7 +99,7 @@ class VolumeGaussian(BaseModule):
                 project_feats_hw_i.scatter_add_(0, linear_inds_hw_i.unsqueeze(-1).expand(-1, c), candidate_feats_i)
                 
                 # 创建一个与特征一样大小的零张量，用来统计每个像素被累加了多少次
-                count_hw_i = project_feats_hw_i.new_zeros((self.tpv_h * self.tpv_w, c), dtype=torch.float32)
+                count_hw_i = project_feats_hw_i.new_zeros((self.tpv_h * self.tpv_w, c))
                 ones_hw_i = torch.ones_like(candidate_feats_i)
                 count_hw_i.scatter_add_(0, linear_inds_hw_i.unsqueeze(-1).expand(-1, c), ones_hw_i)
                 count_hw_i = torch.where(count_hw_i == 0, torch.ones_like(count_hw_i), count_hw_i)
@@ -115,7 +115,7 @@ class VolumeGaussian(BaseModule):
                 linear_inds_zh_i = (candidate_coords_zh_i[..., 0] * self.tpv_h + candidate_coords_zh_i[..., 1]).to(dtype=torch.int64)
                 project_feats_zh_i = project_feats_zh[i].view(-1, c)
                 project_feats_zh_i.scatter_add_(0, linear_inds_zh_i.unsqueeze(-1).expand(-1, c), candidate_feats_i)
-                count_zh_i = project_feats_zh_i.new_zeros((self.tpv_z * self.tpv_h, c), dtype=torch.float32)
+                count_zh_i = project_feats_zh_i.new_zeros((self.tpv_z * self.tpv_h, c))
                 ones_zh_i = torch.ones_like(candidate_feats_i)
                 count_zh_i.scatter_add_(0, linear_inds_zh_i.unsqueeze(-1).expand(-1, c), ones_zh_i)
                 count_zh_i = torch.where(count_zh_i == 0, torch.ones_like(count_zh_i), count_zh_i)
@@ -127,7 +127,7 @@ class VolumeGaussian(BaseModule):
                 linear_inds_wz_i = (candidate_coords_wz_i[..., 0] * self.tpv_z + candidate_coords_wz_i[..., 1]).to(dtype=torch.int64)
                 project_feats_wz_i = project_feats_wz[i].view(-1, c)
                 project_feats_wz_i.scatter_add_(0, linear_inds_wz_i.unsqueeze(-1).expand(-1, c), candidate_feats_i)
-                count_wz_i = project_feats_wz_i.new_zeros((self.tpv_w * self.tpv_z, c), dtype=torch.float32)
+                count_wz_i = project_feats_wz_i.new_zeros((self.tpv_w * self.tpv_z, c))
                 ones_wz_i = torch.ones_like(candidate_feats_i)
                 count_wz_i.scatter_add_(0, linear_inds_wz_i.unsqueeze(-1).expand(-1, c), ones_wz_i)
                 count_wz_i = torch.where(count_wz_i == 0, torch.ones_like(count_wz_i), count_wz_i)

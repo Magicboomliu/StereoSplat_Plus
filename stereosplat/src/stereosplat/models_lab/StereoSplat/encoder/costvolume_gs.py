@@ -46,8 +46,15 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     scale = torch.nan_to_num(gaussians[..., 11:14], nan=1.0, posinf=1.0, neginf=1.0)
     scale = torch.clamp(scale, min=1e-6)
 
-    # Concatenate all cleaned parts
-    cleaned = torch.cat([mean3D, rgb, opacity, rotation, scale], dim=-1)
+    parts = [mean3D, rgb, opacity, rotation, scale]
+
+    # 14:15 conf (optional, only present in 15D layout)
+    if gaussians.shape[-1] >= 15:
+        conf = torch.nan_to_num(gaussians[..., 14:15], nan=0.5, posinf=1.0, neginf=0.0)
+        conf = torch.clamp(conf, 0.0, 1.0)
+        parts.append(conf)
+
+    cleaned = torch.cat(parts, dim=-1)
     return cleaned
 
 

@@ -13,7 +13,7 @@ validation_vis_progress=True
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 3000
+save_freq = 5000
 val_freq = 3000
 max_epochs = 150
 save_epoch_freq = -1
@@ -21,7 +21,7 @@ save_epoch_freq = -1
 lr_scheduler_type = "constant_with_warmup"
 max_train_steps = 100000
 warmup_steps = 1000
-mixed_precision = "no"
+mixed_precision = "fp16"
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
@@ -115,6 +115,14 @@ patch_sizes=[8, 8, 4, 2]
 _ffn_dim_ = _dim_ * 2
 
 # unit is a little bigger than the x_range,y_range and the z_range
+# tpv_h_ = 128 # left/right
+# tpv_w_ = 128 # forward/backward
+# tpv_z_ = 8   # upside/down
+# scale_h = 1
+# scale_w = 1
+# scale_z = 1
+# gpv = 2
+
 tpv_h_ = 192 # left/right
 tpv_w_ = 192 # forward/backward
 tpv_z_ = 16  # upside/down
@@ -122,6 +130,8 @@ scale_h = 1
 scale_w = 1
 scale_z = 1
 gpv = 3
+
+
 
 # for filering
 num_points_in_pillar = [8, 16, 16]
@@ -203,6 +213,10 @@ loss_args = dict(
     perceptual_resolution=[resolution[0], resolution[1]], # using the current resolustion
     
     gt_depth_type = 'sparse_pseudo', # select from 'sparse', 'pseudo','sparse_pseudo'
+
+    # conf loss (Method B: self-supervised photometric soft label)
+    use_conf_loss=True,
+    conf_lambda=10.0,   # sharpness of exp(-lambda * L1); higher = conf drops faster with error
     
     depth_est_sup_dict= dict(
         branch_weight = 0.05,
@@ -226,6 +240,7 @@ loss_args = dict(
         weight_recon=1.0,
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
+        weight_conf=0.1,     # weight for conf MSE loss
         branch_weight =1.0,
     ),
     
@@ -331,7 +346,7 @@ model = dict(
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
             pc_range=point_cloud_range,
-            gs_dim=14,
+            gs_dim=15,
             in_dims=_dim_,
             hidden_dims=2*_dim_,
             out_dims=_dim_,

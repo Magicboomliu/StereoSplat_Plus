@@ -1,21 +1,25 @@
-Train_Stereosplat_On_KITTI360(){
+#!/bin/bash
+Train_Stereosplat_With_Conf_On_KITTI360(){
 cd ../../..
 
-accelerate_config_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/accelerate_configs/accelerate_config_singleGPU.yaml"
-configs_path="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/"
-output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/use_gt_views/"
-resume_from="/data1/zliu/KITTI360_Completed/FeedForward_3DGS_Performances/KITTI_Complete_112_544/VolumeFusion/checkpoint-159000/"
+REPO="/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat"
+
+accelerate_config_path="${REPO}/accelerate_configs/accelerate_config.yaml"
+configs_path="${REPO}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
+work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/with_conf/"
+output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/StereoSplat_With_Conf/basemodel/Input_View_Invariant/"
+# Set to empty string "" to train from scratch; or provide an existing checkpoint path
+resume_from=""
 # Optional overrides (leave empty to use cfg defaults)
-exp_name="input_invariant_stereosplat_kitti360_stereo_114x544"
+exp_name="input_invariant_stereosplat_with_conf_kitti360_112x544"
 datapath="/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/all.txt"
-val_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo.txt"
-test_filelist="/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat/filenames/kitti360/train_complete/demo.txt"
+train_filelist="${REPO}/filenames/kitti360/train_complete/all.txt"
+val_filelist="${REPO}/filenames/kitti360/train_complete/demo.txt"
+test_filelist="${REPO}/filenames/kitti360/train_complete/demo.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
-world_center="First_LiDAR_3_Uniform" 
+world_center="First_LiDAR_3_Uniform"
 unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
 
 
@@ -24,18 +28,18 @@ use_wandb=false
 # 推荐：不要把 key 写进脚本；更安全的做法是先执行 `wandb login` 或在 shell 里 export WANDB_API_KEY
 wandb_api_key="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"
 wandb_entity="liuzihua1004"
-wandb_project="StereoSplat"
+wandb_project="StereoSplat_Plus_Conf"
 # online | offline | disabled
 wandb_mode="online"
-wandb_run_name="input_invariant_stereosplat_kitti360_default"
+wandb_run_name="input_invariant_stereosplat_with_conf_kitti360"
 
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$(pwd):${PYTHONPATH}"
 
-pixi run -e cu118 accelerate launch --config-file $accelerate_config_path trainer/train_kitti360_stereosplat.py \
+pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate_config_path trainer/train_kitti360_stereosplat_with_conf.py \
     --py-config $configs_path \
     --work-dir  $work_dir \
-    --resume-from $resume_from \
+    --resume-from "${resume_from:-None}" \
     ${exp_name:+--exp-name "$exp_name"} \
     ${output_dir:+--output-dir "$output_dir"} \
     ${datapath:+--datapath "$datapath"} \
@@ -57,4 +61,4 @@ pixi run -e cu118 accelerate launch --config-file $accelerate_config_path traine
 }
 
 
-Train_Stereosplat_On_KITTI360
+Train_Stereosplat_With_Conf_On_KITTI360
