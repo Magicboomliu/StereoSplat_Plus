@@ -228,8 +228,11 @@ loss_args = dict(
         weight_recon=1.0,
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
+        weight_conf=0.1,      # conf MSE loss weight (used when use_conf_loss=True)
         branch_weight =1.0,
     ),
+    use_conf_loss=True,       # enable self-supervised conf supervision (Method B)
+    conf_lambda=10.0,         # sharpness of photometric soft label
     
     cv_sup_dict = dict(
         recon_loss_cv_type="l2", # reconstrunction loss
@@ -333,7 +336,7 @@ model = dict(
             tpv_w=tpv_w_,
             tpv_z=tpv_z_,
             pc_range=point_cloud_range,
-            gs_dim=14,
+            gs_dim=15,
             in_dims=_dim_,
             hidden_dims=2*_dim_,
             out_dims=_dim_,

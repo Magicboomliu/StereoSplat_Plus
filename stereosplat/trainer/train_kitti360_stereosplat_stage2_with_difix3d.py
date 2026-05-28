@@ -36,7 +36,7 @@ from mmengine.registry import MODELS
 import random
 from stereosplat.models_lab.StereoSplat.stereosplat import StereoSplat
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from tqdm import tqdm
 import importlib
 

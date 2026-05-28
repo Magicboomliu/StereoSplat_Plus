@@ -330,11 +330,12 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     norm = torch.clamp(norm, min=1e-6)
     rotation = torch.nan_to_num(rotation, nan=0.0, posinf=0.0, neginf=0.0)
     rotation = rotation / norm
-    # fallback 仅对异常数据赋值
+    # fallback 仅对异常数据赋值（按行索引，避免 bool+expand 变 flat 1D 导致 shape mismatch）
     if bad_mask.any():
-        fallback_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=rotation.device)
-        fallback_expand = fallback_quat.expand(bad_mask.sum(), 4)
-        rotation[bad_mask.expand_as(rotation)] = fallback_expand
+        fallback_quat = torch.tensor([1.0, 0.0, 0.0, 0.0],
+                                     dtype=rotation.dtype, device=rotation.device)
+        bad_rows = bad_mask.squeeze(-1)          # [...] 去掉最后维，选 row
+        rotation[bad_rows] = fallback_quat.expand(int(bad_rows.sum()), 4)
 
 
     # 11:14 scale
@@ -1512,7 +1513,7 @@ class StereoSplat(BaseModule):
             
             with torch.no_grad():
                 
-                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,14)
+                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
                 rendered_psuedo_results = frozen_stage_1_model.renderer.render(
                     gaussians=stage1_3dgs_output,
                     c2w=render_c2w,
@@ -1943,7 +1944,7 @@ class StereoSplat(BaseModule):
             
             with torch.no_grad():
                 
-                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,14)
+                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
                 rendered_psuedo_results = frozen_stage_1_model.renderer.render(
                     gaussians=stage1_3dgs_output,
                     c2w=render_c2w,
@@ -2086,6 +2087,10 @@ class StereoSplat(BaseModule):
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        # conf: [B,V,1,H,W] -> [B,V,H,W]; None when model is 14D or rasterizer lacks conf support
+        rendered_conf_fuse = render_pkg_fuse.get("conf")
+        if rendered_conf_fuse is not None:
+            rendered_conf_fuse = rendered_conf_fuse.squeeze(2)
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
@@ -2356,13 +2361,26 @@ class StereoSplat(BaseModule):
                 raise NotImplementedError
                 
             
+
+            # ==================== Conf Loss (Method B: photometric soft label) ================
+            if getattr(self.losses_params, 'use_conf_loss', False) and rendered_conf_fuse is not None:
+                with torch.no_grad():
+                    rgb_l1 = torch.abs(render_pkg_fuse["image"] - rgb_gt).mean(dim=2, keepdim=True)  # [B,V,1,H,W]
+                    _lambda = getattr(self.losses_params, 'conf_lambda', 10.0)
+                    conf_gt_stage2 = torch.exp(-_lambda * rgb_l1).squeeze(2)  # [B,V,H,W], stop-gradient
+                conf_loss_stage2 = torch.nn.functional.mse_loss(rendered_conf_fuse, conf_gt_stage2)
+                _w_conf = getattr(self.losses_params.fusion_sup_dict, 'weight_conf', 0.1)
+                fusion_branch_loss = fusion_branch_loss + _w_conf * conf_loss_stage2
+                set_loss("conf_fusion", mode, conf_loss_stage2, _w_conf)
+
             loss =cost_volume_branch_loss * self.losses_params.cv_sup_dict.branch_weight + \
                         trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
                             fusion_branch_loss * self.losses_params.fusion_sup_dict.branch_weight + \
                                 depth_estimation_branch_loss * self.losses_params.depth_est_sup_dict.branch_weight
             
             
-            rendered_fusion_list = [rendered_color_fuse,rendered_depth_fuse]
+            rendered_fusion_list = [rendered_color_fuse, rendered_depth_fuse] + \
+                ([rendered_conf_fuse] if rendered_conf_fuse is not None else [])
             rendered_volume_list = [rendered_color_volume,rendered_depth_volume]
             rendered_cv_list = [rendered_color_cv,rendered_depth_cv]
             
@@ -9175,7 +9193,7 @@ class StereoSplat(BaseModule):
             img =input_batch_dict["imgs"] #[B,6,3,H,W]
             height,width = img.shape[-2:]
             bs = img.shape[0]   
-            gaussians_all = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,14)
+            gaussians_all = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
         
         
         #  rendere all the images/ intrinsics and extrinsics
