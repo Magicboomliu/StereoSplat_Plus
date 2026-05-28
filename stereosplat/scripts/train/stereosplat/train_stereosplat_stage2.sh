@@ -33,7 +33,7 @@ pretrained_difix3d="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_P
 
 mix_psuedo_views_ratio=0.5
 
-use_wandb=false
+use_wandb=true
 wandb_api_key="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"
 wandb_entity="liuzihua1004"
 wandb_project="StereoSplat_Plus_Conf"
