@@ -1964,9 +1964,10 @@ class StereoSplat(BaseModule):
         
     
         # only generate pseudo views when they will actually be mixed in
-        use_mix_psuedo_views = random.random()
-
-        use_mix_psuedo_difix3d_views = random.random()
+        # seed from iter so all DDP ranks take the same branch (avoid NCCL desync)
+        _mix_rng = random.Random(int(iter) * 9973 + 17)
+        use_mix_psuedo_views = _mix_rng.random()
+        use_mix_psuedo_difix3d_views = _mix_rng.random()
 
         if frozen_stage_1_model is not None and use_mix_psuedo_views <= mix_psuedo_views_ratio:
             psuedo_input_views = create_input_psuedo_views(

@@ -209,13 +209,28 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
     logger.propagate = False
     return logger
 
-def sample_2_to_6(n=1, floats=False):
+def sample_2_to_6(n=1, floats=False, rng=None):
     """Return 1 or n random values in 2..6.
        ints by default; set floats=True for [2,6)."""
+    _rng = rng if rng is not None else random
     if floats:
-        return random.uniform(2, 6) if n == 1 else [random.uniform(2, 6) for _ in range(n)]
+        return _rng.uniform(2, 6) if n == 1 else [_rng.uniform(2, 6) for _ in range(n)]
     else:
-        return random.randint(2, 6) if n == 1 else [random.randint(2, 6) for _ in range(n)]
+        return _rng.randint(2, 6) if n == 1 else [_rng.randint(2, 6) for _ in range(n)]
+
+
+def _iter_rng(global_iter: int, salt: int = 0) -> random.Random:
+    """Deterministic RNG from global_iter so all DDP ranks take identical branches."""
+    return random.Random(int(global_iter) * 9973 + int(salt))
+
+
+def _all_ranks_should_skip(accelerator: Accelerator, local_skip: bool) -> bool:
+    """If any rank skips backward, all ranks must skip to avoid NCCL deadlock."""
+    if accelerator.num_processes <= 1:
+        return local_skip
+    flag = torch.tensor([1 if local_skip else 0], device=accelerator.device, dtype=torch.int32)
+    torch.distributed.all_reduce(flag, op=torch.distributed.ReduceOp.MAX)
+    return bool(flag.item())
 
 def main(args):
     
@@ -493,6 +508,7 @@ def main(args):
     epoch = 0
     global_iter = 0
     first_epoch = 0
+    path = None
     
 
     # Potentially load in the weights and states from a previous save
@@ -509,15 +525,16 @@ def main(args):
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             if len(dirs) > 0:
                 dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-                path = dirs[-1]
+                path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
             else:
                 path = None
 
-
     if path:
+        if not os.path.isabs(path):
+            path = os.path.join(os.path.abspath(cfg.work_dir), path)
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
-        global_iter = int(path.split("/")[-2].split("-")[1])
+        global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
         if accelerator.is_main_process:
@@ -533,6 +550,7 @@ def main(args):
 
     # training along the iterations.
     print_freq = cfg.print_freq
+    use_ddp = accelerator.num_processes > 1
     while epoch < max_num_epochs:
         my_model.train()
         data_time_s = time.time()
@@ -540,8 +558,9 @@ def main(args):
         
         for i_iter, batch in enumerate(train_dataloader):
             data_time_e = time.time()
-            
-            sample_view_nums = sample_2_to_6(n=1, floats=False)
+
+            # same view_num on all ranks (iter-seeded RNG)
+            sample_view_nums = sample_2_to_6(n=1, floats=False, rng=_iter_rng(global_iter, salt=31))
             if sample_view_nums == 2:
                 view_num = 2
                 matching_nums = 2
@@ -558,9 +577,14 @@ def main(args):
                 view_num = 6
                 matching_nums = 5
 
+            loss = torch.tensor(0.0, device=accelerator.device)
+            logs = {}
+            grad_norm = 0.0
+            local_skip = False
+
             try:
                 with accelerator.accumulate(my_model):
-                    if args.gpus <= 1:
+                    if not use_ddp:
                         loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.forward_stage2_with_difix3d(
                             batch, "train",
                             view_num=view_num,
@@ -583,27 +607,34 @@ def main(args):
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
-                        print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
-                        continue
+                        if accelerator.is_main_process:
+                            print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
+                        local_skip = True
+                    else:
+                        accelerator.backward(loss)
 
-                    accelerator.backward(loss)
-
-                    if accelerator.sync_gradients:
-                        grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
-                        optimizer.step()
-                        scheduler.step()
-                        optimizer.zero_grad(set_to_none=True)
+                        if accelerator.sync_gradients:
+                            grad_norm = accelerator.clip_grad_norm_(my_model.parameters(), cfg.grad_max_norm)
+                            optimizer.step()
+                            scheduler.step()
+                            optimizer.zero_grad(set_to_none=True)
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e):
-                    print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                    if accelerator.is_main_process:
+                        print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
                     optimizer.zero_grad(set_to_none=True)
                     torch.cuda.empty_cache()
-                    continue
+                    local_skip = True
                 else:
                     raise e
 
-            if accelerator.sync_gradients and global_iter % cfg.save_freq == 0 and global_iter > 0:
+            if _all_ranks_should_skip(accelerator, local_skip):
+                optimizer.zero_grad(set_to_none=True)
+                global_iter += 1
+                continue
+
+            if accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.save_freq == 0:
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
@@ -612,99 +643,99 @@ def main(args):
                     mmengine.utils.symlink(save_file_name, dst_file)
                     if logger is not None:
                         logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+                accelerator.wait_for_everyone()
 
-            # perform the validation scripts
-                if global_iter % cfg.val_freq == 0:
-                    my_model.eval()
-                    if accelerator.is_main_process:
-                        meters = {
-                            "fusion": _make_stage_meters(),
-                            "volume": _make_stage_meters(),
-                            "cv": _make_stage_meters(),
-                        }
-                        stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
+            if accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.val_freq == 0:
+                accelerator.wait_for_everyone()
+                my_model.eval()
+                if accelerator.is_main_process:
+                    meters = {
+                        "fusion": _make_stage_meters(),
+                        "volume": _make_stage_meters(),
+                        "cv": _make_stage_meters(),
+                    }
+                    stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
+                    
+                    for i_iter_val, batch_val in enumerate(val_dataloader):
+                        print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
+                        overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
+                                                              "step-{}".format(global_iter))
+                        os.makedirs(overall_val_batch_save_dir,exist_ok=True)
+                        val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
+                        os.makedirs(val_batch_save_dir,exist_ok=True)
+            
                         
-                        for i_iter_val, batch_val in enumerate(val_dataloader):
-                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                            overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
-                                                                  "step-{}".format(global_iter))
-                            os.makedirs(overall_val_batch_save_dir,exist_ok=True)
-                            val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
-                            os.makedirs(val_batch_save_dir,exist_ok=True)
-                
+                        if not use_ddp:
+                            metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                        else:
+                            metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
+
+                        for i in range(len(metrics_rendered_rgb_list)):
+                            output_rgb_meter_dict = metrics_rendered_rgb_list[i]
+                            output_depth_meter_dict = metrics_rendered_depth_list[i]
+                            input_depth_meter_dict = metrics_estimated_depth_list[i]
                             
-                            if args.gpus<=1:
-                                # forward here 
-                                # get the psnr, ssim, mae and mse as well as the saved the visualization results
-                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
-                            else:
-                                metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
-
-                            for i in range(len(metrics_rendered_rgb_list)):
-                                output_rgb_meter_dict = metrics_rendered_rgb_list[i]
-                                output_depth_meter_dict = metrics_rendered_depth_list[i]
-                                input_depth_meter_dict = metrics_estimated_depth_list[i]
-                                
-      
-                                
-                                stage = stage_by_index.get(i)
-                                if stage is None:
-                                    continue
-                                _update_stage_meters(
-                                    meters[stage],
-                                    output_rgb_meter_dict,
-                                    output_depth_meter_dict,
-                                    input_depth_meter_dict,
-                                )
+  
                             
+                            stage = stage_by_index.get(i)
+                            if stage is None:
+                                continue
+                            _update_stage_meters(
+                                meters[stage],
+                                output_rgb_meter_dict,
+                                output_depth_meter_dict,
+                                input_depth_meter_dict,
+                            )
                         
-                        stats = {k: _finalize_meters(v) for k, v in meters.items()}
+                    
+                    stats = {k: _finalize_meters(v) for k, v in meters.items()}
 
-                        results_dict_fusion = {
-                            "rgb_center": stats["fusion"]["rgb"]["center"],
-                            "rgb_first": stats["fusion"]["rgb"]["first"],
-                            "rgb_last": stats["fusion"]["rgb"]["last"],
-                            "depth_center": stats["fusion"]["depth"]["center"],
-                            "depth_first": stats["fusion"]["depth"]["first"],
-                            "depth_last": stats["fusion"]["depth"]["last"],
-                            "input_depth": stats["fusion"]["input_depth"],
-                        }
-                        results_dict_volume = {
-                            "rgb_center": stats["volume"]["rgb"]["center"],
-                            "rgb_first": stats["volume"]["rgb"]["first"],
-                            "rgb_last": stats["volume"]["rgb"]["last"],
-                            "depth_center": stats["volume"]["depth"]["center"],
-                            "depth_first": stats["volume"]["depth"]["first"],
-                            "depth_last": stats["volume"]["depth"]["last"],
-                            "input_depth": stats["volume"]["input_depth"],
-                        }
-                        results_dict_cv = {
-                            "rgb_center": stats["cv"]["rgb"]["center"],
-                            "rgb_first": stats["cv"]["rgb"]["first"],
-                            "rgb_last": stats["cv"]["rgb"]["last"],
-                            "depth_center": stats["cv"]["depth"]["center"],
-                            "depth_first": stats["cv"]["depth"]["first"],
-                            "depth_last": stats["cv"]["depth"]["last"],
-                            "input_depth": stats["cv"]["input_depth"],
-                        }
-                        
-                        saved_into_json(data_dict=results_dict_fusion,
-                                        path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
+                    results_dict_fusion = {
+                        "rgb_center": stats["fusion"]["rgb"]["center"],
+                        "rgb_first": stats["fusion"]["rgb"]["first"],
+                        "rgb_last": stats["fusion"]["rgb"]["last"],
+                        "depth_center": stats["fusion"]["depth"]["center"],
+                        "depth_first": stats["fusion"]["depth"]["first"],
+                        "depth_last": stats["fusion"]["depth"]["last"],
+                        "input_depth": stats["fusion"]["input_depth"],
+                    }
+                    results_dict_volume = {
+                        "rgb_center": stats["volume"]["rgb"]["center"],
+                        "rgb_first": stats["volume"]["rgb"]["first"],
+                        "rgb_last": stats["volume"]["rgb"]["last"],
+                        "depth_center": stats["volume"]["depth"]["center"],
+                        "depth_first": stats["volume"]["depth"]["first"],
+                        "depth_last": stats["volume"]["depth"]["last"],
+                        "input_depth": stats["volume"]["input_depth"],
+                    }
+                    results_dict_cv = {
+                        "rgb_center": stats["cv"]["rgb"]["center"],
+                        "rgb_first": stats["cv"]["rgb"]["first"],
+                        "rgb_last": stats["cv"]["rgb"]["last"],
+                        "depth_center": stats["cv"]["depth"]["center"],
+                        "depth_first": stats["cv"]["depth"]["first"],
+                        "depth_last": stats["cv"]["depth"]["last"],
+                        "input_depth": stats["cv"]["input_depth"],
+                    }
+                    
+                    saved_into_json(data_dict=results_dict_fusion,
+                                    path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
 
-                        saved_into_json(data_dict=results_dict_volume,
-                                        path=os.path.join(overall_val_batch_save_dir,"volume_metric.json"))
+                    saved_into_json(data_dict=results_dict_volume,
+                                    path=os.path.join(overall_val_batch_save_dir,"volume_metric.json"))
 
-                        saved_into_json(data_dict=results_dict_cv,
-                                        path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
+                    saved_into_json(data_dict=results_dict_cv,
+                                    path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
 
-                        if tracker_enabled:
-                            wandb_logs = {}
-                            wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
-                            wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
-                            wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
-                            accelerator.log(wandb_logs, step=global_iter)
-                        
-                    my_model.train()
+                    if tracker_enabled:
+                        wandb_logs = {}
+                        wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
+                        wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
+                        wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
+                        accelerator.log(wandb_logs, step=global_iter)
+                    
+                accelerator.wait_for_everyone()
+                my_model.train()
 
 
             time_e = time.time()
