@@ -141,6 +141,8 @@ def _dataset_module_for_world_center(world_center: str | None) -> str:
         return "stereosplat.data.KITTI360_FirstLiDAR_Ref.dataloader"
     if world_center == "First_LiDAR_3_Uniform":
         return "stereosplat.data.KITTI360_FisrtLiDAR_Random.dataloader"
+    if world_center == "First_Stage2":
+        return "stereosplat.data.KITTI360_First_LiDAR_Random_Stage2.dataloader"
     return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
 
 class Basic_Meter(object):
@@ -330,19 +332,25 @@ def main(args):
                            dataset_params=cfg.dataset_params,
                            use_checkpoint=cfg.use_checkpoint)
     
-    # loading the pretrained diffix3d models.
-    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
-
-    pretrained_diffix_model = DifixRef(
-        pretrained_name="nvidia/difix_ref",
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref,
-        deterministic_vae_encode=args.deterministic_vae_encode,
-        deterministic_scheduler_step=args.deterministic_scheduler_step,
-    )
-    
-    pretrained_diffix_model.set_eval()
+    # Difix3D is only required when --use_diffix3d is set.
+    pretrained_diffix_model = None
+    if args.use_diffix3d:
+        if not args.pretrained_diffix_model_path or not os.path.exists(
+            args.pretrained_diffix_model_path
+        ):
+            raise FileNotFoundError(
+                "The pretrained Difix3D model path does not exist: "
+                f"{args.pretrained_diffix_model_path}"
+            )
+        pretrained_diffix_model = DifixRef(
+            pretrained_name="nvidia/difix_ref",
+            pretrained_path=args.pretrained_diffix_model_path,
+            timestep=args.timestep,
+            mv_unet=args.use_ref,
+            deterministic_vae_encode=args.deterministic_vae_encode,
+            deterministic_scheduler_step=args.deterministic_scheduler_step,
+        )
+        pretrained_diffix_model.set_eval()
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
@@ -361,14 +369,20 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print("Can't find checkpoint. Randomly initialize model parameters anyway.")
-        
-    pretrained_diffix_model.to(accelerator.device)
+
+    if pretrained_diffix_model is not None:
+        pretrained_diffix_model.to(accelerator.device)
 
     print("=====================================================================================")
     print("Successfully loading the pretrained StereoSplat from {}".format(args.pretrained_model_path))
 
-    print("=====================================================================================")
-    print("Successfully loading the pretrained Diffix3d model from {}".format(args.pretrained_diffix_model_path))
+    if pretrained_diffix_model is not None:
+        print("=====================================================================================")
+        print(
+            "Successfully loading the pretrained Diffix3d model from {}".format(
+                args.pretrained_diffix_model_path
+            )
+        )
 
 
 
@@ -406,6 +420,8 @@ def main(args):
     }
 
     current_pseduo_ratio_index = args.pseudo_ratio
+    evaluate_results_average_dict_conf = {}
+    evaluate_results_average_dict_conf_stage1 = {}
 
     with torch.no_grad():
         my_model.eval()
@@ -449,19 +465,40 @@ def main(args):
                 evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
             for key in current_evaluate_results_dict_depth.keys():
                 evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
+            if "Conf" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf"].items():
+                    evaluate_results_average_dict_conf[key] = (
+                        evaluate_results_average_dict_conf.get(key, 0.0) + val
+                    )
+            if "Conf_stage1" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf_stage1"].items():
+                    evaluate_results_average_dict_conf_stage1[key] = (
+                        evaluate_results_average_dict_conf_stage1.get(key, 0.0) + val
+                    )
             batch_idx += 1
-           
+
+        if batch_idx == 0:
+            raise RuntimeError("Validation dataloader is empty; cannot compute metrics.")
+
         for key in evaluate_results_average_dict_rgb.keys():
             evaluate_results_average_dict_rgb[key] /= batch_idx
         for key in evaluate_results_average_dict_depth.keys():
             evaluate_results_average_dict_depth[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf.keys():
+            evaluate_results_average_dict_conf[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf_stage1.keys():
+            evaluate_results_average_dict_conf_stage1[key] /= batch_idx
             
         results_dict = {
             "rgb": evaluate_results_average_dict_rgb,
             "depth": evaluate_results_average_dict_depth,
         }
+        if evaluate_results_average_dict_conf:
+            results_dict["conf"] = evaluate_results_average_dict_conf
+        if evaluate_results_average_dict_conf_stage1:
+            results_dict["conf_stage1"] = evaluate_results_average_dict_conf_stage1
         
-        if not args.output_vis:
+        if not args.output_vis and accelerator.is_main_process:
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
         if tracker_enabled and accelerator.is_main_process:
@@ -470,6 +507,10 @@ def main(args):
                 wandb_logs[f"val/rgb/{k}"] = float(v)
             for k, v in evaluate_results_average_dict_depth.items():
                 wandb_logs[f"val/depth/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf.items():
+                wandb_logs[f"val/conf/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf_stage1.items():
+                wandb_logs[f"val/conf_stage1/{k}"] = float(v)
             accelerator.log(wandb_logs, step=0)
 
 

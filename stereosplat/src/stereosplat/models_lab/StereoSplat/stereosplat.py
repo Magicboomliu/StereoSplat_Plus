@@ -353,6 +353,59 @@ def sanitize_gaussians_tensor(gaussians: torch.Tensor):
     cleaned = torch.cat(parts, dim=-1)
     return cleaned
 
+
+def conf_from_render_pkg(render_pkg):
+    """Extract per-view confidence maps [B,V,H,W] from rasterizer output."""
+    if render_pkg is None:
+        return None
+    conf = render_pkg.get("conf")
+    if conf is None:
+        return None
+    # Rasterizer returns [B, V, 1, H, W]; only squeeze the channel dim.
+    if conf.dim() == 5 and conf.shape[2] == 1:
+        return conf.squeeze(2)
+    if conf.dim() == 4:
+        return conf
+    raise ValueError(f"Unexpected conf shape: {tuple(conf.shape)}")
+
+
+def stereosplat_conf_eval_stats(rendered_conf_fusion):
+    """Mean rendered confidence per view bucket (interleaved stereo layout)."""
+    if rendered_conf_fusion is None:
+        return None
+
+    def _mean(stereo_slice):
+        return rendered_conf_fusion[:, stereo_slice, :, :].mean().item()
+
+    return {
+        "first_view_mean_conf_average": _mean(slice(-2, None)),
+        "center_view_mean_conf_average": _mean(slice(-6, -4)),
+        "last_view_mean_conf_average": _mean(slice(-4, -2)),
+        "all_view_mean_conf_average": rendered_conf_fusion.mean().item(),
+    }
+
+
+def save_stereo_conf_plots(rendered_conf_fusion, conf_folder_path):
+    """Save first/center/last stereo confidence colormaps (same as validation_on_the_forward_views)."""
+    if rendered_conf_fusion is None:
+        return
+    import matplotlib.cm as cm
+
+    os.makedirs(conf_folder_path, exist_ok=True)
+    for stereo_name, stereo_slice in [
+        ("first", slice(-2, None)),
+        ("last", slice(-4, -2)),
+        ("center", slice(-6, -4)),
+    ]:
+        conf_stereo = rendered_conf_fusion[:, stereo_slice, :, :]
+        conf_np = conf_stereo.mean(dim=1).squeeze(0).cpu().float().numpy()
+        conf_colored = (cm.plasma(conf_np)[:, :, :3] * 255).astype(np.uint8)
+        skimage.io.imsave(
+            os.path.join(conf_folder_path, f"{stereo_name}_stereo_conf.png"),
+            conf_colored,
+        )
+
+
 def compute_depth_stereo_mae_mse(depth_pred, depth_gt,valid_min=0.0,valid_max=150.0):
     """
     Computes MAE and MSE between predicted and GT depth maps, with optional valid range filtering.
@@ -5023,6 +5076,7 @@ class StereoSplat(BaseModule):
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_conf_fuse = conf_from_render_pkg(render_pkg_fuse)
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
@@ -5036,6 +5090,9 @@ class StereoSplat(BaseModule):
         '''Do the visualization and the evaluation here'''
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_conf_fusion = None
+        if rendered_conf_fuse is not None:
+            rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -5198,6 +5255,9 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
+        conf_stats = stereosplat_conf_eval_stats(rendered_conf_fusion)
+        if conf_stats is not None:
+            evaluation_results_stat["Conf"] = conf_stats
 
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
@@ -5271,6 +5331,11 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo,D_gt_tensor=gt_depth_center_stereo)
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
+
+            save_stereo_conf_plots(
+                rendered_conf_fusion,
+                os.path.join(saved_folder_for_visualization, "rendered_conf"),
+            )
             
             
             # rendered videos
@@ -7452,6 +7517,7 @@ class StereoSplat(BaseModule):
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_conf_fuse = conf_from_render_pkg(render_pkg_fuse)
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
@@ -7463,6 +7529,9 @@ class StereoSplat(BaseModule):
         '''Do the visualization and the evaluation here'''
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_conf_fusion = None
+        if rendered_conf_fuse is not None:
+            rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -7597,6 +7666,9 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
+        conf_stats = stereosplat_conf_eval_stats(rendered_conf_fusion)
+        if conf_stats is not None:
+            evaluation_results_stat["Conf"] = conf_stats
         
 
         
@@ -7673,13 +7745,18 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo,D_gt_tensor=gt_depth_center_stereo)
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
+
+            save_stereo_conf_plots(
+                rendered_conf_fusion,
+                os.path.join(saved_folder_for_visualization, "rendered_conf"),
+            )
             
             
             # rendered videos
             saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
             os.makedirs(saved_videos_path,exist_ok=True)
             
-            preds, saved_video_name = self.forward_kitti360_videos(batch=batch,cfg=cfg,view_num=view_num,matching_nums=matching_nums)
+            preds, saved_video_name = self.forward_kitti360_videos(batch=batch,cfg=cfg,view_num=2,matching_nums=2)
             
             bs = preds["img"].shape[0]  
             pred_imgs = preds["img"] #(4,960,3,224,400)
@@ -9221,6 +9298,7 @@ class StereoSplat(BaseModule):
         rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_conf_stage1 = conf_from_render_pkg(render_pkg_fuse)
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
@@ -9232,6 +9310,9 @@ class StereoSplat(BaseModule):
         '''Do the visualization and the evaluation here'''
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_conf_stage1_fusion = None
+        if rendered_conf_stage1 is not None:
+            rendered_conf_stage1_fusion = interleave_left_right_depth(rendered_conf_stage1)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
 
@@ -9510,6 +9591,7 @@ class StereoSplat(BaseModule):
         rendered_alpha_fuse = rendered_results_fuse['alpha']
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
+        rendered_conf_fuse = conf_from_render_pkg(render_pkg_fuse)
         rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
 
@@ -9518,6 +9600,9 @@ class StereoSplat(BaseModule):
 
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_conf_fusion = None
+        if rendered_conf_fuse is not None:
+            rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -9648,6 +9733,12 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
+        conf_stats_stage2 = stereosplat_conf_eval_stats(rendered_conf_fusion)
+        if conf_stats_stage2 is not None:
+            evaluation_results_stat["Conf"] = conf_stats_stage2
+        conf_stats_stage1 = stereosplat_conf_eval_stats(rendered_conf_stage1_fusion)
+        if conf_stats_stage1 is not None:
+            evaluation_results_stat["Conf_stage1"] = conf_stats_stage1
 
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
@@ -9721,7 +9812,15 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo,D_gt_tensor=gt_depth_center_stereo)
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
-            
+
+            save_stereo_conf_plots(
+                rendered_conf_fusion,
+                os.path.join(saved_folder_for_visualization, "rendered_conf"),
+            )
+            save_stereo_conf_plots(
+                rendered_conf_stage1_fusion,
+                os.path.join(saved_folder_for_visualization, "rendered_conf_stage1"),
+            )
             
             # rendered videos
             saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')

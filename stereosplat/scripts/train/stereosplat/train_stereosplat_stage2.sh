@@ -13,9 +13,9 @@ configs_path="${REPO}/src/stereosplat/configs/stereosplat/input_invariant_stereo
 work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume/"
 output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_resume/"
 
-# Resume: "latest" picks newest checkpoint-* in work_dir; or set explicit path
-resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2/checkpoint-105000/"
-# resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2/checkpoint-105000"
+# Resume: "latest" -> checkpoint-235000 in stage2_resume; empty "" to train from scratch
+resume_from="latest"
+# resume_from="${work_dir}checkpoint-235000"
 
 # Optional overrides (leave empty to use cfg defaults)
 exp_name="stereosplat_kitti360_stage2_with_conf_and_difix3d"
