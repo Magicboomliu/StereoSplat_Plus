@@ -71,6 +71,8 @@ def _dataset_module_for_world_center(world_center: str | None) -> str:
         return "stereosplat.data.KITTI360_FirstLiDAR_Ref.dataloader"
     if world_center == "First_LiDAR_3_Uniform":
         return "stereosplat.data.KITTI360_FisrtLiDAR_Random.dataloader"
+    if world_center == "First_Stage2":
+        return "stereosplat.data.KITTI360_First_LiDAR_Random_Stage2.dataloader"
     return "stereosplat.data.KITTI360_CenterCam_Ref.dataloader"
 class Basic_Meter(object):
     def __init__(self,psnr,ssim,mae,mse):
