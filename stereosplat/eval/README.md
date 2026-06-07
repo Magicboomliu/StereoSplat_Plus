@@ -8,6 +8,9 @@
 
 所有评估逻辑集中在 `eval/` 目录；`validator/` 与部分旧 shell 仅为**兼容入口**，最终都会调用 `eval/run.py`。
 
+> **9 种标准推理 + Oracle 对照表（含流程、权重、模型函数、Shell）** → 见上级文档 **[../README.md#推理方式详解](../README.md#推理方式详解)**。  
+> 本文件侧重调用链实现、CLI 参数与排错。
+
 ---
 
 ## 目录
@@ -224,6 +227,8 @@ pretrained_diffix_model_path=".../model_130001.pkl"
 
 ## 5. 三种评估模式详解
 
+> 完整对照表（#1–#9 + 权重 / Difix / fusion / Shell）见 **[../README.md#完整对照表](../README.md#完整对照表9-种标准推理--shell)**。
+
 ### 5.1 Mode ①：stereosplat
 
 - **输入**：2 张 GT stereo view（first view pair）
@@ -232,6 +237,8 @@ pretrained_diffix_model_path=".../model_130001.pkl"
 - **典型用途**：基础 feed-forward 3DGS 质量基线
 
 ### 5.2 Mode ②：stereosplat_plus
+
+**whole 与 pixel_fusion whole 不是同一函数**（前者 progressive，后者 pose injection）。详见上级 README「易混淆点」。
 
 **whole（progressive）**
 
