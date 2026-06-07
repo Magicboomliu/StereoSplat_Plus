@@ -11,16 +11,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
-accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
+accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_2.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/stereosplat"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 
 STAGE2_MODEL_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume"
-pretrained_model_path="${STAGE2_MODEL_DIR}/latest"
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume/checkpoint-145000"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"

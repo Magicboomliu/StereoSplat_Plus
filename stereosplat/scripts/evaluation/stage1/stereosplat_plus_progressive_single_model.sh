@@ -14,7 +14,7 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage1/stereosplat_plus/no_difix3d"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage1/stereosplat_plus/progressvie3dgs_only/no_difix3d"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -52,9 +52,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
-accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_1.yaml"
+accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage1/stereosplat_plus/with_difix3d"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage1/stereosplat_plus/progressvie3dgs_only/with_difix3d"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -92,5 +92,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-run_without_difix3d
-#run_with_difix3d
+# run_without_difix3d
+run_with_difix3d

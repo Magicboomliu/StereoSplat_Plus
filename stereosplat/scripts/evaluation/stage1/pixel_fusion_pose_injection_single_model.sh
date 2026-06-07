@@ -14,7 +14,7 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage1/pixel_fusion/fusion_deactivate/with_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage1/stereosplat_plus/fusion/pixel-level-fusion/no_difix3d/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -62,7 +62,7 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_1.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage1/pixel_fusion/fusion_activate/with_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage1/stereosplat_plus/fusion/pixel-level-fusion/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -101,5 +101,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-run_without_conf_pixel_level_fusion
-#run_with_conf_pixel_level_fusion
+# run_without_conf_pixel_level_fusion
+run_with_conf_pixel_level_fusion

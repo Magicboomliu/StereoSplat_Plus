@@ -129,7 +129,7 @@ def load_state_dict_any(path: str, map_location: str = "cpu") -> dict:
                 "Loading .safetensors requires `safetensors`. "
                 "Install it or provide a .pt/.pth/.bin checkpoint."
             ) from e
-        state_dict = safe_load_file(p, map_location=map_location)
+        state_dict = safe_load_file(p, device=map_location)
     else:
         obj = torch.load(p, map_location=map_location)
         if isinstance(obj, dict) and isinstance(obj.get("state_dict"), dict):
