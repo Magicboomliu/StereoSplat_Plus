@@ -22,7 +22,7 @@ from pathlib import Path
 # Runnable from any cwd:
 # - `stereosplat/tools/` (helper module) under stereosplat root
 # - `stereosplat/difix3d/src/` (so we can `import difix3d` without pip-installing it)
-_STEREOSPLAT_ROOT = Path(__file__).resolve().parents[2]  # .../stereosplat
+_STEREOSPLAT_ROOT = Path(__file__).resolve().parents[3]  # .../stereosplat (two-stage/ is one level deeper)
 _DIFIX3D_SRC = _STEREOSPLAT_ROOT / "difix3d" / "src"
 sys.path.insert(0, str(_STEREOSPLAT_ROOT))
 if _DIFIX3D_SRC.is_dir():
@@ -311,6 +311,9 @@ def main(args):
     }
 
     current_pseduo_ratio_index = args.pseudo_ratio
+    evaluate_results_average_dict_conf = {}
+    evaluate_results_average_dict_conf_2view = {}
+    evaluate_results_average_dict_conf_pseudo_multiview = {}
 
 
     
@@ -344,7 +347,9 @@ def main(args):
                                             use_diffix3d=args.use_diffix3d,
                                             diffix3d_network=pretrained_diffix_model,
                                             use_ref=args.use_ref,
-                                            vis=args.output_vis)
+                                            vis=args.output_vis,
+                                            pixel_level_conf_fusion=args.conf_pixel_level_fusion,
+                                        )
                 
     
             current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
@@ -354,19 +359,52 @@ def main(args):
                 evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
             for key in current_evaluate_results_dict_depth.keys():
                 evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
+            if "Conf" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf"].items():
+                    evaluate_results_average_dict_conf[key] = (
+                        evaluate_results_average_dict_conf.get(key, 0.0) + val
+                    )
+            if "Conf_2view" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf_2view"].items():
+                    evaluate_results_average_dict_conf_2view[key] = (
+                        evaluate_results_average_dict_conf_2view.get(key, 0.0) + val
+                    )
+            if "Conf_pseudo_multiview" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf_pseudo_multiview"].items():
+                    evaluate_results_average_dict_conf_pseudo_multiview[key] = (
+                        evaluate_results_average_dict_conf_pseudo_multiview.get(key, 0.0) + val
+                    )
             batch_idx += 1
            
+        if batch_idx == 0:
+            raise RuntimeError("Validation dataloader is empty; cannot compute metrics.")
+
         for key in evaluate_results_average_dict_rgb.keys():
             evaluate_results_average_dict_rgb[key] /= batch_idx
         for key in evaluate_results_average_dict_depth.keys():
             evaluate_results_average_dict_depth[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf.keys():
+            evaluate_results_average_dict_conf[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf_2view.keys():
+            evaluate_results_average_dict_conf_2view[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf_pseudo_multiview.keys():
+            evaluate_results_average_dict_conf_pseudo_multiview[key] /= batch_idx
             
         results_dict = {
             "rgb": evaluate_results_average_dict_rgb,
             "depth": evaluate_results_average_dict_depth,
         }
+        if evaluate_results_average_dict_conf:
+            if args.conf_pixel_level_fusion:
+                results_dict["conf_fused"] = evaluate_results_average_dict_conf
+            else:
+                results_dict["conf"] = evaluate_results_average_dict_conf
+        if evaluate_results_average_dict_conf_2view:
+            results_dict["conf_2view"] = evaluate_results_average_dict_conf_2view
+        if evaluate_results_average_dict_conf_pseudo_multiview:
+            results_dict["conf_pseudo_multiview"] = evaluate_results_average_dict_conf_pseudo_multiview
         
-        if not args.output_vis:
+        if not args.output_vis and accelerator.is_main_process:
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
         if tracker_enabled and accelerator.is_main_process:
@@ -375,6 +413,13 @@ def main(args):
                 wandb_logs[f"val/rgb/{k}"] = float(v)
             for k, v in evaluate_results_average_dict_depth.items():
                 wandb_logs[f"val/depth/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf.items():
+                conf_key = "val/conf_fused" if args.conf_pixel_level_fusion else "val/conf"
+                wandb_logs[f"{conf_key}/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf_2view.items():
+                wandb_logs[f"val/conf_2view/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf_pseudo_multiview.items():
+                wandb_logs[f"val/conf_pseudo_multiview/{k}"] = float(v)
             accelerator.log(wandb_logs, step=0)
 
 
@@ -409,6 +454,13 @@ if __name__ == '__main__':
     parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
     parser.add_argument('--deterministic_vae_encode', action='store_true', default=False)
     parser.add_argument('--deterministic_scheduler_step', action='store_true', default=False)
+
+    parser.add_argument(
+        "--conf_pixel_level_fusion",
+        action="store_true",
+        default=False,
+        help="Fuse 2-view vs pseudo-multiview novel-view renders per-pixel by confidence.",
+    )
 
     parser.add_argument(
         "--output_vis",

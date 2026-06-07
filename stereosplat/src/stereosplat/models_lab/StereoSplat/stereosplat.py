@@ -385,6 +385,29 @@ def stereosplat_conf_eval_stats(rendered_conf_fusion):
     }
 
 
+def fuse_renders_by_conf_pixelwise(rgb_a, rgb_b, depth_a, depth_b, conf_a, conf_b):
+    """Per-pixel fusion: pick render B where conf_b >= conf_a, else render A.
+
+    Args:
+        rgb_a/rgb_b: [B, V, 3, H, W]
+        depth_a/depth_b: [B, V, H, W]
+        conf_a/conf_b: [B, V, H, W] or None
+    """
+    if conf_a is None and conf_b is None:
+        return rgb_b, depth_b, None
+    if conf_a is None:
+        return rgb_b, depth_b, conf_b
+    if conf_b is None:
+        return rgb_a, depth_a, conf_a
+
+    pick_b = conf_b >= conf_a  # [B, V, H, W]; ties prefer stage2 (B)
+    pick_b_rgb = pick_b.unsqueeze(2)
+    fused_rgb = torch.where(pick_b_rgb, rgb_b, rgb_a)
+    fused_depth = torch.where(pick_b, depth_b, depth_a)
+    fused_conf = torch.where(pick_b, conf_b, conf_a)
+    return fused_rgb, fused_depth, fused_conf
+
+
 def save_stereo_conf_plots(rendered_conf_fusion, conf_folder_path):
     """Save first/center/last stereo confidence colormaps (same as validation_on_the_forward_views)."""
     if rendered_conf_fusion is None:
@@ -9239,6 +9262,36 @@ class StereoSplat(BaseModule):
         return raw_results_stat, enhanced_results_stat, saved_images_dict
 
 
+    def stereosplatplus_pose_view_selection_injection_two_seperated_models_pixel_level(
+                                        self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views=2,
+                                        pseudo_ratio_index=[],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        frozen_stage_1_model=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        """Two-stage separated inference with per-pixel conf fusion of stage1 vs stage2 renders."""
+        return self.stereosplatplus_pose_view_selection_injection_two_seperated_models(
+            batch,
+            val_result_savedir,
+            bin_token_list,
+            start_images_views=start_images_views,
+            pseudo_ratio_index=pseudo_ratio_index,
+            use_diffix3d=use_diffix3d,
+            diffix3d_network=diffix3d_network,
+            frozen_stage_1_model=frozen_stage_1_model,
+            use_ref=use_ref,
+            cfg=cfg,
+            vis=vis,
+            pixel_level_conf_fusion=True,
+        )
+
     def stereosplatplus_pose_view_selection_injection_two_seperated_models(self,
                                         batch,
                                         val_result_savedir,
@@ -9251,6 +9304,7 @@ class StereoSplat(BaseModule):
                                         use_ref=False,
                                         cfg=None,
                                         vis=False,
+                                        pixel_level_conf_fusion=False,
                                         ):
 
         
@@ -9271,7 +9325,7 @@ class StereoSplat(BaseModule):
             img =input_batch_dict["imgs"] #[B,6,3,H,W]
             height,width = img.shape[-2:]
             bs = img.shape[0]   
-            gaussians_all = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
+            gaussians_all_stage1 = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
         
         
         #  rendere all the images/ intrinsics and extrinsics
@@ -9284,7 +9338,7 @@ class StereoSplat(BaseModule):
         
 
         render_pkg_fuse = self.renderer.render(
-            gaussians=gaussians_all,
+            gaussians=gaussians_all_stage1,
             c2w=render_c2w,
             fovx=render_fovxs,
             fovy=render_fovys,
@@ -9299,6 +9353,7 @@ class StereoSplat(BaseModule):
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
         rendered_conf_stage1 = conf_from_render_pkg(render_pkg_fuse)
+        rendered_conf_stage1_pseudo = rendered_conf_stage1
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
@@ -9567,8 +9622,8 @@ class StereoSplat(BaseModule):
 
         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
         gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
-        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
-        bs = gaussians_all.shape[0]
+        gaussians_all_stage2 = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all_stage2.shape[0]
 
         render_c2w = output_batch_dict["output_c2ws"]
         intrinsics = input_batch_dict['intrinsics'].clone()
@@ -9576,8 +9631,8 @@ class StereoSplat(BaseModule):
         render_fovxs = output_batch_dict["output_fovxs"]
         render_fovys = output_batch_dict["output_fovys"]
 
-        render_pkg_fuse = self.renderer.render(
-            gaussians=gaussians_all,
+        render_pkg_stage2 = self.renderer.render(
+            gaussians=gaussians_all_stage2,
             c2w=render_c2w,
             fovx=render_fovxs,
             fovy=render_fovys,
@@ -9585,15 +9640,39 @@ class StereoSplat(BaseModule):
             rays_d=None
         )
 
-        rendered_results_fuse = render_pkg_fuse
-        rendered_color_fuse = rendered_results_fuse['image']
-        rendered_depth_fuse = rendered_results_fuse['depth']
-        rendered_alpha_fuse = rendered_results_fuse['alpha']
-        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
-        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
-        rendered_conf_fuse = conf_from_render_pkg(render_pkg_fuse)
-        rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
-        rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
+        rendered_color_stage2 = render_pkg_stage2['image']
+        rendered_depth_stage2 = render_pkg_stage2['depth'].squeeze(2)
+        rendered_conf_stage2 = conf_from_render_pkg(render_pkg_stage2)
+        rendered_color_stage2 = torch.clamp(rendered_color_stage2, min=0, max=1.0)
+        rendered_depth_stage2 = torch.clamp(rendered_depth_stage2, min=0, max=150)
+
+        rendered_conf_stage1_final = None
+        if pixel_level_conf_fusion:
+            render_pkg_stage1_final = self.renderer.render(
+                gaussians=gaussians_all_stage1,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+            rendered_color_stage1_final = torch.clamp(
+                render_pkg_stage1_final['image'], min=0, max=1.0)
+            rendered_depth_stage1_final = torch.clamp(
+                render_pkg_stage1_final['depth'].squeeze(2), min=0, max=150)
+            rendered_conf_stage1_final = conf_from_render_pkg(render_pkg_stage1_final)
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = fuse_renders_by_conf_pixelwise(
+                rendered_color_stage1_final,
+                rendered_color_stage2,
+                rendered_depth_stage1_final,
+                rendered_depth_stage2,
+                rendered_conf_stage1_final,
+                rendered_conf_stage2,
+            )
+        else:
+            rendered_color_fuse = rendered_color_stage2
+            rendered_depth_fuse = rendered_depth_stage2
+            rendered_conf_fuse = rendered_conf_stage2
 
         output_rgb = output_batch_dict['output_imgs']
         sparse_depth_gt = output_batch_dict['output_sparse_depth']
@@ -9603,6 +9682,13 @@ class StereoSplat(BaseModule):
         rendered_conf_fusion = None
         if rendered_conf_fuse is not None:
             rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
+        rendered_conf_stage2_fusion = None
+        if rendered_conf_stage2 is not None:
+            rendered_conf_stage2_fusion = interleave_left_right_depth(rendered_conf_stage2)
+        rendered_conf_stage1_final_fusion = None
+        if rendered_conf_stage1_final is not None:
+            rendered_conf_stage1_final_fusion = interleave_left_right_depth(
+                rendered_conf_stage1_final)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -9733,12 +9819,24 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
-        conf_stats_stage2 = stereosplat_conf_eval_stats(rendered_conf_fusion)
-        if conf_stats_stage2 is not None:
-            evaluation_results_stat["Conf"] = conf_stats_stage2
-        conf_stats_stage1 = stereosplat_conf_eval_stats(rendered_conf_stage1_fusion)
-        if conf_stats_stage1 is not None:
-            evaluation_results_stat["Conf_stage1"] = conf_stats_stage1
+        if pixel_level_conf_fusion:
+            conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
+            if conf_stats_fused is not None:
+                evaluation_results_stat["Conf"] = conf_stats_fused
+            conf_stats_stage2 = stereosplat_conf_eval_stats(rendered_conf_stage2_fusion)
+            if conf_stats_stage2 is not None:
+                evaluation_results_stat["Conf_stage2"] = conf_stats_stage2
+            conf_stats_stage1_final = stereosplat_conf_eval_stats(
+                rendered_conf_stage1_final_fusion)
+            if conf_stats_stage1_final is not None:
+                evaluation_results_stat["Conf_stage1"] = conf_stats_stage1_final
+        else:
+            conf_stats_stage2 = stereosplat_conf_eval_stats(rendered_conf_fusion)
+            if conf_stats_stage2 is not None:
+                evaluation_results_stat["Conf"] = conf_stats_stage2
+            conf_stats_stage1 = stereosplat_conf_eval_stats(rendered_conf_stage1_fusion)
+            if conf_stats_stage1 is not None:
+                evaluation_results_stat["Conf_stage1"] = conf_stats_stage1
 
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
@@ -9813,14 +9911,25 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
 
+            conf_vis_folder = "rendered_conf_fused" if pixel_level_conf_fusion else "rendered_conf"
             save_stereo_conf_plots(
                 rendered_conf_fusion,
-                os.path.join(saved_folder_for_visualization, "rendered_conf"),
+                os.path.join(saved_folder_for_visualization, conf_vis_folder),
             )
-            save_stereo_conf_plots(
-                rendered_conf_stage1_fusion,
-                os.path.join(saved_folder_for_visualization, "rendered_conf_stage1"),
-            )
+            if pixel_level_conf_fusion:
+                save_stereo_conf_plots(
+                    rendered_conf_stage2_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_stage2"),
+                )
+                save_stereo_conf_plots(
+                    rendered_conf_stage1_final_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_stage1"),
+                )
+            else:
+                save_stereo_conf_plots(
+                    rendered_conf_stage1_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_stage1"),
+                )
             
             # rendered videos
             saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')
@@ -9861,6 +9970,34 @@ class StereoSplat(BaseModule):
         
     
     # FIXME： Please Delete in the future
+    def stereosplatplus_difix3d_pose_view_selection_injection_whole_model_pixel_level(
+                                        self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views=2,
+                                        pseudo_ratio_index=[],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        """Unified single-model inference with per-pixel conf fusion of 2-view vs pseudo multiview renders."""
+        return self.stereosplatplus_difix3d_pose_view_selection_injection(
+            batch,
+            val_result_savedir,
+            bin_token_list,
+            start_images_views=start_images_views,
+            pseudo_ratio_index=pseudo_ratio_index,
+            use_diffix3d=use_diffix3d,
+            diffix3d_network=diffix3d_network,
+            use_ref=use_ref,
+            cfg=cfg,
+            vis=vis,
+            pixel_level_conf_fusion=True,
+        )
+
     def stereosplatplus_difix3d_pose_view_selection_injection(self,
                                         batch,
                                         val_result_savedir,
@@ -9872,6 +10009,7 @@ class StereoSplat(BaseModule):
                                         use_ref=False,
                                         cfg=None,
                                         vis=False,
+                                        pixel_level_conf_fusion=False,
                                         ):
         
         bin_token_name = bin_token_list[0][:-4]
@@ -9927,8 +10065,8 @@ class StereoSplat(BaseModule):
         gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
         
         
-        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
-        bs = gaussians_all.shape[0] # batch size is 2
+        gaussians_all_2view = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all_2view.shape[0] # batch size is 2
         
         #  rendere all the images/ intrinsics and extrinsics
         render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
@@ -9940,7 +10078,7 @@ class StereoSplat(BaseModule):
         
 
         render_pkg_fuse = self.renderer.render(
-            gaussians=gaussians_all,
+            gaussians=gaussians_all_2view,
             c2w=render_c2w,
             fovx=render_fovxs,
             fovy=render_fovys,
@@ -10224,8 +10362,8 @@ class StereoSplat(BaseModule):
 
         gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
         gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
-        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
-        bs = gaussians_all.shape[0]
+        gaussians_all_pseudo_multiview = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all_pseudo_multiview.shape[0]
 
         render_c2w = output_batch_dict["output_c2ws"]
         intrinsics = input_batch_dict['intrinsics'].clone()
@@ -10233,8 +10371,8 @@ class StereoSplat(BaseModule):
         render_fovxs = output_batch_dict["output_fovxs"]
         render_fovys = output_batch_dict["output_fovys"]
 
-        render_pkg_fuse = self.renderer.render(
-            gaussians=gaussians_all,
+        render_pkg_pseudo_multiview = self.renderer.render(
+            gaussians=gaussians_all_pseudo_multiview,
             c2w=render_c2w,
             fovx=render_fovxs,
             fovy=render_fovys,
@@ -10242,20 +10380,56 @@ class StereoSplat(BaseModule):
             rays_d=None
         )
 
-        rendered_results_fuse = render_pkg_fuse
-        rendered_color_fuse = rendered_results_fuse['image']
-        rendered_depth_fuse = rendered_results_fuse['depth']
-        rendered_alpha_fuse = rendered_results_fuse['alpha']
-        rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
-        rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
-        rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
-        rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
+        rendered_color_pseudo_multiview = render_pkg_pseudo_multiview['image']
+        rendered_depth_pseudo_multiview = render_pkg_pseudo_multiview['depth'].squeeze(2)
+        rendered_conf_pseudo_multiview = conf_from_render_pkg(render_pkg_pseudo_multiview)
+        rendered_color_pseudo_multiview = torch.clamp(rendered_color_pseudo_multiview, min=0, max=1.0)
+        rendered_depth_pseudo_multiview = torch.clamp(rendered_depth_pseudo_multiview, min=0, max=150)
+
+        rendered_conf_2view_final = None
+        if pixel_level_conf_fusion:
+            render_pkg_2view_final = self.renderer.render(
+                gaussians=gaussians_all_2view,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None
+            )
+            rendered_color_2view_final = torch.clamp(
+                render_pkg_2view_final['image'], min=0, max=1.0)
+            rendered_depth_2view_final = torch.clamp(
+                render_pkg_2view_final['depth'].squeeze(2), min=0, max=150)
+            rendered_conf_2view_final = conf_from_render_pkg(render_pkg_2view_final)
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = fuse_renders_by_conf_pixelwise(
+                rendered_color_2view_final,
+                rendered_color_pseudo_multiview,
+                rendered_depth_2view_final,
+                rendered_depth_pseudo_multiview,
+                rendered_conf_2view_final,
+                rendered_conf_pseudo_multiview,
+            )
+        else:
+            rendered_color_fuse = rendered_color_pseudo_multiview
+            rendered_depth_fuse = rendered_depth_pseudo_multiview
+            rendered_conf_fuse = rendered_conf_pseudo_multiview
 
         output_rgb = output_batch_dict['output_imgs']
         sparse_depth_gt = output_batch_dict['output_sparse_depth']
 
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
+        rendered_conf_fusion = None
+        if rendered_conf_fuse is not None:
+            rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
+        rendered_conf_pseudo_multiview_fusion = None
+        if rendered_conf_pseudo_multiview is not None:
+            rendered_conf_pseudo_multiview_fusion = interleave_left_right_depth(
+                rendered_conf_pseudo_multiview)
+        rendered_conf_2view_final_fusion = None
+        if rendered_conf_2view_final is not None:
+            rendered_conf_2view_final_fusion = interleave_left_right_depth(
+                rendered_conf_2view_final)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -10393,6 +10567,17 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
+        if pixel_level_conf_fusion:
+            conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
+            if conf_stats_fused is not None:
+                evaluation_results_stat["Conf"] = conf_stats_fused
+            conf_stats_pseudo_multiview = stereosplat_conf_eval_stats(
+                rendered_conf_pseudo_multiview_fusion)
+            if conf_stats_pseudo_multiview is not None:
+                evaluation_results_stat["Conf_pseudo_multiview"] = conf_stats_pseudo_multiview
+            conf_stats_2view = stereosplat_conf_eval_stats(rendered_conf_2view_final_fusion)
+            if conf_stats_2view is not None:
+                evaluation_results_stat["Conf_2view"] = conf_stats_2view
 
         if vis:
             saved_folder_for_visualization = os.path.join(val_result_savedir,bin_token_name)
@@ -10466,7 +10651,20 @@ class StereoSplat(BaseModule):
             disp_error_img_center_stereo = disp_error_img(D_est_tensor=rendered_depth_center_stereo,D_gt_tensor=gt_depth_center_stereo)
             disp_error_img_center_stereo_vis = (disp_error_img_center_stereo.squeeze(0).permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
             skimage.io.imsave(os.path.join(Rendered_Depth_Error_Folder_Path,'center_stereo_depth_error.png'),disp_error_img_center_stereo_vis)
-            
+
+            if pixel_level_conf_fusion:
+                save_stereo_conf_plots(
+                    rendered_conf_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_fused"),
+                )
+                save_stereo_conf_plots(
+                    rendered_conf_pseudo_multiview_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_pseudo_multiview"),
+                )
+                save_stereo_conf_plots(
+                    rendered_conf_2view_final_fusion,
+                    os.path.join(saved_folder_for_visualization, "rendered_conf_2view"),
+                )
             
             # rendered videos
             saved_videos_path = os.path.join(saved_folder_for_visualization,'videos')

@@ -22,7 +22,7 @@ from pathlib import Path
 # Runnable from any cwd:
 # - `stereosplat/tools/` (helper module) under stereosplat root
 # - `stereosplat/difix3d/src/` (so we can `import difix3d` without pip-installing it)
-_STEREOSPLAT_ROOT = Path(__file__).resolve().parents[2]  # .../stereosplat
+_STEREOSPLAT_ROOT = Path(__file__).resolve().parents[3]  # .../stereosplat (two-stage/ is one level deeper)
 _DIFIX3D_SRC = _STEREOSPLAT_ROOT / "difix3d" / "src"
 sys.path.insert(0, str(_STEREOSPLAT_ROOT))
 if _DIFIX3D_SRC.is_dir():
@@ -41,6 +41,70 @@ from stereosplat.models_lab.StereoSplat.stereosplat import StereoSplat
 from difix3d import DifixRef
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
+def _strip_prefix_if_present(state_dict: dict, prefix: str) -> dict:
+    if not state_dict:
+        return state_dict
+    keys = list(state_dict.keys())
+    if all(k.startswith(prefix) for k in keys):
+        return {k[len(prefix):]: v for k, v in state_dict.items()}
+    return state_dict
+
+def _load_state_dict_any(path: str, map_location: str = "cpu") -> dict:
+    if path is None or str(path).strip() == "":
+        raise ValueError("args.stage_1_model_path is empty.")
+
+    p = os.path.expanduser(path)
+    if osp.isdir(p):
+        candidates = [
+            "model.safetensors",
+            "pytorch_model.bin",
+            "pytorch_model.safetensors",
+            "model.bin",
+            "model.pt",
+            "model.pth",
+        ]
+        chosen = None
+        for c in candidates:
+            cp = osp.join(p, c)
+            if osp.exists(cp):
+                chosen = cp
+                break
+        if chosen is None:
+            raise FileNotFoundError(
+                f"Could not find a model file in directory: {p}. "
+                f"Tried: {', '.join(candidates)}"
+            )
+        p = chosen
+
+    if not osp.exists(p):
+        raise FileNotFoundError(f"stage_1_model_path not found: {p}")
+
+    if p.endswith(".safetensors"):
+        try:
+            from safetensors.torch import load_file as _safe_load_file
+        except Exception as e:
+            raise ImportError(
+                "Loading .safetensors requires `safetensors`. "
+                "Install it or provide a .pt/.pth/.bin checkpoint."
+            ) from e
+        state_dict = _safe_load_file(p, device=map_location)
+    else:
+        obj = torch.load(p, map_location=map_location)
+        if isinstance(obj, dict) and isinstance(obj.get("state_dict"), dict):
+            state_dict = obj["state_dict"]
+        elif isinstance(obj, dict) and isinstance(obj.get("model"), dict):
+            state_dict = obj["model"]
+        elif isinstance(obj, dict):
+            state_dict = obj
+        else:
+            raise ValueError(f"Unsupported checkpoint format at: {p} (type={type(obj)})")
+
+    # Common wrappers from DDP / accelerate / custom save
+    state_dict = _strip_prefix_if_present(state_dict, "module.")
+    state_dict = _strip_prefix_if_present(state_dict, "model.")
+    return state_dict
+
 
 def _maybe_init_wandb(accelerator: Accelerator, args, cfg) -> bool:
     tracker_enabled = bool(getattr(args, "use_wandb", False))
@@ -229,6 +293,35 @@ def main(args):
     )
 
 
+
+    frozen_stage_1_model = StereoSplat(backbone=cfg.model.backbone,
+                                    neck=cfg.model.neck,
+                                    costvolume_gs=cfg.model.costvolume_gs,
+                                    volume_gs=cfg.model.volume_gs,
+                                    losses_params=cfg.model.losses_params,
+                                    camera_args=cfg.camera_args,
+                                    dataset_params=cfg.dataset_params,
+                                    use_checkpoint=cfg.use_checkpoint)
+
+    if args.stage_1_model_path is None:
+        raise ValueError(
+            "You must pass `--stage_1_model_path` (checkpoint dir or weights file) "
+            "to load the frozen stage-1 model."
+        )
+    accelerator.print(f"[Stage1] loading frozen model from: {args.stage_1_model_path}")
+    sd_stage1 = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
+    incompatible = frozen_stage_1_model.load_state_dict(sd_stage1, strict=True)
+    accelerator.print(
+        f"[Stage1] loaded. missing={len(incompatible.missing_keys)}, "
+        f"unexpected={len(incompatible.unexpected_keys)}"
+    )
+    # Freeze stage-1 model (used only for pseudo view creation)
+    frozen_stage_1_model.eval()
+    for p in frozen_stage_1_model.parameters():
+        p.requires_grad_(False)
+    
+    print("=====================================================================================")
+    
     # Define the Model Here
     my_model = StereoSplat(backbone=cfg.model.backbone,
                            neck=cfg.model.neck,
@@ -239,23 +332,31 @@ def main(args):
                            dataset_params=cfg.dataset_params,
                            use_checkpoint=cfg.use_checkpoint)
     
-    # loading the pretrained diffix3d models.
-    assert os.path.exists(args.pretrained_diffix_model_path), "The pretrained diffix3d model path does not exist!"
-
-    pretrained_diffix_model = DifixRef(
-        pretrained_name="nvidia/difix_ref",
-        pretrained_path=args.pretrained_diffix_model_path,
-        timestep=args.timestep,
-        mv_unet=args.use_ref,
-        deterministic_vae_encode=args.deterministic_vae_encode,
-        deterministic_scheduler_step=args.deterministic_scheduler_step,
-    )
-    
-    pretrained_diffix_model.set_eval()
+    # Difix3D is only required when --use_diffix3d is set.
+    pretrained_diffix_model = None
+    if args.use_diffix3d:
+        if not args.pretrained_diffix_model_path or not os.path.exists(
+            args.pretrained_diffix_model_path
+        ):
+            raise FileNotFoundError(
+                "The pretrained Difix3D model path does not exist: "
+                f"{args.pretrained_diffix_model_path}"
+            )
+        pretrained_diffix_model = DifixRef(
+            pretrained_name="nvidia/difix_ref",
+            pretrained_path=args.pretrained_diffix_model_path,
+            timestep=args.timestep,
+            mv_unet=args.use_ref,
+            deterministic_vae_encode=args.deterministic_vae_encode,
+            deterministic_scheduler_step=args.deterministic_scheduler_step,
+        )
+        pretrained_diffix_model.set_eval()
 
     my_model, val_dataloader = accelerator.prepare(
         my_model, val_dataloader
     )
+
+    frozen_stage_1_model.to(accelerator.device)
 
     # Potentially load in the weights and states from a previous save
     if args.pretrained_model_path:
@@ -268,14 +369,22 @@ def main(args):
         print('Successfully loaded from {}'.format(path))
     else:
         print("Can't find checkpoint. Randomly initialize model parameters anyway.")
-        
-    pretrained_diffix_model.to(accelerator.device)
 
-    print("========================================")
+    if pretrained_diffix_model is not None:
+        pretrained_diffix_model.to(accelerator.device)
+
+    print("=====================================================================================")
     print("Successfully loading the pretrained StereoSplat from {}".format(args.pretrained_model_path))
 
-    print("========================================")
-    print("Successfully loading the pretrained Diffix3d model from {}".format(args.pretrained_diffix_model_path))
+    if pretrained_diffix_model is not None:
+        print("=====================================================================================")
+        print(
+            "Successfully loading the pretrained Diffix3d model from {}".format(
+                args.pretrained_diffix_model_path
+            )
+        )
+
+
 
     
     # performance metrics for the rendered RGBs
@@ -311,9 +420,10 @@ def main(args):
     }
 
     current_pseduo_ratio_index = args.pseudo_ratio
+    evaluate_results_average_dict_conf = {}
+    evaluate_results_average_dict_conf_stage1 = {}
+    evaluate_results_average_dict_conf_stage2 = {}
 
-
-    
     with torch.no_grad():
         my_model.eval()
         batch_idx = 0
@@ -333,8 +443,9 @@ def main(args):
                                             diffix3d_network=pretrained_diffix_model,
                                             use_ref=args.use_ref,
                                             vis=args.output_vis)
+            
             else:
-                evaluation_results_stat = my_model.stereosplatplus_difix3d_pose_view_selection_injection(
+                evaluation_results_stat = my_model.stereosplatplus_pose_view_selection_injection_two_seperated_models(
                                             batch,
                                             args.output_folder,
                                             bin_token_list,
@@ -343,8 +454,11 @@ def main(args):
                                             start_images_views=2,
                                             use_diffix3d=args.use_diffix3d,
                                             diffix3d_network=pretrained_diffix_model,
+                                            frozen_stage_1_model=frozen_stage_1_model,
                                             use_ref=args.use_ref,
-                                            vis=args.output_vis)
+                                            vis=args.output_vis,
+                                            pixel_level_conf_fusion=args.conf_pixel_level_fusion,
+                                        )
                 
     
             current_evaluate_results_dict_rgb = evaluation_results_stat["RGB"]
@@ -354,19 +468,52 @@ def main(args):
                 evaluate_results_average_dict_rgb[key] += current_evaluate_results_dict_rgb[key]
             for key in current_evaluate_results_dict_depth.keys():
                 evaluate_results_average_dict_depth[key] += current_evaluate_results_dict_depth[key]
+            if "Conf" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf"].items():
+                    evaluate_results_average_dict_conf[key] = (
+                        evaluate_results_average_dict_conf.get(key, 0.0) + val
+                    )
+            if "Conf_stage1" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf_stage1"].items():
+                    evaluate_results_average_dict_conf_stage1[key] = (
+                        evaluate_results_average_dict_conf_stage1.get(key, 0.0) + val
+                    )
+            if "Conf_stage2" in evaluation_results_stat:
+                for key, val in evaluation_results_stat["Conf_stage2"].items():
+                    evaluate_results_average_dict_conf_stage2[key] = (
+                        evaluate_results_average_dict_conf_stage2.get(key, 0.0) + val
+                    )
             batch_idx += 1
-           
+
+        if batch_idx == 0:
+            raise RuntimeError("Validation dataloader is empty; cannot compute metrics.")
+
         for key in evaluate_results_average_dict_rgb.keys():
             evaluate_results_average_dict_rgb[key] /= batch_idx
         for key in evaluate_results_average_dict_depth.keys():
             evaluate_results_average_dict_depth[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf.keys():
+            evaluate_results_average_dict_conf[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf_stage1.keys():
+            evaluate_results_average_dict_conf_stage1[key] /= batch_idx
+        for key in evaluate_results_average_dict_conf_stage2.keys():
+            evaluate_results_average_dict_conf_stage2[key] /= batch_idx
             
         results_dict = {
             "rgb": evaluate_results_average_dict_rgb,
             "depth": evaluate_results_average_dict_depth,
         }
+        if evaluate_results_average_dict_conf:
+            if args.conf_pixel_level_fusion:
+                results_dict["conf_fused"] = evaluate_results_average_dict_conf
+            else:
+                results_dict["conf"] = evaluate_results_average_dict_conf
+        if evaluate_results_average_dict_conf_stage1:
+            results_dict["conf_stage1"] = evaluate_results_average_dict_conf_stage1
+        if evaluate_results_average_dict_conf_stage2:
+            results_dict["conf_stage2"] = evaluate_results_average_dict_conf_stage2
         
-        if not args.output_vis:
+        if not args.output_vis and accelerator.is_main_process:
             saved_into_json(data_dict=results_dict,
                                 path=os.path.join(args.output_folder,"metric.json"))
         if tracker_enabled and accelerator.is_main_process:
@@ -375,6 +522,13 @@ def main(args):
                 wandb_logs[f"val/rgb/{k}"] = float(v)
             for k, v in evaluate_results_average_dict_depth.items():
                 wandb_logs[f"val/depth/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf.items():
+                conf_key = "val/conf_fused" if args.conf_pixel_level_fusion else "val/conf"
+                wandb_logs[f"{conf_key}/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf_stage1.items():
+                wandb_logs[f"val/conf_stage1/{k}"] = float(v)
+            for k, v in evaluate_results_average_dict_conf_stage2.items():
+                wandb_logs[f"val/conf_stage2/{k}"] = float(v)
             accelerator.log(wandb_logs, step=0)
 
 
@@ -389,7 +543,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--config_path')
     parser.add_argument('--output_folder', type=str)
+
+
+    # use the stage 1 
+    parser.add_argument('--stage_1_model_path', type=str, default=None)
+    # use the stage 2
     parser.add_argument('--pretrained_model_path', type=str, default='')
+
+    
     parser.add_argument('--val_filelist', type=str, default='')
     parser.add_argument('--demo_filelist', type=str, default='')
     
@@ -409,6 +570,13 @@ if __name__ == '__main__':
     parser.add_argument('--use_diffix3d_postprocessing', action='store_true', default=False)
     parser.add_argument('--deterministic_vae_encode', action='store_true', default=False)
     parser.add_argument('--deterministic_scheduler_step', action='store_true', default=False)
+
+    parser.add_argument(
+        "--conf_pixel_level_fusion",
+        action="store_true",
+        default=False,
+        help="Fuse Stage1 vs Stage2 novel-view renders per-pixel by confidence.",
+    )
 
     parser.add_argument(
         "--output_vis",
