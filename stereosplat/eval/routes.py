@@ -6,7 +6,7 @@ Canonical model methods (see stereosplat.py):
   stereosplat_plus         separated   -> infer_stereosplat_plus_frozen_stage1_two_models
   pixel_fusion             whole       -> infer_pixel_fusion_pose_injection_single_model
   pixel_fusion             separated   -> infer_pixel_fusion_pose_injection_frozen_stage1_two_models
-  (--use_gt_view)          any         -> infer_oracle_upper_bound_ablation
+  (--use_gt_view)          any         -> infer_oracle_upper_bound_ablation (GT pseudo + RGB/Depth/Conf)
 """
 from __future__ import annotations
 
@@ -170,6 +170,13 @@ def accumulate_batch_metrics(accum: dict, evaluation_results_stat: dict, args) -
         if src_key in evaluation_results_stat and dst_key in accum:
             for key, val in evaluation_results_stat[src_key].items():
                 accum[dst_key][key] = accum[dst_key].get(key, 0.0) + val
+
+    if "Oracle_reference" in evaluation_results_stat:
+        bucket = "oracle_reference"
+        if bucket not in accum:
+            accum[bucket] = {}
+        for key, val in evaluation_results_stat["Oracle_reference"].items():
+            accum[bucket][key] = accum[bucket].get(key, 0.0) + val
 
 
 def finalize_metrics(accum: dict, batch_idx: int) -> dict:

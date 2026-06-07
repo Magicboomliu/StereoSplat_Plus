@@ -193,7 +193,9 @@ def main(args=None, defaults: dict | None = None):
     if not args.config_path:
         args.config_path = config_path_for_stage(args.training_stage)
 
-    if not args.pseudo_ratio and args.eval_mode in ("stereosplat_plus", "pixel_fusion"):
+    if not args.pseudo_ratio and (
+        args.use_gt_view or args.eval_mode in ("stereosplat_plus", "pixel_fusion")
+    ):
         args.pseudo_ratio = [0.5, 1.0]
 
     validate_args(args)
@@ -283,9 +285,12 @@ def main(args=None, defaults: dict | None = None):
     if pretrained_diffix_model is not None:
         pretrained_diffix_model.to(accelerator.device)
 
-    accum = init_metric_accumulators(
-        args.eval_mode, args.architecture, args.conf_pixel_level_fusion
-    )
+    if args.use_gt_view:
+        accum = {"rgb": {}, "depth": {}, "oracle_reference": {}}
+    else:
+        accum = init_metric_accumulators(
+            args.eval_mode, args.architecture, args.conf_pixel_level_fusion
+        )
 
     with torch.no_grad():
         my_model.eval()

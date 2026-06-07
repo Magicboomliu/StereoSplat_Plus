@@ -227,7 +227,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 |----|------|
 | **CLI** | `--use_gt_view` |
 | **模型函数** | `infer_oracle_upper_bound_ablation()` |
-| **含义** | 用 GT view 作上界对照，与上述 ①②③ 正交，可叠加任意 mode 做消融 |
+| **含义** | **Stage1 推荐**。2-view→G_base；渲染 pseudo→reinject→G_plus；双路渲染后 **用 GT 逐像素选 RGB 误差更小者融合**（非 conf）；主表指标为 `G_fusion` |
 
 ---
 

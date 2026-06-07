@@ -134,7 +134,7 @@ flowchart TB
 | `stereosplat_plus` | separated | `infer_stereosplat_plus_frozen_stage1_two_models()` | `--pseudo_ratio`；双模型 S+，无 conf 融合 |
 | `pixel_fusion` | whole | `infer_pixel_fusion_pose_injection_single_model()` | `--pseudo_ratio`，可选 `--conf_pixel_level_fusion` |
 | `pixel_fusion` | separated | `infer_pixel_fusion_pose_injection_frozen_stage1_two_models()` | 双模型 + 可选 conf 融合 |
-| 任意（消融） | 任意 | `infer_oracle_upper_bound_ablation()` | `--use_gt_view` |
+| 任意（消融） | 任意 | `infer_oracle_upper_bound_ablation()` | `--use_gt_view`；Stage1；G_base+G_plus GT 融合 |
 
 **whole 模式下 S+ 与 pixel_fusion 的区别（重要）：**
 
