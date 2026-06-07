@@ -165,8 +165,7 @@ stereosplat/
 │       └── posed_input_view_injected_selected_sep_model_pixel_level.py
 │
 ├── scripts/evaluation/
-│   ├── _common.sh                           # 新 shell 共用 launch（调 eval/run.py）
-│   ├── stage1/                              # ★ Stage1 评估（推荐）
+│   ├── stage1/                              # ★ Stage1 评估（推荐，每个函数自包含）
 │   │   ├── stereosplat.sh
 │   │   ├── stereosplat_plus.sh
 │   │   └── pixel_fusion.sh
@@ -176,7 +175,7 @@ stereosplat/
 │   │   ├── stereosplat_plus_separated.sh
 │   │   ├── pixel_fusion_whole.sh
 │   │   └── pixel_fusion_separated.sh
-│   └── stereosplat_plus/conf_fusion/pixel_level/  # 旧路径（仍可用，内部已改调 eval/run.py）
+│   └── stereosplat_plus/conf_fusion/pixel_level/  # 旧路径（仍可用，自包含 flat 脚本）
 │
 ├── src/stereosplat/models_lab/StereoSplat/stereosplat.py   # 推理算法实现
 ├── trainer/                                 # 训练入口（eval 不经过这里）
@@ -205,7 +204,7 @@ stereosplat/
 | pixel_fusion | whole | 2-view vs pseudo-multiview 融合 | `stage2/pixel_fusion_whole.sh` | Stage2 | Difix3D |
 | pixel_fusion | separated | Stage1 render vs Stage2 render 融合 | `stage2/pixel_fusion_separated.sh` | Stage2 | `--stage_1_model_path` |
 
-### 4.3 默认 checkpoint 路径（在 `_common.sh` 中，改这里即可全局生效）
+### 4.3 默认 checkpoint 路径（在各 shell 函数内，按需改对应 `.sh`）
 
 ```bash
 STAGE1_MODEL_PATH=".../withconf/stage1/latest/checkpoint-145000"
@@ -385,12 +384,12 @@ pixi run -e cu118 accelerate launch \
 2. 各 bin 在 `output_folder/<bin_token>/` 下保存 RGB、depth、conf 等图
 3. **不写** `metric.json`（仅看图，不算全量指标）
 
-**方式 A：shell 里切到 vis 函数**（`scripts/evaluation/stage{1,2}/*.sh` 均已提供 `*_vis()`）：
+**方式 A：shell 里取消注释 `# --output_vis`**（`scripts/evaluation/stage{1,2}/*.sh` 的 launch 命令末尾）：
 
 ```bash
-# 例如 stage2/stereosplat.sh 底部注释切换：
-#eval_stage2_stereosplat
-eval_stage2_stereosplat_vis
+# 例如 stage2/stereosplat.sh 里：
+  --pretrained_model_path "$pretrained_model_path"
+  --output_vis    # 取消这行注释即可
 ```
 
 **方式 B：命令行追加 flag**：
@@ -542,24 +541,24 @@ separated / fusion 模式可能额外有 `rendered_conf_stage1/` 等。
 
 ### 11.1 改默认权重 / Difix 路径
 
-编辑 **`scripts/evaluation/_common.sh`** 中的 `_eval_default_paths()`：
+直接编辑对应 **`scripts/evaluation/stage{1,2}/*.sh`** 函数顶部的变量，例如：
 
 ```bash
-STAGE1_MODEL_PATH="你的/stage1/路径"
-STAGE2_MODEL_DIR="你的/stage2/目录"
+pretrained_model_path="${STAGE2_MODEL_DIR}/latest"
+stage_1_model_path="你的/stage1/路径"
 pretrained_diffix_model_path="你的/difix.pkl"
 ```
 
-旧 `conf_fusion/pixel_level/_common.sh` 里有一份相同变量（旧脚本专用）。
+旧路径 `conf_fusion/pixel_level/*.sh` 与 `stage{1,2}/*.sh` 同样为自包含 flat 风格，直接改函数内变量即可。
 
 ### 11.2 改 GPU
 
-- 新 shell：修改各脚本里 `_eval_launch` 的第一个参数，如 `gpu_0.yaml` → `gpu_1.yaml`
-- 配置目录：`accelerate_configs/inference/gpu_*.yaml`
+修改各函数里的 `accelerate_config_path`，如 `gpu_0.yaml` → `gpu_1.yaml`。  
+配置目录：`accelerate_configs/inference/gpu_*.yaml`
 
 ### 11.3 改输出目录
 
-在各 shell 的 `RESULTS_BASE` 或 `OUTPUT_BASE` 变量处修改。
+在各函数里的 `output_folder` 变量处修改。
 
 ### 11.4 性能注意
 
@@ -573,7 +572,7 @@ pretrained_diffix_model_path="你的/difix.pkl"
 |----------|------------|
 | 加新 eval_mode、换模型函数 | `eval/routes.py` |
 | 参数、dataloader、加载权重 | `eval/run.py` / `eval/common.py` |
-| 启动命令、默认路径 | `scripts/evaluation/_common.sh` 与各 shell |
+| 启动命令、默认路径 | `scripts/evaluation/stage{1,2}/*.sh`（各函数自包含） |
 | 算法本身（融合、渲染） | `src/.../stereosplat.py` |
 | **不要**在 `validator/` 写业务逻辑 | 仅保留 wrapper |
 

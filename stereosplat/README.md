@@ -244,7 +244,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_whole.sh` |
 | 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_separated.sh` |
 
-函数全名见 `eval/routes.py`。每个 Shell 内通常有 `*_vis()` 变体（加 `--output_vis`，用 `demo.txt`）。
+函数全名见 `eval/routes.py`。可视化：在 shell 的 launch 命令末尾取消注释 `# --output_vis`（自动用 `demo.txt`）。
 
 ---
 
@@ -273,7 +273,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 ## 评估速查（Shell 与 CLI）
 
 评估逻辑在 **`eval/`**，主入口 **`eval/run.py`**。  
-Shell 在 `scripts/evaluation/stage{1,2}/`；默认路径在 `scripts/evaluation/_common.sh`。
+Shell 在 `scripts/evaluation/stage{1,2}/`；**每个函数内自包含**：`output_folder`、`pretrained_model_path`、`stage_1_model_path`、GPU yaml 等直接写在函数顶部，改路径就编辑对应 `.sh` 即可。
 
 ### 实验矩阵 → Shell（同上表 #1–#8）
 
@@ -328,7 +328,7 @@ pixi run -e cu118 accelerate launch \
 | `--use_diffix3d` / `--use_ref` | 启用 Difix3D + stereo ref |
 | `--conf_pixel_level_fusion` | 逐像素 conf 融合（`pixel_fusion` 模式） |
 
-### 旧路径（仍可用，不推荐新实验使用）
+### 旧路径（仍可用，flat 自包含，与 stage shell 写法一致）
 
 | 旧 Shell / Validator | 等效语义 |
 |----------------------|----------|
@@ -338,6 +338,8 @@ pixi run -e cu118 accelerate launch \
 | `conf_fusion/pixel_level/whole_mode.sh` | stage2 pixel_fusion whole |
 | `conf_fusion/pixel_level/whole_model_stage1.sh` | stage1 pixel_fusion whole |
 | `validator/*.py` | 薄 wrapper → `eval/run.py` |
+
+`conf_fusion/pixel_level/` 输出目录仍用 `stereosplat_plus_two_stage/...` 旧路径；新实验推荐 `stage{1,2}/`。
 
 ---
 
@@ -352,15 +354,7 @@ pixi run -e cu118 accelerate launch \
 | 输出 | `output_folder/<bin_token>/rendered_images/` 等 |
 | 指标 | 可视化模式**不写** `metric.json` |
 
-每个 `stage{1,2}/*.sh` 均提供 `*_vis()` 函数，底部注释切换即可：
-
-```bash
-# 编辑 scripts/evaluation/stage2/stereosplat.sh：
-#eval_stage2_stereosplat
-eval_stage2_stereosplat_vis
-```
-
-或任意命令末尾加 `--output_vis`。
+在对应 shell 的 `pixi run accelerate launch ...` 末尾取消注释 `# --output_vis` 即可；或直接 CLI 加 `--output_vis`。
 
 ---
 
@@ -376,9 +370,8 @@ stereosplat/
 ├── scripts/
 │   ├── train/stereosplat/   # train.sh, train_stereosplat_stage2.sh
 │   └── evaluation/
-│       ├── _common.sh       # 默认路径 + launch 助手
-│       ├── stage1/          # ★ Stage1 评估（3 个 shell）
-│       └── stage2/          # ★ Stage2 评估（5 个 shell）
+│       ├── stage1/          # ★ Stage1 评估（3 个 shell，自包含）
+│       └── stage2/          # ★ Stage2 评估（5 个 shell，自包含）
 ├── src/stereosplat/         # 模型、config、dataloader
 ├── diff-gaussian-rasterization/  # 含 conf 的 rasterizer
 └── difix3d/
@@ -411,7 +404,7 @@ rendered_conf[pixel] = Σ conf_i · α_i · T_i
 |------|------|
 | **本文件** | 安装、训练、**推理方式详解（8 种 + Oracle）**、Shell 速查、可视化 |
 | **[eval/README.md](eval/README.md)** | 评估深入：调用链 mermaid、CLI 全参数、legacy 映射、FAQ |
-| `scripts/evaluation/_common.sh` | 默认 checkpoint / Difix3D / filelist 路径 |
+| 各 `stage{1,2}/*.sh` 函数内 | checkpoint、`output_folder`、GPU、Difix 等（主配置位置） |
 
 ---
 
@@ -426,5 +419,5 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 bash scripts/evaluation/stage2/stereosplat.sh
 bash scripts/evaluation/stage2/pixel_fusion_separated.sh
 
-# 可视化：shell 里启用 *_vis() 或加 --output_vis
+# 可视化：shell 里取消注释 # --output_vis
 ```

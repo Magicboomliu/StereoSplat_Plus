@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
-# Stage2 | stereosplat | whole | Stage2 checkpoint
 
-source "$(dirname "${BASH_SOURCE[0]}")/../_common.sh"
-
-RESULTS_BASE="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/stereosplat"
+# Stage2 | stereosplat | 2-view GT forward
 
 eval_stage2_stereosplat() {
-  _eval_resolve_root
-  _eval_default_paths
-  _eval_config_stage2
-  _eval_export_env
-  _eval_launch gpu_0.yaml stage2 stereosplat whole \
-    "${RESULTS_BASE}" \
-    --pretrained_model_path "${STAGE2_MODEL_DIR}/latest"
-}
 
-eval_stage2_stereosplat_vis() {
-  _eval_resolve_root
-  _eval_default_paths
-  _eval_config_stage2
-  _eval_export_env
-  _eval_launch_vis gpu_0.yaml stage2 stereosplat whole \
-    "${RESULTS_BASE}/vis" \
-    --pretrained_model_path "${STAGE2_MODEL_DIR}/latest"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+cd "$STEREOSPLAT_ROOT" || exit 1
+
+accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
+configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/stereosplat"
+val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
+demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
+ablation_type="NMRFStereo"
+dataset_type="First_LiDAR_3_Uniform"
+
+STAGE2_MODEL_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume"
+pretrained_model_path="${STAGE2_MODEL_DIR}/latest"
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
+
+TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 \
+pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval/run.py \
+  --training_stage stage2 \
+  --eval_mode stereosplat \
+  --architecture whole \
+  --config_path "$configs_path" \
+  --output_folder "$output_folder" \
+  --val_filelist "$val_filelist" \
+  --demo_filelist "$demo_filelist" \
+  --ablation_type "$ablation_type" \
+  --dataset_type "$dataset_type" \
+  --pretrained_model_path "$pretrained_model_path"
+  # --output_vis
+
 }
 
 eval_stage2_stereosplat
-#eval_stage2_stereosplat_vis
