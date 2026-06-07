@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-# Stage2 | pixel_fusion | separated（旧路径，等效 stage2/pixel_fusion_separated.sh）
+# legacy_pixel_fusion_pose_injection_frozen_stage1_two_models_stage2.sh
+# 等效 stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh，output 在 stereosplat_plus_two_stage/...
 
-stereosplat_plus_sep_model_pixel_level_fusion_deactivate() {
+run_without_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
@@ -53,7 +54,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 
 
-stereosplat_plus_sep_model_pixel_level_fusion_activate() {
+run_with_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
@@ -102,5 +103,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-#stereosplat_plus_sep_model_pixel_level_fusion_deactivate
-stereosplat_plus_sep_model_pixel_level_fusion_activate
+#run_without_conf_pixel_level_fusion
+run_with_conf_pixel_level_fusion

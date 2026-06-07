@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-# Stage2 | pixel_fusion | whole（旧路径，等效 stage2/pixel_fusion_whole.sh）
+# pixel_fusion_pose_injection_single_model.sh
+# 【Stage2 权重】pixel_fusion 模式：单模型 pose injection（2-view vs pseudo 多视角），可选逐像素 conf 融合
+# 对应: --training_stage stage2 --eval_mode pixel_fusion --architecture whole
+# 函数: run_without_conf_pixel_level_fusion / run_with_conf_pixel_level_fusion（底部注释切换）
 
-stereosplat_plus_whole_model_pixel_level_fusion_deactivate() {
+run_without_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
+STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_conf/pixel_level_fusion/whole_model/fusion_deactivate/with_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/pixel_fusion/whole/fusion_deactivate/with_difix3d/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -51,15 +54,15 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 
 
-stereosplat_plus_whole_model_pixel_level_fusion_activate() {
+run_with_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
+STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_1.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_conf/pixel_level_fusion/whole_model/fusion_activate/with_difix3d/0.5_1.0"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/pixel_fusion/whole/fusion_activate/with_difix3d/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
@@ -98,5 +101,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-#stereosplat_plus_whole_model_pixel_level_fusion_deactivate
-stereosplat_plus_whole_model_pixel_level_fusion_activate
+#run_without_conf_pixel_level_fusion
+run_with_conf_pixel_level_fusion

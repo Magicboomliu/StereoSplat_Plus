@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-# Stage2 | stereosplat_plus | whole | progressive unified model
+# stereosplat_plus_progressive_single_model.sh
+# 【Stage2 权重】stereosplat_plus 模式：单模型 progressive（pseudo→可选 Difix→再 forward）
+# 对应: --training_stage stage2 --eval_mode stereosplat_plus --architecture whole
+# 函数: run_without_difix3d / run_with_difix3d（底部注释切换）
 
-eval_stage2_stereosplat_plus_whole_no_difix() {
+run_without_difix3d() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -41,7 +44,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 
 
-eval_stage2_stereosplat_plus_whole_with_difix() {
+run_with_difix3d() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -85,5 +88,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-eval_stage2_stereosplat_plus_whole_no_difix
-#eval_stage2_stereosplat_plus_whole_with_difix
+run_without_difix3d
+#run_with_difix3d

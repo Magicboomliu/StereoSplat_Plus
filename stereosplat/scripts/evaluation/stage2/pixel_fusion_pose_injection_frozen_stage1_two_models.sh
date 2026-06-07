@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-# Stage1 | pixel_fusion | whole（旧路径，等效 stage1/pixel_fusion.sh）
+# pixel_fusion_pose_injection_frozen_stage1_two_models.sh
+# 【Stage2 + 冻结 Stage1】pixel_fusion：Stage1/Stage2 各渲染一路，再 pose injection + 可选 conf 逐像素融合
+# 对应: --training_stage stage2 --eval_mode pixel_fusion --architecture separated --stage_1_model_path ...
+# 函数: run_without_conf_pixel_level_fusion / run_with_conf_pixel_level_fusion（底部注释切换）
 
-stereosplat_plus_whole_model_stage1_fusion_deactivate() {
+run_without_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
+STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
-configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_conf/pixel_level_fusion/stage1/whole_model/fusion_deactivate/with_difix3d/0.5_1.0"
+configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/pixel_fusion/separated/fusion_deactivate/with_difix3d/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 pseudo_ratio="0.50 1.0"
 
-STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
-pretrained_model_path="${STAGE1_MODEL_PATH}"
+STAGE2_MODEL_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume"
+pretrained_model_path="${STAGE2_MODEL_DIR}/latest"
+stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
 timestep=199
@@ -29,9 +33,9 @@ export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
 
 TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 \
 pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval/run.py \
-  --training_stage stage1 \
+  --training_stage stage2 \
   --eval_mode pixel_fusion \
-  --architecture whole \
+  --architecture separated \
   --config_path "$configs_path" \
   --output_folder "$output_folder" \
   --val_filelist "$val_filelist" \
@@ -40,6 +44,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --dataset_type "$dataset_type" \
   --pseudo_ratio $pseudo_ratio \
   --pretrained_model_path "$pretrained_model_path" \
+  --stage_1_model_path "$stage_1_model_path" \
   --pretrained_diffix_model_path "$pretrained_diffix_model_path" \
   --timestep "$timestep" \
   --prompt "$prompt" \
@@ -51,23 +56,24 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 
 
-stereosplat_plus_whole_model_stage1_fusion_activate() {
+run_with_conf_pixel_level_fusion() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../../../../" && pwd)"
+STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_1.yaml"
-configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/stereosplat_plus_two_stage/with_conf/pixel_level_fusion/stage1/whole_model/fusion_activate/with_difix3d/0.5_1.0"
+configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/pixel_fusion/separated/fusion_activate/with_difix3d/0.5_1.0"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 pseudo_ratio="0.50 1.0"
 
-STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
-pretrained_model_path="${STAGE1_MODEL_PATH}"
+STAGE2_MODEL_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume"
+pretrained_model_path="${STAGE2_MODEL_DIR}/latest"
+stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
 timestep=199
@@ -77,9 +83,9 @@ export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
 
 TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 \
 pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval/run.py \
-  --training_stage stage1 \
+  --training_stage stage2 \
   --eval_mode pixel_fusion \
-  --architecture whole \
+  --architecture separated \
   --config_path "$configs_path" \
   --output_folder "$output_folder" \
   --val_filelist "$val_filelist" \
@@ -88,6 +94,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --dataset_type "$dataset_type" \
   --pseudo_ratio $pseudo_ratio \
   --pretrained_model_path "$pretrained_model_path" \
+  --stage_1_model_path "$stage_1_model_path" \
   --pretrained_diffix_model_path "$pretrained_diffix_model_path" \
   --timestep "$timestep" \
   --prompt "$prompt" \
@@ -98,5 +105,5 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
 
 }
 
-stereosplat_plus_whole_model_stage1_fusion_deactivate
-#stereosplat_plus_whole_model_stage1_fusion_activate
+#run_without_conf_pixel_level_fusion
+run_with_conf_pixel_level_fusion

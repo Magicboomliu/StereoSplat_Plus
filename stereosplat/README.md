@@ -139,10 +139,10 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 
 | Shell | 加载的权重 | 说明 |
 |-------|------------|------|
-| `stage1/stereosplat.sh` | Stage1 | 评 Stage1 模型的基础 2-view 能力 |
-| `stage2/stereosplat.sh` | Stage2 | 评 Stage2 模型的基础 2-view 能力（算法与输入同上，**仅权重不同**） |
+| `stage1/stereosplat_two_gt_views_forward.sh` | Stage1 | 评 Stage1 模型的基础 2-view 能力 |
+| `stage2/stereosplat_two_gt_views_forward.sh` | Stage2 | 评 Stage2 模型的基础 2-view 能力（算法与输入同上，**仅权重不同**） |
 
-> 用 Stage1 权重做 stereosplat 评估 → 跑 `stage1/stereosplat.sh` 即可（已删除冗余的 `whole_s1.sh`）。
+> 用 Stage1 权重做 stereosplat 评估 → 跑 `stage1/stereosplat_two_gt_views_forward.sh` 即可。
 
 ---
 
@@ -162,7 +162,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | **Difix3D** | 可选：`--use_diffix3d --use_ref` |
 | **pseudo_ratio** | 不使用（pose 策略固定在函数内） |
 
-对应 Shell：`stage1/stereosplat_plus.sh`、`stage2/stereosplat_plus_whole.sh`
+对应 Shell：`stage1/stereosplat_plus_progressive_single_model.sh`、`stage2/stereosplat_plus_progressive_single_model.sh`
 
 #### ②-B separated — 冻结 Stage1 + Stage2 双模型
 
@@ -175,7 +175,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | **Difix3D** | 可选 |
 | **pseudo_ratio** | `--pseudo_ratio 0.5 1.0`（控制 pseudo 视角比例） |
 
-对应 Shell：`stage2/stereosplat_plus_separated.sh`  
+对应 Shell：`stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh`（冻结 Stage1 + Stage2 双模型）  
 （Stage1 只有 whole，无 separated S+。）
 
 ---
@@ -204,7 +204,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 > - S+ whole → progressive（固定 pseudo）  
 > - pixel_fusion whole → pose injection + 可选 conf 融合  
 
-对应 Shell：`stage1/pixel_fusion.sh`、`stage2/pixel_fusion_whole.sh`
+对应 Shell：`stage1/pixel_fusion_pose_injection_single_model.sh`、`stage2/pixel_fusion_pose_injection_single_model.sh`
 
 #### ③-B separated — 融合 Stage1 vs Stage2 渲染
 
@@ -217,7 +217,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | **Difix3D** | 通常开启 |
 | **pseudo_ratio** | `--pseudo_ratio 0.5 1.0` |
 
-对应 Shell：`stage2/pixel_fusion_separated.sh`
+对应 Shell：`stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh`
 
 ---
 
@@ -235,14 +235,14 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 
 | # | Stage | eval_mode | arch | 主 ckpt | 冻结 S1 | Difix | conf fusion | 模型函数（简写） | Shell |
 |---|-------|-----------|------|---------|---------|-------|-------------|------------------|-------|
-| 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage1/stereosplat.sh` |
-| 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage1/stereosplat_plus.sh` |
-| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage1/pixel_fusion.sh` |
-| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1，仅换 S2 权重 | `stage2/stereosplat.sh` |
-| 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage2/stereosplat_plus_whole.sh` |
-| 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `..._two_seperated_models` | `stage2/stereosplat_plus_separated.sh` |
-| 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_whole.sh` |
-| 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_separated.sh` |
+| 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage1/stereosplat_two_gt_views_forward.sh` |
+| 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage1/stereosplat_plus_progressive_single_model.sh` |
+| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1，仅换 S2 权重 | `stage2/stereosplat_two_gt_views_forward.sh` |
+| 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage2/stereosplat_plus_progressive_single_model.sh` |
+| 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `..._two_seperated_models` | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh` |
+| 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_pose_injection_single_model.sh` |
+| 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh` |
 
 函数全名见 `eval/routes.py`。可视化：在 shell 的 launch 命令末尾取消注释 `# --output_vis`（自动用 `demo.txt`）。
 
@@ -251,7 +251,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 ### 易混淆点
 
 1. **stereosplat 模式：输入恒为 2 GT view**  
-   - 评 Stage1 权重 → `stage1/stereosplat.sh`；评 Stage2 权重 → `stage2/stereosplat.sh`。
+   - 评 Stage1 权重 → `stage1/stereosplat_two_gt_views_forward.sh`；评 Stage2 权重 → `stage2/stereosplat_two_gt_views_forward.sh`。
 
 2. **`First_Stage2` config 的真正差别在 S+ / pixel_fusion**  
    - 这些模式会用 pseudo view、双模型、融合等 Stage2 训练配套逻辑；不是 stereosplat 的 2-view 输入变了。
@@ -273,20 +273,58 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 ## 评估速查（Shell 与 CLI）
 
 评估逻辑在 **`eval/`**，主入口 **`eval/run.py`**。  
-Shell 在 `scripts/evaluation/stage{1,2}/`；**每个函数内自包含**：`output_folder`、`pretrained_model_path`、`stage_1_model_path`、GPU yaml 等直接写在函数顶部，改路径就编辑对应 `.sh` 即可。
+Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么结构**（目录 `stage1/` / `stage2/` 表示用哪套 checkpoint）：
+
+| 文件名 | 在评什么 |
+|--------|----------|
+| `stereosplat_two_gt_views_forward.sh` | 最基础：2 张 GT 前向视角直接 forward |
+| `stereosplat_plus_progressive_single_model.sh` | S+ progressive，**一个**模型端到端 |
+| `stereosplat_plus_progressive_frozen_stage1_two_models.sh` | S+ progressive，**冻结 Stage1 + Stage2** 两个模型 |
+| `pixel_fusion_pose_injection_single_model.sh` | pixel_fusion pose injection，**一个**模型 |
+| `pixel_fusion_pose_injection_frozen_stage1_two_models.sh` | pixel_fusion，**冻结 Stage1 + Stage2** 两个模型 |
+
+函数名（脚本**最底部**注释切换要跑哪一个）：
+
+| 函数名 | 什么时候用 |
+|--------|------------|
+| `run_metric_eval` | 只有这一种跑法（2-view 基础评估） |
+| `run_without_difix3d` | S+ / pixel_fusion，不用 Difix3D 修 pseudo |
+| `run_with_difix3d` | S+ / pixel_fusion，用 Difix3D 修 pseudo |
+| `run_without_conf_pixel_level_fusion` | pixel_fusion，不做逐像素 conf 融合 |
+| `run_with_conf_pixel_level_fusion` | pixel_fusion，开启 `--conf_pixel_level_fusion` |
+
+每个函数内自包含：`output_folder`、`pretrained_model_path`、`stage_1_model_path`、GPU yaml 等；**改路径直接编辑对应 `.sh`**。
+
+### Stage1 / Stage2 完整文件列表
+
+```
+scripts/evaluation/
+├── stage1/                                          # 加载 Stage1 checkpoint
+│   ├── stereosplat_two_gt_views_forward.sh          # → run_metric_eval
+│   ├── stereosplat_plus_progressive_single_model.sh # → run_without_difix3d / run_with_difix3d
+│   └── pixel_fusion_pose_injection_single_model.sh  # → run_without_conf_pixel_level_fusion / run_with_conf_pixel_level_fusion
+└── stage2/                                          # 加载 Stage2 checkpoint
+    ├── stereosplat_two_gt_views_forward.sh
+    ├── stereosplat_plus_progressive_single_model.sh
+    ├── stereosplat_plus_progressive_frozen_stage1_two_models.sh   # 额外需要 stage_1_model_path
+    ├── pixel_fusion_pose_injection_single_model.sh
+    └── pixel_fusion_pose_injection_frozen_stage1_two_models.sh    # 额外需要 stage_1_model_path
+```
+
+旧实验输出路径（`stereosplat_plus_two_stage/...`）见 `scripts/evaluation/stereosplat_plus/conf_fusion/pixel_level/legacy_*.sh`，语义与上表对应项相同。
 
 ### 实验矩阵 → Shell（同上表 #1–#8）
 
 | Stage | eval_mode | architecture | 推荐 Shell |
 |-------|-----------|--------------|------------|
-| 1 | stereosplat | whole | `stage1/stereosplat.sh` |
-| 1 | stereosplat_plus | whole | `stage1/stereosplat_plus.sh` |
-| 1 | pixel_fusion | whole | `stage1/pixel_fusion.sh` |
-| 2 | stereosplat | whole | `stage2/stereosplat.sh` |
-| 2 | stereosplat_plus | whole | `stage2/stereosplat_plus_whole.sh` |
-| 2 | stereosplat_plus | separated | `stage2/stereosplat_plus_separated.sh` |
-| 2 | pixel_fusion | whole | `stage2/pixel_fusion_whole.sh` |
-| 2 | pixel_fusion | separated | `stage2/pixel_fusion_separated.sh` |
+| 1 | stereosplat | whole | `stage1/stereosplat_two_gt_views_forward.sh` |
+| 1 | stereosplat_plus | whole | `stage1/stereosplat_plus_progressive_single_model.sh` |
+| 1 | pixel_fusion | whole | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 2 | stereosplat | whole | `stage2/stereosplat_two_gt_views_forward.sh` |
+| 2 | stereosplat_plus | whole | `stage2/stereosplat_plus_progressive_single_model.sh` |
+| 2 | stereosplat_plus | separated | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh` |
+| 2 | pixel_fusion | whole | `stage2/pixel_fusion_pose_injection_single_model.sh` |
+| 2 | pixel_fusion | separated | `stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh` |
 
 ### 快速运行
 
@@ -294,13 +332,13 @@ Shell 在 `scripts/evaluation/stage{1,2}/`；**每个函数内自包含**：`out
 cd stereosplat
 
 # Stage2 基础 2-view
-bash scripts/evaluation/stage2/stereosplat.sh
+bash scripts/evaluation/stage2/stereosplat_two_gt_views_forward.sh
 
-# Stage2 S+ separated
-bash scripts/evaluation/stage2/stereosplat_plus_separated.sh
+# Stage2 S+，冻结 Stage1
+bash scripts/evaluation/stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh
 
-# Stage2 pixel-level conf fusion
-bash scripts/evaluation/stage2/pixel_fusion_separated.sh
+# Stage2 pixel fusion，冻结 Stage1
+bash scripts/evaluation/stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh
 ```
 
 ### 直接调 eval/run.py
@@ -334,9 +372,9 @@ pixi run -e cu118 accelerate launch \
 |----------------------|----------|
 | `stereosplat/render_inside_bin.sh` | stage2 stereosplat whole |
 | `stereosplat_plus/render_inside_bin_whole_model.sh` | stage2 stereosplat_plus whole |
-| `conf_fusion/pixel_level/sep_model.sh` | stage2 pixel_fusion separated |
-| `conf_fusion/pixel_level/whole_mode.sh` | stage2 pixel_fusion whole |
-| `conf_fusion/pixel_level/whole_model_stage1.sh` | stage1 pixel_fusion whole |
+| `conf_fusion/pixel_level/legacy_pixel_fusion_pose_injection_frozen_stage1_two_models_stage2.sh` | 同 stage2 双模型 pixel_fusion（legacy 输出） |
+| `conf_fusion/pixel_level/legacy_pixel_fusion_pose_injection_single_model_stage2.sh` | 同 stage2 单模型 pixel_fusion（legacy 输出） |
+| `conf_fusion/pixel_level/legacy_pixel_fusion_pose_injection_single_model_stage1.sh` | 同 stage1 单模型 pixel_fusion（legacy 输出） |
 | `validator/*.py` | 薄 wrapper → `eval/run.py` |
 
 `conf_fusion/pixel_level/` 输出目录仍用 `stereosplat_plus_two_stage/...` 旧路径；新实验推荐 `stage{1,2}/`。
@@ -370,8 +408,9 @@ stereosplat/
 ├── scripts/
 │   ├── train/stereosplat/   # train.sh, train_stereosplat_stage2.sh
 │   └── evaluation/
-│       ├── stage1/          # ★ Stage1 评估（3 个 shell，自包含）
-│       └── stage2/          # ★ Stage2 评估（5 个 shell，自包含）
+│       ├── stage1/          # stereosplat_two_gt_views_forward.sh 等 3 个
+│       ├── stage2/          # 5 个（含 frozen_stage1_two_models 双模型）
+│       └── stereosplat_plus/conf_fusion/pixel_level/  # legacy_*.sh
 ├── src/stereosplat/         # 模型、config、dataloader
 ├── diff-gaussian-rasterization/  # 含 conf 的 rasterizer
 └── difix3d/
@@ -416,8 +455,8 @@ pixi install -e cu118 && pixi run -e cu118 setup
 bash scripts/train/stereosplat/train.sh
 bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 
-bash scripts/evaluation/stage2/stereosplat.sh
-bash scripts/evaluation/stage2/pixel_fusion_separated.sh
+bash scripts/evaluation/stage2/stereosplat_two_gt_views_forward.sh
+bash scripts/evaluation/stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh
 
 # 可视化：shell 里取消注释 # --output_vis
 ```
