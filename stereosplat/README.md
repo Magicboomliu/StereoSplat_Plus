@@ -129,15 +129,20 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 | **conf 融合** | 无 |
 | **权重** | 仅 `--pretrained_model_path` |
 
-**Stage1 vs Stage2 区别**：config / dataloader 不同（`First_LiDAR_3_Uniform` vs `First_Stage2`），不是算法不同。
+**stereosplat 模式下，输入就是 2 张 GT stereo view（first view pair）。**
 
-| 变体 | training_stage | 主 checkpoint | 用途 |
-|------|----------------|---------------|------|
-| Stage1 基础评估 | stage1 | Stage1 | Stage1 模型本身能力 |
-| Stage2 基础评估 | stage2 | Stage2 | Stage2 模型本身能力 |
-| Stage2 对照（S1 权重） | stage2 | **Stage1** | 同一 Stage2 dataloader 下，看 Stage1 ckpt 的基础 GS 质量 |
+Dataloader 在 val 时固定 `input_view_indices = [1, 0, 2]`（first / center / last），模型里 `prepare_input_multiview(view_num=2)` 取 `index=[0,3]`，即 **左右目各一张 first frame 的 GT 图**。  
+Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**；Stage2 版仅多塞了一个 `input_info_for_psuedo_view_rendering` 字段，**stereosplat 纯 forward 不会用到**。
 
-对应 Shell：`stage1/stereosplat.sh`、`stage2/stereosplat_whole_s2.sh`、`stage2/stereosplat_whole_s1.sh`
+因此 **stereosplat 模式不存在你说的那种「Stage2 输入协议 vs Stage1 输入协议」差别**——输入都是 2 GT view。  
+`world_center=First_Stage2` 主要是 **Stage2 训练**（pseudo-GT mix、S+、pixel_fusion）时用的 config 标记；对 stereosplat 评估来说，换 config 基本不改变这 2 张输入图。
+
+| Shell | 加载的权重 | 说明 |
+|-------|------------|------|
+| `stage1/stereosplat.sh` | Stage1 | 评 Stage1 模型的基础 2-view 能力 |
+| `stage2/stereosplat.sh` | Stage2 | 评 Stage2 模型的基础 2-view 能力（算法与输入同上，**仅权重不同**） |
+
+> 用 Stage1 权重做 stereosplat 评估 → 跑 `stage1/stereosplat.sh` 即可（已删除冗余的 `whole_s1.sh`）。
 
 ---
 
@@ -226,19 +231,18 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 
 ---
 
-### 完整对照表（9 种标准推理 + Shell）
+### 完整对照表（8 种标准推理 + Shell）
 
 | # | Stage | eval_mode | arch | 主 ckpt | 冻结 S1 | Difix | conf fusion | 模型函数（简写） | Shell |
 |---|-------|-----------|------|---------|---------|-------|-------------|------------------|-------|
 | 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage1/stereosplat.sh` |
 | 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage1/stereosplat_plus.sh` |
 | 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage1/pixel_fusion.sh` |
-| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage2/stereosplat_whole_s2.sh` |
-| 5 | 2 | stereosplat | whole | **S1** | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage2/stereosplat_whole_s1.sh` |
-| 6 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage2/stereosplat_plus_whole.sh` |
-| 7 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `..._two_seperated_models` | `stage2/stereosplat_plus_separated.sh` |
-| 8 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_whole.sh` |
-| 9 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_separated.sh` |
+| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1，仅换 S2 权重 | `stage2/stereosplat.sh` |
+| 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage2/stereosplat_plus_whole.sh` |
+| 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `..._two_seperated_models` | `stage2/stereosplat_plus_separated.sh` |
+| 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_whole.sh` |
+| 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_separated.sh` |
 
 函数全名见 `eval/routes.py`。每个 Shell 内通常有 `*_vis()` 变体（加 `--output_vis`，用 `demo.txt`）。
 
@@ -246,17 +250,20 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 
 ### 易混淆点
 
-1. **`training_stage` ≠ 用哪个 checkpoint**  
-   - `stage2/stereosplat_whole_s1.sh`：`training_stage=stage2`（Stage2 dataloader），但 `pretrained_model_path=Stage1`。
+1. **stereosplat 模式：输入恒为 2 GT view**  
+   - 评 Stage1 权重 → `stage1/stereosplat.sh`；评 Stage2 权重 → `stage2/stereosplat.sh`。
 
-2. **whole 下 S+ 与 pixel_fusion 是两套实现**  
+2. **`First_Stage2` config 的真正差别在 S+ / pixel_fusion**  
+   - 这些模式会用 pseudo view、双模型、融合等 Stage2 训练配套逻辑；不是 stereosplat 的 2-view 输入变了。
+
+3. **whole 下 S+ 与 pixel_fusion 是两套实现**  
    - S+ → progressive，无 `pseudo_ratio`  
    - pixel_fusion → pose injection + `pseudo_ratio` + 可选 fusion
 
-3. **separated 仅 Stage2 的 S+ / pixel_fusion**  
+4. **separated 仅 Stage2 的 S+ / pixel_fusion**  
    - Stage1 训练只有单模型，评估也只有 `whole`。
 
-4. **14D 旧权重**  
+5. **14D 旧权重**  
    - 本仓库 rasterizer / `gs_dim=15` 不支持直接加载无 conf 旧 ckpt 跑上述流程。
 
 更细的调用链、CLI、FAQ → **[eval/README.md](eval/README.md)**
@@ -268,15 +275,14 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 评估逻辑在 **`eval/`**，主入口 **`eval/run.py`**。  
 Shell 在 `scripts/evaluation/stage{1,2}/`；默认路径在 `scripts/evaluation/_common.sh`。
 
-### 实验矩阵 → Shell（同上表 #1–#9）
+### 实验矩阵 → Shell（同上表 #1–#8）
 
 | Stage | eval_mode | architecture | 推荐 Shell |
 |-------|-----------|--------------|------------|
 | 1 | stereosplat | whole | `stage1/stereosplat.sh` |
 | 1 | stereosplat_plus | whole | `stage1/stereosplat_plus.sh` |
 | 1 | pixel_fusion | whole | `stage1/pixel_fusion.sh` |
-| 2 | stereosplat | whole (S2 ckpt) | `stage2/stereosplat_whole_s2.sh` |
-| 2 | stereosplat | whole (S1 ckpt 对照) | `stage2/stereosplat_whole_s1.sh` |
+| 2 | stereosplat | whole | `stage2/stereosplat.sh` |
 | 2 | stereosplat_plus | whole | `stage2/stereosplat_plus_whole.sh` |
 | 2 | stereosplat_plus | separated | `stage2/stereosplat_plus_separated.sh` |
 | 2 | pixel_fusion | whole | `stage2/pixel_fusion_whole.sh` |
@@ -288,7 +294,7 @@ Shell 在 `scripts/evaluation/stage{1,2}/`；默认路径在 `scripts/evaluation
 cd stereosplat
 
 # Stage2 基础 2-view
-bash scripts/evaluation/stage2/stereosplat_whole_s2.sh
+bash scripts/evaluation/stage2/stereosplat.sh
 
 # Stage2 S+ separated
 bash scripts/evaluation/stage2/stereosplat_plus_separated.sh
@@ -349,9 +355,9 @@ pixi run -e cu118 accelerate launch \
 每个 `stage{1,2}/*.sh` 均提供 `*_vis()` 函数，底部注释切换即可：
 
 ```bash
-# 编辑 scripts/evaluation/stage2/stereosplat_whole_s2.sh：
-#eval_stage2_stereosplat_whole_s2
-eval_stage2_stereosplat_whole_s2_vis
+# 编辑 scripts/evaluation/stage2/stereosplat.sh：
+#eval_stage2_stereosplat
+eval_stage2_stereosplat_vis
 ```
 
 或任意命令末尾加 `--output_vis`。
@@ -372,7 +378,7 @@ stereosplat/
 │   └── evaluation/
 │       ├── _common.sh       # 默认路径 + launch 助手
 │       ├── stage1/          # ★ Stage1 评估（3 个 shell）
-│       └── stage2/          # ★ Stage2 评估（6 个 shell）
+│       └── stage2/          # ★ Stage2 评估（5 个 shell）
 ├── src/stereosplat/         # 模型、config、dataloader
 ├── diff-gaussian-rasterization/  # 含 conf 的 rasterizer
 └── difix3d/
@@ -403,7 +409,7 @@ rendered_conf[pixel] = Σ conf_i · α_i · T_i
 
 | 文档 | 内容 |
 |------|------|
-| **本文件** | 安装、训练、**推理方式详解（9 种 + Oracle）**、Shell 速查、可视化 |
+| **本文件** | 安装、训练、**推理方式详解（8 种 + Oracle）**、Shell 速查、可视化 |
 | **[eval/README.md](eval/README.md)** | 评估深入：调用链 mermaid、CLI 全参数、legacy 映射、FAQ |
 | `scripts/evaluation/_common.sh` | 默认 checkpoint / Difix3D / filelist 路径 |
 
@@ -417,7 +423,7 @@ pixi install -e cu118 && pixi run -e cu118 setup
 bash scripts/train/stereosplat/train.sh
 bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 
-bash scripts/evaluation/stage2/stereosplat_whole_s2.sh
+bash scripts/evaluation/stage2/stereosplat.sh
 bash scripts/evaluation/stage2/pixel_fusion_separated.sh
 
 # 可视化：shell 里启用 *_vis() 或加 --output_vis

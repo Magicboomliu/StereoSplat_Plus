@@ -8,7 +8,7 @@
 
 所有评估逻辑集中在 `eval/` 目录；`validator/` 与部分旧 shell 仅为**兼容入口**，最终都会调用 `eval/run.py`。
 
-> **9 种标准推理 + Oracle 对照表（含流程、权重、模型函数、Shell）** → 见上级文档 **[../README.md#推理方式详解](../README.md#推理方式详解)**。  
+> **8 种标准推理 + Oracle 对照表（含流程、权重、模型函数、Shell）** → 见上级文档 **[../README.md#推理方式详解](../README.md#推理方式详解)**。  
 > 本文件侧重调用链实现、CLI 参数与排错。
 
 ---
@@ -171,8 +171,7 @@ stereosplat/
 │   │   ├── stereosplat_plus.sh
 │   │   └── pixel_fusion.sh
 │   ├── stage2/                              # ★ Stage2 评估（推荐）
-│   │   ├── stereosplat_whole_s2.sh
-│   │   ├── stereosplat_whole_s1.sh
+│   │   ├── stereosplat.sh
 │   │   ├── stereosplat_plus_whole.sh
 │   │   ├── stereosplat_plus_separated.sh
 │   │   ├── pixel_fusion_whole.sh
@@ -200,8 +199,7 @@ stereosplat/
 
 | eval_mode | architecture | 含义 | Shell（推荐） | 主 checkpoint | 额外权重 |
 |-----------|--------------|------|---------------|---------------|----------|
-| stereosplat | whole | 纯 2-view，Stage2 权重 | `stage2/stereosplat_whole_s2.sh` | Stage2 | — |
-| stereosplat | whole | 纯 2-view，Stage1 权重（对照） | `stage2/stereosplat_whole_s1.sh` | Stage1 | 仍用 stage2 config/dataloader |
+| stereosplat | whole | 纯 2-view（Stage2 权重） | `stage2/stereosplat.sh` | Stage2 | — |
 | stereosplat_plus | whole | 单模型 progressive S+ | `stage2/stereosplat_plus_whole.sh` | Stage2 | Difix3D（可选） |
 | stereosplat_plus | separated | 冻结 S1 + S2 | `stage2/stereosplat_plus_separated.sh` | Stage2 | `--stage_1_model_path` |
 | pixel_fusion | whole | 2-view vs pseudo-multiview 融合 | `stage2/pixel_fusion_whole.sh` | Stage2 | Difix3D |
@@ -227,7 +225,7 @@ pretrained_diffix_model_path=".../model_130001.pkl"
 
 ## 5. 三种评估模式详解
 
-> 完整对照表（#1–#9 + 权重 / Difix / fusion / Shell）见 **[../README.md#完整对照表](../README.md#完整对照表9-种标准推理--shell)**。
+> 完整对照表（#1–#8 + 权重 / Difix / fusion / Shell）见 **[../README.md#完整对照表](../README.md#完整对照表8-种标准推理--shell)**。
 
 ### 5.1 Mode ①：stereosplat
 
@@ -281,7 +279,7 @@ flowchart LR
 
     subgraph eval ["评估 eval/run.py"]
         E1["stage1/*"]
-        E2s["stage2/stereosplat_whole_s2"]
+        E2s["stage2/stereosplat"]
         E2p["stage2/stereosplat_plus_separated"]
         E2f["stage2/pixel_fusion_*"]
     end
@@ -297,7 +295,7 @@ flowchart LR
 
 | 训练产出 | 常用于哪些评估 |
 |----------|----------------|
-| Stage1 only | Stage1 全部三种 mode；Stage2 separated 的 `--stage_1_model_path`；`stereosplat_whole_s1` 对照 |
+| Stage1 only | Stage1 全部三种 mode；Stage2 separated 的 `--stage_1_model_path` |
 | Stage2 | Stage2 的 stereosplat / S+ whole / pixel_fusion whole；separated 的 `--pretrained_model_path` |
 
 ---
@@ -332,7 +330,7 @@ bash scripts/evaluation/stage2/pixel_fusion_separated.sh
 bash scripts/evaluation/stage1/pixel_fusion.sh
 
 # Stage2 | 基础 stereosplat | Stage2 权重
-bash scripts/evaluation/stage2/stereosplat_whole_s2.sh
+bash scripts/evaluation/stage2/stereosplat.sh
 ```
 
 每个 shell 文件底部有**函数调用行**（类似 `eval_stage2_pixel_fusion_separated_activate`）。  
@@ -390,9 +388,9 @@ pixi run -e cu118 accelerate launch \
 **方式 A：shell 里切到 vis 函数**（`scripts/evaluation/stage{1,2}/*.sh` 均已提供 `*_vis()`）：
 
 ```bash
-# 例如 stage2/stereosplat_whole_s2.sh 底部注释切换：
-#eval_stage2_stereosplat_whole_s2
-eval_stage2_stereosplat_whole_s2_vis
+# 例如 stage2/stereosplat.sh 底部注释切换：
+#eval_stage2_stereosplat
+eval_stage2_stereosplat_vis
 ```
 
 **方式 B：命令行追加 flag**：
@@ -589,8 +587,8 @@ A：功能相同。`eval/` 是唯一实现；`validator/` 是旧路径兼容壳�
 **Q：改代码会打断正在跑的任务吗？**  
 A：不会。已启动进程用的是启动时的内存代码；只有新启动的 job 用新代码。
 
-**Q：stage2 stereosplat_whole_s1 和 stage1 stereosplat 有何不同？**  
-A：两者都用 Stage1 权重做纯 2-view forward，但 `whole_s1` 使用 **Stage2 的 config/dataloader**（`First_Stage2`），用于 Stage2 设定下的对照；`stage1/stereosplat.sh` 用 Stage1 config。
+**Q：stereosplat 模式下如何评 Stage1 / Stage2 权重？**  
+A：输入都是 2 张 GT first-view stereo，算法相同。评 Stage1 → `stage1/stereosplat.sh`；评 Stage2 → `stage2/stereosplat.sh`。已删除冗余的 `whole_s1.sh`。
 
 **Q：whole_mode 和 stereosplat_plus_whole 一样吗？**  
 A：**不一样**。`whole_mode` / `pixel_fusion` 走 pose injection + `pseudo_ratio`；`stereosplat_plus_whole` 走 progressive 函数（固定 pseudo 策略）。
@@ -607,11 +605,10 @@ A：用 `bash script.sh`，不要用 `sh script.sh`（旧脚本已加 bash re-ex
 
 | 我想跑… | 命令 |
 |---------|------|
-| Stage1 基础 2-view 评估 | `bash scripts/evaluation/stage1/stereosplat.sh` |
+| Stage1 基础 2-view | `bash scripts/evaluation/stage1/stereosplat.sh` |
 | Stage1 S+ progressive | `bash scripts/evaluation/stage1/stereosplat_plus.sh` |
-| Stage1 pixel fusion 消融 | `bash scripts/evaluation/stage1/pixel_fusion.sh` |
-| Stage2 基础 2-view（S2 权重） | `bash scripts/evaluation/stage2/stereosplat_whole_s2.sh` |
-| Stage2 基础 2-view（S1 权重对照） | `bash scripts/evaluation/stage2/stereosplat_whole_s1.sh` |
+| Stage1 pixel fusion | `bash scripts/evaluation/stage1/pixel_fusion.sh` |
+| Stage2 基础 2-view | `bash scripts/evaluation/stage2/stereosplat.sh` |
 | Stage2 S+ unified progressive | `bash scripts/evaluation/stage2/stereosplat_plus_whole.sh` |
 | Stage2 S+ separated | `bash scripts/evaluation/stage2/stereosplat_plus_separated.sh` |
 | Stage2 pixel fusion whole | `bash scripts/evaluation/stage2/pixel_fusion_whole.sh` |
