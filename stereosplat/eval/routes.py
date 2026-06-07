@@ -100,6 +100,12 @@ def run_batch_inference(
             use_ref=args.use_ref,
             vis=args.output_vis,
             pixel_level_conf_fusion=args.conf_pixel_level_fusion,
+            conf_fusion_margin=args.conf_fusion_margin,
+            gs_conf_fusion=args.gs_conf_fusion,
+            gs_fusion_voxel_size=args.gs_fusion_voxel_size,
+            gs_fusion_margin=args.gs_fusion_margin,
+            gs_fusion_conf_agg=args.gs_fusion_conf_agg,
+            gs_fusion_base_conf_thresh=args.gs_fusion_base_conf_thresh,
         )
 
     if eval_mode == "pixel_fusion" and architecture == "separated":
@@ -116,6 +122,7 @@ def run_batch_inference(
             use_ref=args.use_ref,
             vis=args.output_vis,
             pixel_level_conf_fusion=args.conf_pixel_level_fusion,
+            conf_fusion_margin=args.conf_fusion_margin,
         )
 
     raise ValueError(
@@ -129,6 +136,7 @@ CONF_KEY_ALIASES = {
     "Conf_stage2": "conf_stage2",
     "Conf_2view": "conf_2view",
     "Conf_pseudo_multiview": "conf_pseudo_multiview",
+    "Conf_gs_fused": "conf_gs_fused",
 }
 
 
@@ -147,6 +155,7 @@ def init_metric_accumulators(eval_mode: str, architecture: str, conf_fusion: boo
     if eval_mode == "pixel_fusion" and architecture == "whole":
         accum["conf_2view"] = {}
         accum["conf_pseudo_multiview"] = {}
+        accum["conf_gs_fused"] = {}
     return accum
 
 
@@ -197,7 +206,15 @@ def wandb_logs_from_metrics(metrics: dict, args) -> dict:
     for k, v in metrics.get("depth", {}).items():
         logs[f"val/depth/{k}"] = float(v)
     conf_fusion = bool(getattr(args, "conf_pixel_level_fusion", False))
-    for section in ("conf", "conf_fused", "conf_stage1", "conf_stage2", "conf_2view", "conf_pseudo_multiview"):
+    for section in (
+        "conf",
+        "conf_fused",
+        "conf_stage1",
+        "conf_stage2",
+        "conf_2view",
+        "conf_pseudo_multiview",
+        "conf_gs_fused",
+    ):
         if section not in metrics:
             continue
         prefix = f"val/{section}"

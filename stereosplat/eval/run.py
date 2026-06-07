@@ -125,6 +125,10 @@ def validate_args(args) -> None:
                 "pixel_fusion + whole loads Difix3D weights (legacy behavior); "
                 "pass --pretrained_diffix_model_path."
             )
+    if args.conf_fusion_margin is not None and not args.conf_pixel_level_fusion:
+        raise ValueError("--conf_fusion_margin requires --conf_pixel_level_fusion.")
+    if args.gs_conf_fusion and args.eval_mode not in ("pixel_fusion", "stereosplat_plus"):
+        raise ValueError("--gs_conf_fusion requires eval_mode pixel_fusion or stereosplat_plus.")
 
 
 def main(args=None, defaults: dict | None = None):
@@ -162,6 +166,51 @@ def main(args=None, defaults: dict | None = None):
         action="store_true",
         default=False,
         help="Per-pixel confidence fusion (pixel_fusion mode, or legacy separated/whole validators).",
+    )
+    parser.add_argument(
+        "--conf_fusion_margin",
+        type=float,
+        default=None,
+        help=(
+            "A1 conf fusion: pick plus only when conf_plus > conf_base + margin "
+            "(ties prefer base). Omit for legacy conf_plus >= conf_base (ties prefer plus)."
+        ),
+    )
+    parser.add_argument(
+        "--gs_conf_fusion",
+        action="store_true",
+        default=False,
+        help=(
+            "Fuse G_base and G_plus in 3D (voxel conf winner + margin). "
+            "With --conf_pixel_level_fusion: pixel-fuse G_base render vs G_gs_fused render."
+        ),
+    )
+    parser.add_argument(
+        "--gs_fusion_voxel_size",
+        type=float,
+        default=0.1,
+        help="Voxel size (meters) for --gs_conf_fusion.",
+    )
+    parser.add_argument(
+        "--gs_fusion_margin",
+        type=float,
+        default=0.05,
+        help="Plus wins a voxel when agg(conf_plus) > agg(conf_base) + margin.",
+    )
+    parser.add_argument(
+        "--gs_fusion_conf_agg",
+        choices=["mean", "max"],
+        default="mean",
+        help="Per-voxel conf aggregation over Gaussians on each side (default: mean).",
+    )
+    parser.add_argument(
+        "--gs_fusion_base_conf_thresh",
+        type=float,
+        default=None,
+        help=(
+            "Base-priority gate: plus wins a voxel only if mean/max conf_base < this "
+            "(and margin rule). Omit to use relative conf comparison only."
+        ),
     )
     parser.add_argument("--output_vis", action="store_true", default=False)
     parser.add_argument("--use-wandb", action="store_true")

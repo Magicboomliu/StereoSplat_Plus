@@ -99,10 +99,18 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ ③ pixel_fusion（S+ + conf 融合）                               │
+│ ③ pixel_fusion（S+ + 2D conf 融合）                            │
 │    在 ② 基础上：两路 render 按 per-pixel conf 融合              │
 │    （whole：2-view GS vs pseudo-multiview GS；                  │
 │      separated：Stage1 render vs Stage2 render）              │
+│    可选 A1：--conf_fusion_margin（base 优先 + margin）          │
+├─────────────────────────────────────────────────────────────┤
+│ ③′ GS voxel fusion（3D conf 融合，eval 扩展）                  │
+│    G_base vs G_plus 按体素 mean(conf) + margin + base_thresh   │
+│    → G_gs_fused → 单次渲染                                     │
+├─────────────────────────────────────────────────────────────┤
+│ ③″ GS + Pixel 联合（eval 扩展）                                │
+│    先 ③′，再 G_base 渲染 vs G_gs_fused 渲染做 pixel 融合       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -187,7 +195,8 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 融合开关 | CLI | 行为 |
 |----------|-----|------|
 | fusion **off** | 不加 `--conf_pixel_level_fusion` | 走完整 S+ 管线，但不融合（与改 fusion 前的 deactivate 一致） |
-| fusion **on** | `--conf_pixel_level_fusion` | 逐像素 `conf_b >= conf_a` 取 B；fused_conf 取被选中路的 conf |
+| fusion **on（legacy）** | `--conf_pixel_level_fusion` | 逐像素 `conf_b >= conf_a` 取 B（平局偏 plus） |
+| fusion **on（A1）** | `--conf_pixel_level_fusion --conf_fusion_margin 0.05` | `conf_b > conf_a + margin` 才选 B（平局偏 base） |
 
 #### ③-A whole — 单 checkpoint，融合两路内部 render
 
@@ -221,6 +230,36 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 
 ---
 
+### 方式 ③′：GS voxel conf 融合（3D，Stage1 whole 已实现）
+
+在 S+ 管线第二次 forward 得到 **G_base** `[N1,15]` 与 **G_plus** `[N2,15]` 后，在 **3D 体素**内融合，再 **只渲染一次**。
+
+| 项 | 说明 |
+|----|------|
+| **实现** | `utilsdir/gaussain_fusion.py` → `fuse_gaussians_by_voxel_conf_margin` |
+| **CLI** | `--gs_conf_fusion`（与 `--eval_mode pixel_fusion` + `whole` 联用） |
+| **体素判决** | 同体素内 `mean(conf_base)` vs `mean(conf_plus)`；plus 赢需同时满足：`mean(conf_plus) > mean(conf_base) + margin` 且（若设）`mean(conf_base) < base_thresh` |
+| **默认（Stage1 脚本）** | `voxel=0.1`，`gs_margin=0.05`，`conf_agg=mean`，`base_thresh=0.60` |
+| **与 pixel 关系** | 单独开 GS：最终指标 = G_gs_fused 渲染；可与 pixel 联合（见 ③″） |
+
+Shell：`stage1/gs_conf_voxel_fusion_pose_injection_single_model.sh`
+
+---
+
+### 方式 ③″：GS + Pixel 联合融合（Stage1 whole）
+
+| 步骤 | 内容 |
+|------|------|
+| 1 | GS 体素融合 → `G_gs_fused` → 渲染得 `rgb_gs`, `conf_gs` |
+| 2 | `G_base` 再渲染得 `rgb_base`, `conf_base` |
+| 3 | `fuse_renders_by_conf_pixelwise(rgb_base, rgb_gs, ...)`（**不是** base vs 原始 G_plus） |
+
+CLI 同时传：`--gs_conf_fusion` + `--conf_pixel_level_fusion` + `--conf_fusion_margin`（及 GS 相关参数）。
+
+Shell：`stage1/gs_and_pixel_fusion_pose_injection_single_model.sh`
+
+---
+
 ### 消融：Oracle 上界
 
 | 项 | 说明 |
@@ -231,13 +270,16 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 
 ---
 
-### 完整对照表（8 种标准推理 + Shell）
+### 完整对照表（8 种标准推理 + Stage1 融合扩展 + Shell）
 
 | # | Stage | eval_mode | arch | 主 ckpt | 冻结 S1 | Difix | conf fusion | 模型函数（简写） | Shell |
 |---|-------|-----------|------|---------|---------|-------|-------------|------------------|-------|
 | 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `infer_stereosplat_two_gt_views_forward` | `stage1/stereosplat_two_gt_views_forward.sh` |
 | 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `infer_stereosplat_plus_pose_injection_single_model` | `stage1/stereosplat_plus_progressive_single_model.sh` |
-| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `infer_pixel_fusion_pose_injection_single_model` | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 2D | `infer_pixel_fusion_pose_injection_single_model` | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 3a | 1 | pixel_fusion + GS | whole | S1 | — | 通常 ✓ | 3D | 同上 + `--gs_conf_fusion` | `stage1/gs_conf_voxel_fusion_pose_injection_single_model.sh` |
+| 3b | 1 | pixel_fusion + GS+2D | whole | S1 | — | 通常 ✓ | 3D+2D | 同上 + GS + `--conf_pixel_level_fusion` | `stage1/gs_and_pixel_fusion_pose_injection_single_model.sh` |
+| — | 1 | Oracle | whole | S1 | — | 通常 ✓ | GT | `infer_oracle_upper_bound_ablation` | `stage1/oracle_gt_upper_bound_pose_injection.sh` |
 | 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1 | `stage2/stereosplat_two_gt_views_forward.sh` |
 | 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | 同 #2 | `stage2/stereosplat_plus_progressive_single_model.sh` |
 | 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `infer_stereosplat_plus_frozen_stage1_two_models` | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh`（`--pseudo_ratio`） |
@@ -263,7 +305,7 @@ Shell 文件名与模型函数名一一对应；路由见 `eval/routes.py`。可
 
 3. **whole 下 S+ 与 pixel_fusion 共用 pose injection + `pseudo_ratio`**  
    - 默认 `0.5/1.0` 与原 progressive（center+last）等价  
-   - pixel_fusion 额外支持 `--conf_pixel_level_fusion`
+   - pixel_fusion 额外支持 2D `--conf_pixel_level_fusion` / A1 `--conf_fusion_margin`，以及 3D `--gs_conf_fusion`（可与 2D 联合，Stage1 已验证）
 
 4. **separated 仅 Stage2 的 S+ / pixel_fusion**  
    - Stage1 训练只有单模型，评估也只有 `whole`。
@@ -314,7 +356,10 @@ Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么
 | `stereosplat_two_gt_views_forward.sh` | 最基础：2 张 GT 前向视角直接 forward |
 | `stereosplat_plus_progressive_single_model.sh` | S+ pose injection（`pseudo_ratio`），**一个**模型端到端 |
 | `stereosplat_plus_progressive_frozen_stage1_two_models.sh` | S+ pose injection（`pseudo_ratio`），**冻结 Stage1 + Stage2** |
-| `pixel_fusion_pose_injection_single_model.sh` | pixel_fusion pose injection，**一个**模型 |
+| `pixel_fusion_pose_injection_single_model.sh` | pixel_fusion pose injection，**一个**模型（含 A1 margin 函数） |
+| `gs_conf_voxel_fusion_pose_injection_single_model.sh` | **仅 GS 体素融合**（Stage1） |
+| `gs_and_pixel_fusion_pose_injection_single_model.sh` | **GS + Pixel 联合**（Stage1） |
+| `oracle_gt_upper_bound_pose_injection.sh` | Oracle GT 融合上界（Stage1） |
 | `pixel_fusion_pose_injection_frozen_stage1_two_models.sh` | pixel_fusion，**冻结 Stage1 + Stage2** 两个模型 |
 
 函数名（脚本**最底部**注释切换要跑哪一个）：
@@ -325,7 +370,10 @@ Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么
 | `run_without_difix3d` | S+ / pixel_fusion，不用 Difix3D 修 pseudo |
 | `run_with_difix3d` | S+ / pixel_fusion，用 Difix3D 修 pseudo |
 | `run_without_conf_pixel_level_fusion` | pixel_fusion，不做逐像素 conf 融合 |
-| `run_with_conf_pixel_level_fusion` | pixel_fusion，开启 `--conf_pixel_level_fusion` |
+| `run_with_conf_pixel_level_fusion` | pixel_fusion，legacy `--conf_pixel_level_fusion` |
+| `run_with_conf_pixel_level_fusion_margin_a1` | pixel_fusion，A1 `--conf_fusion_margin` |
+| `run_gs_conf_voxel_fusion` | 仅 GS 3D 融合（`gs_conf_voxel_fusion_*.sh`） |
+| `run_gs_and_pixel_fusion` | GS + Pixel 联合（`gs_and_pixel_fusion_*.sh`） |
 
 每个函数内自包含：`output_folder`、`pretrained_model_path`、`stage_1_model_path`、GPU yaml 等；**改路径直接编辑对应 `.sh`**。
 
@@ -334,9 +382,12 @@ Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么
 ```
 scripts/evaluation/
 ├── stage1/                                          # 加载 Stage1 checkpoint
-│   ├── stereosplat_two_gt_views_forward.sh          # → run_metric_eval
-│   ├── stereosplat_plus_progressive_single_model.sh # → run_without_difix3d / run_with_difix3d
-│   └── pixel_fusion_pose_injection_single_model.sh  # → run_without_conf_pixel_level_fusion / run_with_conf_pixel_level_fusion
+│   ├── stereosplat_two_gt_views_forward.sh
+│   ├── stereosplat_plus_progressive_single_model.sh
+│   ├── pixel_fusion_pose_injection_single_model.sh
+│   ├── gs_conf_voxel_fusion_pose_injection_single_model.sh
+│   ├── gs_and_pixel_fusion_pose_injection_single_model.sh
+│   └── oracle_gt_upper_bound_pose_injection.sh
 └── stage2/                                          # 加载 Stage2 checkpoint
     ├── stereosplat_two_gt_views_forward.sh
     ├── stereosplat_plus_progressive_single_model.sh
@@ -354,6 +405,9 @@ scripts/evaluation/
 | 1 | stereosplat | whole | `stage1/stereosplat_two_gt_views_forward.sh` |
 | 1 | stereosplat_plus | whole | `stage1/stereosplat_plus_progressive_single_model.sh` |
 | 1 | pixel_fusion | whole | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 1 | pixel_fusion + GS | whole | `stage1/gs_conf_voxel_fusion_pose_injection_single_model.sh` |
+| 1 | pixel_fusion + GS+2D | whole | `stage1/gs_and_pixel_fusion_pose_injection_single_model.sh` |
+| 1 | Oracle | whole | `stage1/oracle_gt_upper_bound_pose_injection.sh` |
 | 2 | stereosplat | whole | `stage2/stereosplat_two_gt_views_forward.sh` |
 | 2 | stereosplat_plus | whole | `stage2/stereosplat_plus_progressive_single_model.sh` |
 | 2 | stereosplat_plus | separated | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh` |
@@ -373,6 +427,11 @@ bash scripts/evaluation/stage2/stereosplat_plus_progressive_frozen_stage1_two_mo
 
 # Stage2 pixel fusion，冻结 Stage1
 bash scripts/evaluation/stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh
+
+# Stage1 GS 体素融合 / GS+Pixel 联合 / Oracle 上界
+bash scripts/evaluation/stage1/gs_conf_voxel_fusion_pose_injection_single_model.sh
+bash scripts/evaluation/stage1/gs_and_pixel_fusion_pose_injection_single_model.sh
+bash scripts/evaluation/stage1/oracle_gt_upper_bound_pose_injection.sh
 ```
 
 ### 直接调 eval/run.py
@@ -400,7 +459,14 @@ pixi run -e cu118 accelerate launch \
 | `--pseudo_ratio` | 第二/第三组 pseudo stereo 比例，如 `0.5 1.0`（`stereosplat_plus` / `pixel_fusion`；未传时默认 `0.5 1.0`） |
 | `--output_vis` | 可视化模式（见下节） |
 | `--use_diffix3d` / `--use_ref` | 启用 Difix3D + stereo ref |
-| `--conf_pixel_level_fusion` | 逐像素 conf 融合（`pixel_fusion` 模式） |
+| `--conf_pixel_level_fusion` | 2D 逐像素 conf 融合 |
+| `--conf_fusion_margin` | A1：选 B 需 `conf_b > conf_a + margin`；需与 `--conf_pixel_level_fusion` 同开 |
+| `--gs_conf_fusion` | 3D GS 体素 conf 融合 G_base/G_plus |
+| `--gs_fusion_voxel_size` | 体素边长（米），默认 `0.1` |
+| `--gs_fusion_margin` | 体素内 plus 赢所需 conf 优势，默认 `0.05` |
+| `--gs_fusion_conf_agg` | `mean`（默认）或 `max` |
+| `--gs_fusion_base_conf_thresh` | base 优先：仅当体素 `mean(conf_base)` 低于此值才允许 plus 赢 |
+| `--use_gt_view` | Oracle 上界（Stage1） |
 
 ### 旧路径（仍可用，flat 自包含，与 stage shell 写法一致）
 
@@ -444,7 +510,7 @@ stereosplat/
 ├── scripts/
 │   ├── train/stereosplat/   # train.sh, train_stereosplat_stage2.sh
 │   └── evaluation/
-│       ├── stage1/          # stereosplat_two_gt_views_forward.sh 等 3 个
+│       ├── stage1/          # 7 个 shell（含 gs / gs+pixel / oracle）
 │       ├── stage2/          # 5 个（含 frozen_stage1_two_models 双模型）
 │       └── stereosplat_plus/conf_fusion/pixel_level/  # legacy_*.sh
 ├── src/stereosplat/         # 模型、config、dataloader
@@ -477,7 +543,7 @@ rendered_conf[pixel] = Σ conf_i · α_i · T_i
 
 | 文档 | 内容 |
 |------|------|
-| **本文件** | 安装、训练、**推理方式详解（8 种 + Oracle）**、Shell 速查、可视化 |
+| **本文件** | 安装、训练、**推理方式详解（8 种 + GS/联合融合 + Oracle）**、Shell 速查、可视化 |
 | **[eval/README.md](eval/README.md)** | 评估深入：调用链 mermaid、CLI 全参数、legacy 映射、FAQ |
 | 各 `stage{1,2}/*.sh` 函数内 | checkpoint、`output_folder`、GPU、Difix 等（主配置位置） |
 
