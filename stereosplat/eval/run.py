@@ -193,6 +193,9 @@ def main(args=None, defaults: dict | None = None):
     if not args.config_path:
         args.config_path = config_path_for_stage(args.training_stage)
 
+    if not args.pseudo_ratio and args.eval_mode in ("stereosplat_plus", "pixel_fusion"):
+        args.pseudo_ratio = [0.5, 1.0]
+
     validate_args(args)
 
     cfg = Config.fromfile(args.config_path)

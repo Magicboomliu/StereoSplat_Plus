@@ -409,7 +409,7 @@ def fuse_renders_by_conf_pixelwise(rgb_a, rgb_b, depth_a, depth_b, conf_a, conf_
 
 
 def save_stereo_conf_plots(rendered_conf_fusion, conf_folder_path):
-    """Save first/center/last stereo confidence colormaps (same as validation_on_the_forward_views)."""
+    """Save first/center/last stereo confidence colormaps (same as infer_stereosplat_two_gt_views_forward)."""
     if rendered_conf_fusion is None:
         return
     import matplotlib.cm as cm
@@ -2759,7 +2759,7 @@ class StereoSplat(BaseModule):
         return metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list
 
     
-    def validation_on_the_forward_views(self,
+    def infer_stereosplat_two_gt_views_forward(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -4850,18 +4850,22 @@ class StereoSplat(BaseModule):
     #         if not os.path.exists(saved_reference_filename):
     #             current_reference_views_pil.save(saved_reference_filename)
         
-    def validation_on_the_forward_views_progressive_iter_once_revised(self,
+    def infer_stereosplat_plus_pose_injection_single_model(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
                                         start_images_views = 2,
+                                        pseudo_ratio_index = [],
                                         use_diffix3d=False,
                                         diffix3d_network=None,
                                         use_ref=False,
                                         cfg=None,
                                         vis=False,
                                         ):
-        
+        """stereosplat_plus + whole：pose injection，第二/第三组 stereo 由 pseudo_ratio 选择（默认 0.5/1.0 = center+last）。"""
+        if not pseudo_ratio_index or len(pseudo_ratio_index) < 2:
+            pseudo_ratio_index = [0.5, 1.0]
+
         bin_token_name = bin_token_list[0][:-4]
         if start_images_views == 2:
             view_num = 2
@@ -4915,174 +4919,13 @@ class StereoSplat(BaseModule):
         
         gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
         bs = gaussians_all.shape[0] # batch size is 2
-        
-        # doing rendering here
-        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)
-        interleave_render_c2w = interleave_left_right_pose(render_c2w)
-        
-        render_c2w = interleave_render_c2w[:,-6:-2,:,:]
+
+        # 全轨迹渲染，再按 pseudo_ratio 选取第二/第三组 pseudo stereo
+        render_c2w = output_batch_dict["output_c2ws"]
         intrinsics = input_batch_dict['intrinsics']
-        intrinsics = intrinsics.clone()     
-        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
-        render_fovxs = output_batch_dict["output_fovxs"][:,-6:-2]# [B,6*3]
-        render_fovys = output_batch_dict["output_fovys"][:,-6:-2] # [B,6*3]
-        gt_center_frame = interleave_left_right(output_batch_dict["output_imgs"])
-        gt_center_frame =gt_center_frame[:,-6:-2,:,:,:]
-        
-
-
-        render_pkg_fuse = self.renderer.render(
-            gaussians=gaussians_all,
-            c2w=render_c2w,
-            fovx=render_fovxs,
-            fovy=render_fovys,
-            rays_o=None,
-            rays_d=None
-        )  
-
-        rendered_results_fuse = render_pkg_fuse
-        rendered_center_frame = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
-        rendered_center_frame = torch.clamp(rendered_center_frame,min=0,max=1.0)
-        
-
-        if use_diffix3d:
-            # logic here
-            # enhance the center frame
-            rendered_center_frame = rendered_center_frame
-            rendered_center_left = rendered_center_frame[0,0,:,:,:].permute(1,2,0).cpu().numpy()
-            rendered_center_right = rendered_center_frame[0,1,:,:,:].permute(1,2,0).cpu().numpy()
-            rendered_last_left = rendered_center_frame[0,2,:,:,:].permute(1,2,0).cpu().numpy()
-            rendered_last_right = rendered_center_frame[0,3,:,:,:].permute(1,2,0).cpu().numpy()
-            
-            
-            rendered_center_left = (rendered_center_left*255).astype(np.uint8)
-            rendered_center_right = (rendered_center_right*255).astype(np.uint8)
-            rendered_last_left = (rendered_last_left*255).astype(np.uint8)
-            rendered_last_right = (rendered_last_right*255).astype(np.uint8)
-            
-            
-            rendered_center_left_pil = Image.fromarray(rendered_center_left)
-            rendered_center_right_pil = Image.fromarray(rendered_center_right)
-            rendered_last_left_pil = Image.fromarray(rendered_last_left)
-            rendered_last_right_pil = Image.fromarray(rendered_last_right)
-            
-            width,height = rendered_center_left_pil.size
-            
-            # get the ref image
-            ref_image_left = input_batch_dict["imgs"][0,0,:,:,:].permute(1,2,0).cpu().numpy()
-            ref_image_left = (ref_image_left*255).astype(np.uint8)
-            ref_image_left_pil = Image.fromarray(ref_image_left)
-            ref_image_right = input_batch_dict["imgs"][0,1,:,:,:].permute(1,2,0).cpu().numpy()
-            ref_image_right = (ref_image_right*255).astype(np.uint8)
-            ref_image_right_pil = Image.fromarray(ref_image_right)
-
-            enhanced_rendered_center_left_pil = diffix3d_network.sample(
-                    rendered_center_left_pil,
-                    height=112,
-                    width=544,
-                    ref_image=ref_image_left_pil,
-                    prompt=cfg.prompt
-                )
-            enhanced_rendered_center_right_pil = diffix3d_network.sample(
-                    rendered_center_right_pil,
-                    height=112,
-                    width=544,
-                    ref_image=ref_image_right_pil,
-                    prompt=cfg.prompt
-                )
-            enhanced_rendered_last_left_pil = diffix3d_network.sample(
-                    rendered_last_left_pil,
-                    height=112,
-                    width=544,
-                    ref_image=ref_image_left_pil,
-                    prompt=cfg.prompt
-                )
-            enhanced_rendered_last_right_pil = diffix3d_network.sample(
-                    rendered_last_right_pil,
-                    height=112,
-                    width=544,
-                    ref_image=ref_image_right_pil,
-                    prompt=cfg.prompt
-                )
-
-            enhanced_rendered_center_left = np.array(enhanced_rendered_center_left_pil).astype(np.float32)/255.0
-            enhanced_rendered_center_right = np.array(enhanced_rendered_center_right_pil).astype(np.float32)/255.0
-            enhanced_rendered_last_left = np.array(enhanced_rendered_last_left_pil).astype(np.float32)/255.0
-            enhanced_rendered_last_right = np.array(enhanced_rendered_last_right_pil).astype(np.float32)/255.0
-            
-            enhanced_rendered_center_left = torch.from_numpy(enhanced_rendered_center_left).to(rendered_center_frame.device)
-            enhanced_rendered_center_right = torch.from_numpy(enhanced_rendered_center_right).to(rendered_center_frame.device)
-            enhanced_rendered_last_left = torch.from_numpy(enhanced_rendered_last_left).to(rendered_center_frame.device)
-            enhanced_rendered_last_right = torch.from_numpy(enhanced_rendered_last_right).to(rendered_center_frame.device)
-            enhanced_rendered_center_left = enhanced_rendered_center_left.permute(2,0,1).unsqueeze(0)
-            enhanced_rendered_center_right = enhanced_rendered_center_right.permute(2,0,1).unsqueeze(0)
-            enhanced_rendered_last_left = enhanced_rendered_last_left.permute(2,0,1).unsqueeze(0)
-            enhanced_rendered_last_right = enhanced_rendered_last_right.permute(2,0,1).unsqueeze(0)
-            
-            enhanced_rendered_center_frame = torch.cat([enhanced_rendered_center_left,
-                                                        enhanced_rendered_center_right,
-                                                        enhanced_rendered_last_left,
-                                                        enhanced_rendered_last_right],dim=0).unsqueeze(0)
-            
-            rendered_center_frame = enhanced_rendered_center_frame
-            
-
-        ''' Second Time Inference '''
-        input_batch_dict,output_batch_dict = self.prepare_input_multiview(
-                                                                         batch=batch,
-                                                                         view_num=6,
-                                                                         matching_nums=4
-                                                                         )
-        input_batch_dict["imgs"][:,2:,:,:,:] = rendered_center_frame
-        
-        img =input_batch_dict["imgs"] #[B,6,3,H,W]
-        
-
-        height,width = img.shape[-2:]
-        bs = img.shape[0]   
-        img_feats = self.extract_img_feat(img=img)
-        gaussians_cv,gaussians_feat,pred_depths = self.costvolume_gs(input_batch_dict,cfg=cfg,
-                                                        images_feat=img_feats[0])
-
-        # volume-gs prediction
-        pc_range = self.dataset_params.pc_range
-        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
-        # batch-wise saved the gaussain-pixel and the feature-pixel
-        gaussians_cv_mask, gaussians_feat_mask = [], []
-        for b in range(bs):
-            mask_pixel_i = (gaussians_cv[b, :, 0] >= x_start) & (gaussians_cv[b, :, 0] <= x_end) & \
-                        (gaussians_cv[b, :, 1] >= y_start) & (gaussians_cv[b, :, 1] <= y_end) & \
-                        (gaussians_cv[b, :, 2] >= z_start) & (gaussians_cv[b, :, 2] <= z_end)
-            # get the valid gaussains in the pixel splat
-            gaussians_cv_mask_i = gaussians_cv[b][mask_pixel_i]
-            # get the valid feature in the pixel splat
-            gaussians_feat_mask_i = gaussians_feat[b][mask_pixel_i]
-            gaussians_cv_mask.append(gaussians_cv_mask_i)
-            gaussians_feat_mask.append(gaussians_feat_mask_i)
-
-        gaussians_volume = self.volume_gs(
-                [img_feats[0]],
-                input_batch_dict['extrinsics'],
-                gaussians_cv_mask,
-                gaussians_feat_mask,
-                input_batch_dict["img_metas"])
-
-        # Make Sure the estimate gaussains are valid
-        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
-        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
-        
-        
-        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
-        bs = gaussians_all.shape[0] # batch size is 2
-        
-
-        render_c2w = output_batch_dict["output_c2ws"] #(1,6,4,4)        
-        intrinsics = input_batch_dict['intrinsics']
-        intrinsics = intrinsics.clone()     
-        output_intrinsics = intrinsics[:,0:1,:,:].repeat(1,render_c2w.shape[1],1,1)
+        intrinsics = intrinsics.clone()
         render_fovxs = output_batch_dict["output_fovxs"]
         render_fovys = output_batch_dict["output_fovys"]
-        
 
         render_pkg_fuse = self.renderer.render(
             gaussians=gaussians_all,
@@ -5090,27 +4933,137 @@ class StereoSplat(BaseModule):
             fovx=render_fovxs,
             fovy=render_fovys,
             rays_o=None,
-            rays_d=None
+            rays_d=None,
+        )
+
+        rendered_color_fuse = torch.clamp(render_pkg_fuse['image'], min=0, max=1.0)
+        rendered_images_fusion = interleave_left_right(rendered_color_fuse)
+
+        rendered_images_first_stereo = rendered_images_fusion[:, -2:, :, :, :]
+        rendered_images_last_stereo = rendered_images_fusion[:, -4:-2, :, :, :]
+        rendered_images_center_stereo = rendered_images_fusion[:, -6:-4, :, :, :]
+
+        input_batch_dict, output_batch_dict = self.prepare_tripleview_by_ratio_index(
+            batch=batch,
+            pseudo_ratio_index=pseudo_ratio_index,
+        )
+
+        if pseudo_ratio_index[0] == 0.5 and pseudo_ratio_index[1] == 1.0:
+            pseudo_stereo_frames = torch.cat(
+                [rendered_images_center_stereo, rendered_images_last_stereo], dim=1
+            )
+        else:
+            raw_rendered_rest_images = rendered_images_fusion[:, :-6, :, :, :]
+            raw_rendered_rest_images = torch.cat(
+                [rendered_images_first_stereo, raw_rendered_rest_images, rendered_images_last_stereo],
+                dim=1,
+            )
+            raw_rendered_rest_stereo_pair_nums = raw_rendered_rest_images.shape[1] // 2
+            raw_second_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[0]) * 2
+            raw_second_frame_right_id = raw_second_frame_left_id + 1
+            raw_third_frame_left_id = int(raw_rendered_rest_stereo_pair_nums * pseudo_ratio_index[1]) * 2
+            raw_third_frame_right_id = raw_third_frame_left_id + 1
+            raw_second_frames_stereo_images = raw_rendered_rest_images[
+                :, raw_second_frame_left_id:raw_second_frame_right_id + 1, :, :, :
+            ]
+            raw_third_frames_stereo_images = raw_rendered_rest_images[
+                :, raw_third_frame_left_id:raw_third_frame_right_id + 1, :, :, :
+            ]
+            pseudo_stereo_frames = torch.cat(
+                [raw_second_frames_stereo_images, raw_third_frames_stereo_images], dim=1
+            )
+
+        if use_diffix3d:
+            ref_image_left = input_batch_dict["imgs"][0, 0, :, :, :].permute(1, 2, 0).cpu().numpy()
+            ref_image_right = input_batch_dict["imgs"][0, 1, :, :, :].permute(1, 2, 0).cpu().numpy()
+            ref_image_left_pil = Image.fromarray((ref_image_left * 255).astype(np.uint8))
+            ref_image_right_pil = Image.fromarray((ref_image_right * 255).astype(np.uint8))
+
+            enhanced_views = []
+            for view_idx in range(pseudo_stereo_frames.shape[1]):
+                raw_view = pseudo_stereo_frames[0, view_idx, :, :, :].permute(1, 2, 0).cpu().numpy()
+                raw_view_pil = Image.fromarray((raw_view * 255).astype(np.uint8))
+                ref_pil = ref_image_left_pil if view_idx % 2 == 0 else ref_image_right_pil
+                enhanced_view_pil = diffix3d_network.sample(
+                    raw_view_pil,
+                    height=112,
+                    width=544,
+                    ref_image=ref_pil,
+                    prompt=cfg.prompt,
+                )
+                enhanced_views.append(convert_pil_to_tensor(enhanced_view_pil))
+            pseudo_stereo_frames = torch.cat(enhanced_views, dim=1)
+
+        ''' Second Time Inference（6-view 布局由 prepare_tripleview_by_ratio_index + pseudo_ratio 决定）'''
+        input_batch_dict["imgs"][:, 2:, :, :, :] = pseudo_stereo_frames
+
+        img = input_batch_dict["imgs"]  # [B,6,3,H,W]
+
+        height, width = img.shape[-2:]
+        bs = img.shape[0]
+        img_feats = self.extract_img_feat(img=img)
+        gaussians_cv, gaussians_feat, pred_depths = self.costvolume_gs(
+            input_batch_dict, cfg=cfg, images_feat=img_feats[0]
+        )
+
+        pc_range = self.dataset_params.pc_range
+        x_start, y_start, z_start, x_end, y_end, z_end = pc_range
+        gaussians_cv_mask, gaussians_feat_mask = [], []
+        for b in range(bs):
+            mask_pixel_i = (
+                (gaussians_cv[b, :, 0] >= x_start)
+                & (gaussians_cv[b, :, 0] <= x_end)
+                & (gaussians_cv[b, :, 1] >= y_start)
+                & (gaussians_cv[b, :, 1] <= y_end)
+                & (gaussians_cv[b, :, 2] >= z_start)
+                & (gaussians_cv[b, :, 2] <= z_end)
+            )
+            gaussians_cv_mask.append(gaussians_cv[b][mask_pixel_i])
+            gaussians_feat_mask.append(gaussians_feat[b][mask_pixel_i])
+
+        gaussians_volume = self.volume_gs(
+            [img_feats[0]],
+            input_batch_dict["extrinsics"],
+            gaussians_cv_mask,
+            gaussians_feat_mask,
+            input_batch_dict["img_metas"],
+        )
+
+        gaussians_cv = sanitize_gaussians_tensor(gaussians_cv)
+        gaussians_volume = sanitize_gaussians_tensor(gaussians_volume)
+
+        gaussians_all = torch.cat([gaussians_cv, gaussians_volume], dim=1)
+        bs = gaussians_all.shape[0]
+
+        render_c2w = output_batch_dict["output_c2ws"]
+        intrinsics = input_batch_dict["intrinsics"].clone()
+        output_intrinsics = intrinsics[:, 0:1, :, :].repeat(1, render_c2w.shape[1], 1, 1)
+        render_fovxs = output_batch_dict["output_fovxs"]
+        render_fovys = output_batch_dict["output_fovys"]
+
+        render_pkg_fuse = self.renderer.render(
+            gaussians=gaussians_all,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None,
         )
 
         rendered_results_fuse = render_pkg_fuse
-        rendered_color_fuse = rendered_results_fuse['image'] # torch.Size([1, V, 3, 224, 832])
-        rendered_depth_fuse = rendered_results_fuse['depth'] # torch.Size([1, V, 1, 224, 832])
-        rendered_alpha_fuse = rendered_results_fuse['alpha'] # torch.Size([1, V, 1, 224, 832])
+        rendered_color_fuse = rendered_results_fuse["image"]
+        rendered_depth_fuse = rendered_results_fuse["depth"]
+        rendered_alpha_fuse = rendered_results_fuse["alpha"]
         rendered_depth_fuse = rendered_depth_fuse.squeeze(2)
         rendered_alpha_fuse = rendered_alpha_fuse.squeeze(2)
         rendered_conf_fuse = conf_from_render_pkg(render_pkg_fuse)
-        
-        rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
-        rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
-        
-        output_rgb = output_batch_dict['output_imgs']
-        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
-        
-        
-        
 
-        '''Do the visualization and the evaluation here'''
+        rendered_color_fuse = torch.clamp(rendered_color_fuse, min=0, max=1.0)
+        rendered_depth_fuse = torch.clamp(rendered_depth_fuse, min=0, max=150)
+
+        output_rgb = output_batch_dict["output_imgs"]
+        sparse_depth_gt = output_batch_dict["output_sparse_depth"]
+
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
         rendered_conf_fusion = None
@@ -5118,27 +5071,30 @@ class StereoSplat(BaseModule):
             rendered_conf_fusion = interleave_left_right_depth(rendered_conf_fuse)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
-        
 
-        # Post Processing
         if cfg.use_diffix3d_postprocessing:
-            
+            ref_image_left = input_batch_dict["imgs"][0, 0, :, :, :].permute(1, 2, 0).cpu().numpy()
+            ref_image_right = input_batch_dict["imgs"][0, 1, :, :, :].permute(1, 2, 0).cpu().numpy()
+            ref_image_left_pil = Image.fromarray((ref_image_left * 255).astype(np.uint8))
+            ref_image_right_pil = Image.fromarray((ref_image_right * 255).astype(np.uint8))
+
             enhanced_rendered_images_list = []
             
             for current_view_idx in range(rendered_images_fusion.shape[1]):
                 current_rendered_image = rendered_images_fusion[0,current_view_idx,:,:,:].permute(1,2,0).cpu().numpy()
                 current_rendered_image = (current_rendered_image*255).astype(np.uint8)
                 current_rendered_image_pil = Image.fromarray(current_rendered_image)
+                ref_pil = ref_image_left_pil if current_view_idx % 2 == 0 else ref_image_right_pil
                 
                 current_rendered_image_pil = diffix3d_network.sample(
                         current_rendered_image_pil,
                         height=112,
                         width=544,
-                        ref_image=ref_image_left_pil,
+                        ref_image=ref_pil,
                         prompt=cfg.prompt
                     )
                 current_rendered_image_np = np.array(current_rendered_image_pil).astype(np.float32)/255.0
-                current_rendered_image = torch.from_numpy(current_rendered_image_np).to(rendered_center_frame.device)
+                current_rendered_image = torch.from_numpy(current_rendered_image_np).to(rendered_color_fuse.device)
                 current_rendered_image = current_rendered_image.permute(2,0,1).unsqueeze(0).unsqueeze(0)
                 enhanced_rendered_images_list.append(current_rendered_image)
                 
@@ -7455,7 +7411,7 @@ class StereoSplat(BaseModule):
     
     # FIXME: Please Delete in the Future This Version is just to show the 
     # the potential of the progressive inference.
-    def oracle_upper_bound_ablation(self,
+    def infer_oracle_upper_bound_ablation(self,
                                     batch,
                                     val_result_savedir,
                                     bin_token_list,
@@ -9277,7 +9233,7 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         ):
         """Two-stage separated inference with per-pixel conf fusion of stage1 vs stage2 renders."""
-        return self.stereosplatplus_pose_view_selection_injection_two_seperated_models(
+        return self.infer_pixel_fusion_pose_injection_frozen_stage1_two_models(
             batch,
             val_result_savedir,
             bin_token_list,
@@ -9292,7 +9248,68 @@ class StereoSplat(BaseModule):
             pixel_level_conf_fusion=True,
         )
 
-    def stereosplatplus_pose_view_selection_injection_two_seperated_models(self,
+    def infer_stereosplat_plus_frozen_stage1_two_models(
+                                        self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views=2,
+                                        pseudo_ratio_index=[],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        frozen_stage_1_model=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        ):
+        """stereosplat_plus + separated：冻结 Stage1 渲染 pseudo，Stage2 progressive S+。"""
+        return self.infer_pose_injection_frozen_stage1_two_models(
+            batch,
+            val_result_savedir,
+            bin_token_list,
+            start_images_views=start_images_views,
+            pseudo_ratio_index=pseudo_ratio_index,
+            use_diffix3d=use_diffix3d,
+            diffix3d_network=diffix3d_network,
+            frozen_stage_1_model=frozen_stage_1_model,
+            use_ref=use_ref,
+            cfg=cfg,
+            vis=vis,
+            pixel_level_conf_fusion=False,
+        )
+
+    def infer_pixel_fusion_pose_injection_frozen_stage1_two_models(
+                                        self,
+                                        batch,
+                                        val_result_savedir,
+                                        bin_token_list,
+                                        start_images_views=2,
+                                        pseudo_ratio_index=[],
+                                        use_diffix3d=False,
+                                        diffix3d_network=None,
+                                        frozen_stage_1_model=None,
+                                        use_ref=False,
+                                        cfg=None,
+                                        vis=False,
+                                        pixel_level_conf_fusion=False,
+                                        ):
+        """pixel_fusion + separated：Stage1/Stage2 各渲染一路，pose injection + 可选 conf 逐像素融合。"""
+        return self.infer_pose_injection_frozen_stage1_two_models(
+            batch,
+            val_result_savedir,
+            bin_token_list,
+            start_images_views=start_images_views,
+            pseudo_ratio_index=pseudo_ratio_index,
+            use_diffix3d=use_diffix3d,
+            diffix3d_network=diffix3d_network,
+            frozen_stage_1_model=frozen_stage_1_model,
+            use_ref=use_ref,
+            cfg=cfg,
+            vis=vis,
+            pixel_level_conf_fusion=pixel_level_conf_fusion,
+        )
+
+    def infer_pose_injection_frozen_stage1_two_models(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -9984,7 +10001,7 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         ):
         """Unified single-model inference with per-pixel conf fusion of 2-view vs pseudo multiview renders."""
-        return self.stereosplatplus_difix3d_pose_view_selection_injection(
+        return self.infer_pixel_fusion_pose_injection_single_model(
             batch,
             val_result_savedir,
             bin_token_list,
@@ -9998,7 +10015,7 @@ class StereoSplat(BaseModule):
             pixel_level_conf_fusion=True,
         )
 
-    def stereosplatplus_difix3d_pose_view_selection_injection(self,
+    def infer_pixel_fusion_pose_injection_single_model(self,
                                         batch,
                                         val_result_savedir,
                                         bin_token_list,
@@ -13699,11 +13716,28 @@ class StereoSplat(BaseModule):
             write_pose_to_json(relative_pose_per_image,
                                os.path.join(saved_relative_pose_folder,
                                             "relative_pose_{}.txt".format(image_index)))
-            
-    
-    
-    
-        
+
+    # --- Legacy aliases（旧函数名，兼容历史脚本 / 文档）---
+
+    def validation_on_the_forward_views(self, *args, **kwargs):
+        return self.infer_stereosplat_two_gt_views_forward(*args, **kwargs)
+
+    def infer_stereosplat_plus_progressive_single_model(self, *args, **kwargs):
+        return self.infer_stereosplat_plus_pose_injection_single_model(*args, **kwargs)
+
+    def validation_on_the_forward_views_progressive_iter_once_revised(self, *args, **kwargs):
+        return self.infer_stereosplat_plus_pose_injection_single_model(*args, **kwargs)
+
+    def oracle_upper_bound_ablation(self, *args, **kwargs):
+        return self.infer_oracle_upper_bound_ablation(*args, **kwargs)
+
+    def stereosplatplus_pose_view_selection_injection_two_seperated_models(self, *args, **kwargs):
+        return self.infer_pose_injection_frozen_stage1_two_models(*args, **kwargs)
+
+    def stereosplatplus_difix3d_pose_view_selection_injection(self, *args, **kwargs):
+        return self.infer_pixel_fusion_pose_injection_single_model(*args, **kwargs)
+
+
 @torch.no_grad()
 def convert_pil_to_tensor(pil_image):
     img = torch.from_numpy(np.array(pil_image)).type(torch.float32)/255.0
@@ -14437,8 +14471,6 @@ def fuse_rgb_by_projected_depth(
     }
 
     return w_base, w_plus, fused_rgb, debug
-
-
 
 
 def convert_a_numpy_to_uint8(numpy_array):

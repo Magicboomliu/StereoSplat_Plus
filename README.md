@@ -1,14 +1,20 @@
 # StereoSplat Plus (Pixi)
 
-Feed-forward 3D Gaussian Splatting for autonomous driving scenes (KITTI-360).  
-This repository contains three components:
+Feed-forward 3D Gaussian Splatting for autonomous driving scenes (KITTI-360).
 
-| Component | Description |
-|-----------|-------------|
-| **(1) StereoSplat** | Feed-forward dual-branch 3DGS training and evaluation |
-| **(2) StereoSplat-Conf** | StereoSplat with per-Gaussian confidence supervision (Path 3: conf-guided fusion) |
-| **(3) StereoSplat+** | StereoSplat inference enhanced with Difix3D image restoration |
-| **(4) Difix3D** | Reference-guided image restoration model training and evaluation |
+本仓库为 **带 per-Gaussian confidence 的 StereoSplat+ 专用版**（15D Gaussians + 自定义 rasterizer），训练与评估均围绕 conf 模型设计。
+
+---
+
+## 组件概览
+
+| 组件 | 说明 |
+|------|------|
+| **StereoSplat（conf）** | Stage1：全 GT view + conf 监督 |
+| **StereoSplat Stage2** | Pseudo-GT mix + 可选 Difix3D 修复 |
+| **StereoSplat+ 推理** | `stereosplat_plus`：pose injection + `pseudo_ratio` |
+| **Pixel-level fusion** | `pixel_fusion`：在 S+ 上按 conf 逐像素融合两路渲染 |
+| **Difix3D** | 参考图引导的 pseudo view 修复（`difix3d/` 独立 Pixi 子项目） |
 
 ---
 
@@ -16,9 +22,56 @@ This repository contains three components:
 
 ```bash
 cd stereosplat
-pixi install -e cu118          # install all Python deps (accelerate, torch, wandb, ...)
-pixi run -e cu118 setup        # compile rasterizer + install mmcv/mmdet3d
-bash scripts/train/stereosplat/train.sh   # train StereoSplat-Conf (Model 1 with conf)
+pixi install -e cu118          # Python 依赖（accelerate, torch, wandb, ...）
+pixi run -e cu118 setup        # 编译含 conf 的 diff-gaussian-rasterization（必须）
+bash scripts/train/stereosplat/train.sh
 ```
 
-See [`stereosplat/README.md`](stereosplat/README.md) for full documentation.
+评估示例（Stage2 基础 2-view）：
+
+```bash
+bash scripts/evaluation/stage2/stereosplat_two_gt_views_forward.sh
+```
+
+---
+
+## 评估三种 mode（递进）
+
+| `eval_mode` | 含义 | 典型 Shell |
+|-------------|------|------------|
+| `stereosplat` | 2-view GT → 一次 forward → 渲染评估 | `stage{1,2}/stereosplat_two_gt_views_forward.sh` |
+| `stereosplat_plus` | 在 ① 上：全轨迹渲染 → `pseudo_ratio` 选 pseudo → 可选 Difix → reinject → 再 forward | `stage{1,2}/stereosplat_plus_progressive_single_model.sh` |
+| `pixel_fusion` | 在 ② 上：两路 render 按 conf 逐像素融合 | `stage{1,2}/pixel_fusion_pose_injection_*.sh` |
+
+统一入口：`stereosplat/eval/run.py` → `eval/routes.py` → `stereosplat.py` 中 `infer_*` 函数。
+
+**`pseudo_ratio`**（S+ / pixel_fusion 共用）：`--pseudo_ratio 0.5 1.0` 表示第二组 = center stereo、第三组 = last stereo（默认，与原 progressive 行为等价）。未传时 `eval/run.py` 对 `stereosplat_plus` 与 `pixel_fusion` 自动填 `[0.5, 1.0]`。
+
+**Shell 文件名说明**：部分脚本仍带 `progressive` 历史命名（如 `stereosplat_plus_progressive_single_model.sh`），实际已统一为 **pose injection + `pseudo_ratio`**；模型函数为 `infer_stereosplat_plus_pose_injection_single_model()`。
+
+---
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| **[stereosplat/README.md](stereosplat/README.md)** | 安装、训练、8 种推理对照表、`pseudo_ratio`、Shell 速查、可视化 |
+| **[stereosplat/eval/README.md](stereosplat/eval/README.md)** | 调用链、CLI 全参数、legacy 映射、FAQ |
+| **[docker/README.md](docker/README.md)** | 容器内 Pixi 环境 |
+| **[difix3d/README.md](difix3d/README.md)** | Difix3D 独立训练/评估（Pixi） |
+
+---
+
+## 目录结构（简）
+
+```
+StereoSplat_Plus/
+├── README.md                 # 本文件
+├── stereosplat/              # ★ 主工程（训练 + 评估 + 模型）
+│   ├── eval/                 # 评估逻辑
+│   ├── trainer/
+│   ├── scripts/evaluation/stage{1,2}/
+│   └── src/stereosplat/
+├── difix3d/                  # Difix3D 独立子项目
+└── docker/
+```

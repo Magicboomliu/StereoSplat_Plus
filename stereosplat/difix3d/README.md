@@ -2,6 +2,8 @@
 
 This folder contains Difix3D training and evaluation scripts used by **StereoSplat Plus**.
 
+StereoSplat 评估里通过 `eval/run.py` 的 `--use_diffix3d` 加载本目录权重；S+ / pixel_fusion 的 `pseudo_ratio` 与 Shell 见 **[../../README.md](../../README.md)**。
+
 ## Pixi installation (recommended)
 
 Difix3D is typically run inside the **StereoSplat pixi environment** (CUDA 11.8 / `cu118`).

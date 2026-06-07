@@ -2,8 +2,8 @@
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
 # stereosplat_plus_progressive_single_model.sh
-# 【Stage1 权重】stereosplat_plus 模式：单模型 progressive（pseudo→可选 Difix→再 forward）
-# 对应: --training_stage stage1 --eval_mode stereosplat_plus --architecture whole
+# 【Stage1 权重】stereosplat_plus + whole：pose injection，第二/第三组 stereo 由 pseudo_ratio 选择
+# 对应: --eval_mode stereosplat_plus --architecture whole --pseudo_ratio 0.5 1.0（默认 center+last）
 # 函数: run_without_difix3d / run_with_difix3d（底部注释切换）
 
 run_without_difix3d() {
@@ -19,6 +19,7 @@ val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
+pseudo_ratio="0.50 1.0"
 
 STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
 pretrained_model_path="${STAGE1_MODEL_PATH}"
@@ -37,6 +38,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --demo_filelist "$demo_filelist" \
   --ablation_type "$ablation_type" \
   --dataset_type "$dataset_type" \
+  --pseudo_ratio $pseudo_ratio \
   --pretrained_model_path "$pretrained_model_path"
   # --output_vis
 
@@ -57,6 +59,7 @@ val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
+pseudo_ratio="0.50 1.0"
 
 STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
 pretrained_model_path="${STAGE1_MODEL_PATH}"
@@ -78,6 +81,7 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --demo_filelist "$demo_filelist" \
   --ablation_type "$ablation_type" \
   --dataset_type "$dataset_type" \
+  --pseudo_ratio $pseudo_ratio \
   --pretrained_model_path "$pretrained_model_path" \
   --pretrained_diffix_model_path "$pretrained_diffix_model_path" \
   --timestep "$timestep" \

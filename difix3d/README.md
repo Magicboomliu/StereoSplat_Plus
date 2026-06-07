@@ -2,6 +2,8 @@
 
 This folder is a standalone **pixi project** for training and evaluating Difix3D (image restoration).
 
+在 StereoSplat+ 评估中，Difix3D 用于修复 pseudo stereo（`--use_diffix3d --use_ref`）；评估入口与 `pseudo_ratio` 说明见 **[../stereosplat/README.md](../stereosplat/README.md)**。
+
 ## Installation (Pixi)
 
 Create/sync the environment from this folder:

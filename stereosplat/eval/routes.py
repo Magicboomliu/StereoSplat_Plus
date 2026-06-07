@@ -1,4 +1,13 @@
-"""Map eval_mode × architecture to stereosplat.py inference functions."""
+"""Map eval_mode × architecture to stereosplat.py inference functions.
+
+Canonical model methods (see stereosplat.py):
+  stereosplat              whole       -> infer_stereosplat_two_gt_views_forward
+  stereosplat_plus         whole       -> infer_stereosplat_plus_pose_injection_single_model
+  stereosplat_plus         separated   -> infer_stereosplat_plus_frozen_stage1_two_models
+  pixel_fusion             whole       -> infer_pixel_fusion_pose_injection_single_model
+  pixel_fusion             separated   -> infer_pixel_fusion_pose_injection_frozen_stage1_two_models
+  (--use_gt_view)          any         -> infer_oracle_upper_bound_ablation
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -25,7 +34,7 @@ def run_batch_inference(
     frozen_stage_1_model=None,
 ) -> dict[str, Any]:
     if args.use_gt_view:
-        return model.oracle_upper_bound_ablation(
+        return model.infer_oracle_upper_bound_ablation(
             batch,
             args.output_folder,
             bin_token_list,
@@ -39,7 +48,7 @@ def run_batch_inference(
         )
 
     if eval_mode == "stereosplat":
-        return model.validation_on_the_forward_views(
+        return model.infer_stereosplat_two_gt_views_forward(
             batch,
             args.output_folder,
             bin_token_list,
@@ -50,10 +59,11 @@ def run_batch_inference(
         )
 
     if eval_mode == "stereosplat_plus" and architecture == "whole":
-        return model.validation_on_the_forward_views_progressive_iter_once_revised(
+        return model.infer_stereosplat_plus_pose_injection_single_model(
             batch,
             args.output_folder,
             bin_token_list,
+            pseudo_ratio_index=args.pseudo_ratio,
             cfg=cfg,
             start_images_views=2,
             use_diffix3d=args.use_diffix3d,
@@ -63,7 +73,7 @@ def run_batch_inference(
         )
 
     if eval_mode == "stereosplat_plus" and architecture == "separated":
-        return model.stereosplatplus_pose_view_selection_injection_two_seperated_models(
+        return model.infer_stereosplat_plus_frozen_stage1_two_models(
             batch,
             args.output_folder,
             bin_token_list,
@@ -75,11 +85,10 @@ def run_batch_inference(
             frozen_stage_1_model=frozen_stage_1_model,
             use_ref=args.use_ref,
             vis=args.output_vis,
-            pixel_level_conf_fusion=False,
         )
 
     if eval_mode == "pixel_fusion" and architecture == "whole":
-        return model.stereosplatplus_difix3d_pose_view_selection_injection(
+        return model.infer_pixel_fusion_pose_injection_single_model(
             batch,
             args.output_folder,
             bin_token_list,
@@ -94,7 +103,7 @@ def run_batch_inference(
         )
 
     if eval_mode == "pixel_fusion" and architecture == "separated":
-        return model.stereosplatplus_pose_view_selection_injection_two_seperated_models(
+        return model.infer_pixel_fusion_pose_injection_frozen_stage1_two_models(
             batch,
             args.output_folder,
             bin_token_list,

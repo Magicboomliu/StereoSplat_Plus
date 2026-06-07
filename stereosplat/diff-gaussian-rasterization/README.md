@@ -99,3 +99,7 @@ pip install -e . --no-build-isolation
   url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
 }
 ```
+
+---
+
+本仓库 StereoSplat+ 使用 **15D Gaussian**（含 `conf` 维）与 `rendered_conf` 输出；编译入口 `pixi run -e cu118 setup`。训练 / 评估 / pixel_fusion 见 **[../README.md](../README.md)**。

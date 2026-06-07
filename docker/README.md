@@ -2,6 +2,8 @@
 
 Base image：`pytorch/pytorch:2.1.0-cuda11.8-cudnn8-devel`
 
+训练与评估说明见仓库 **[stereosplat/README.md](../stereosplat/README.md)**、**[stereosplat/eval/README.md](../stereosplat/eval/README.md)**。
+
 ### Build
 
 在仓库根目录执行：

@@ -93,8 +93,8 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ ② stereosplat_plus（S+）                                      │
-│    在 ① 基础上：pseudo view → Difix3D 修复 → re-inject        │
-│    → 再 forward → 渲染 novel views                             │
+│    在 ① 基础上：全轨迹渲染 → pseudo_ratio 选 pseudo stereo   │
+│    → 可选 Difix3D → re-inject → 再 forward → 渲染评估         │
 └─────────────────────────────────────────────────────────────┘
          │
          ▼
@@ -123,7 +123,7 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 | 项 | 说明 |
 |----|------|
 | **做什么** | 只用 2 张 GT view 做一次 feed-forward，建 3DGS，直接在 forward views 上渲染评估 |
-| **模型函数** | `validation_on_the_forward_views()` |
+| **模型函数** | `infer_stereosplat_two_gt_views_forward()` |
 | **架构** | 仅 `whole`（单模型） |
 | **Difix3D** | 不使用 |
 | **conf 融合** | 无 |
@@ -151,16 +151,16 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 在 stereosplat 基础上增加 **pseudo view → Difix enhance → re-inject → 再 forward**。  
 分两种实现路径（**whole 与 separated 底层函数不同**）：
 
-#### ②-A whole — 单 checkpoint progressive（推荐基线）
+#### ②-A whole — 单 checkpoint pose injection（推荐基线）
 
 | 项 | 说明 |
 |----|------|
-| **做什么** | 同一 checkpoint 内两次前向：2-view 建 GS → 代码内固定选 pseudo pose（center+last）→ 可选 Difix → reinject → 再评估 |
-| **模型函数** | `validation_on_the_forward_views_progressive_iter_once_revised()` |
+| **做什么** | 同一 checkpoint 内两次前向：2-view 建 GS → 全轨迹渲染 → 按 `pseudo_ratio` 选第二/第三组 pseudo stereo → 可选 Difix → reinject → 再评估 |
+| **模型函数** | `infer_stereosplat_plus_pose_injection_single_model()` |
 | **架构** | `whole` |
 | **权重** | 仅 `--pretrained_model_path` |
 | **Difix3D** | 可选：`--use_diffix3d --use_ref` |
-| **pseudo_ratio** | 不使用（pose 策略固定在函数内） |
+| **pseudo_ratio** | `--pseudo_ratio 0.5 1.0`（默认 center+last，与原 progressive 行为等价） |
 
 对应 Shell：`stage1/stereosplat_plus_progressive_single_model.sh`、`stage2/stereosplat_plus_progressive_single_model.sh`
 
@@ -169,7 +169,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 项 | 说明 |
 |----|------|
 | **做什么** | **Stage1 冻结**：2-view → 初始 3DGS / pseudo 渲染；**Stage2 主模型**：re-inject 后推理与评估 |
-| **模型函数** | `stereosplatplus_pose_view_selection_injection_two_seperated_models(pixel_level_conf_fusion=False)` |
+| **模型函数** | `infer_stereosplat_plus_frozen_stage1_two_models()` |
 | **架构** | `separated`（**仅 Stage2 评估**，Stage1 无 separated） |
 | **权重** | `--pretrained_model_path`（Stage2）+ `--stage_1_model_path`（冻结 Stage1） |
 | **Difix3D** | 可选 |
@@ -194,15 +194,15 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 项 | 说明 |
 |----|------|
 | **融合的两路** | 同 checkpoint：**2-view GS 渲染** vs **pseudo-multiview GS 渲染** |
-| **模型函数** | `stereosplatplus_difix3d_pose_view_selection_injection(pixel_level_conf_fusion=...)` |
+| **模型函数** | `infer_pixel_fusion_pose_injection_single_model(pixel_level_conf_fusion=...)` |
 | **架构** | `whole` |
 | **权重** | 仅 `--pretrained_model_path` |
 | **Difix3D** | 通常开启（`--use_diffix3d --use_ref`）；whole pixel_fusion 会预加载 Difix 权重 |
 | **pseudo_ratio** | `--pseudo_ratio 0.5 1.0` |
 
 > **注意**：whole 的 `pixel_fusion` 与 whole 的 `stereosplat_plus` **不是同一个函数**。  
-> - S+ whole → progressive（固定 pseudo）  
-> - pixel_fusion whole → pose injection + 可选 conf 融合  
+> - S+ whole → pose injection + `pseudo_ratio`（无 conf 融合）  
+> - pixel_fusion whole → 同上 + 可选 `--conf_pixel_level_fusion` 逐像素融合  
 
 对应 Shell：`stage1/pixel_fusion_pose_injection_single_model.sh`、`stage2/pixel_fusion_pose_injection_single_model.sh`
 
@@ -211,7 +211,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 项 | 说明 |
 |----|------|
 | **融合的两路** | **Stage1 冻结模型渲染** vs **Stage2 模型渲染**（同一相机） |
-| **模型函数** | `stereosplatplus_pose_view_selection_injection_two_seperated_models(pixel_level_conf_fusion=...)` |
+| **模型函数** | `infer_pixel_fusion_pose_injection_frozen_stage1_two_models(pixel_level_conf_fusion=...)` |
 | **架构** | `separated` |
 | **权重** | Stage2 + 冻结 Stage1（同 ②-B） |
 | **Difix3D** | 通常开启 |
@@ -226,7 +226,7 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 | 项 | 说明 |
 |----|------|
 | **CLI** | `--use_gt_view` |
-| **模型函数** | `oracle_upper_bound_ablation()` |
+| **模型函数** | `infer_oracle_upper_bound_ablation()` |
 | **含义** | 用 GT view 作上界对照，与上述 ①②③ 正交，可叠加任意 mode 做消融 |
 
 ---
@@ -235,16 +235,21 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 
 | # | Stage | eval_mode | arch | 主 ckpt | 冻结 S1 | Difix | conf fusion | 模型函数（简写） | Shell |
 |---|-------|-----------|------|---------|---------|-------|-------------|------------------|-------|
-| 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `validation_on_the_forward_views` | `stage1/stereosplat_two_gt_views_forward.sh` |
-| 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage1/stereosplat_plus_progressive_single_model.sh` |
-| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage1/pixel_fusion_pose_injection_single_model.sh` |
-| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1，仅换 S2 权重 | `stage2/stereosplat_two_gt_views_forward.sh` |
-| 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | `..._progressive_iter_once_revised` | `stage2/stereosplat_plus_progressive_single_model.sh` |
-| 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `..._two_seperated_models` | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh` |
-| 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `stereosplatplus_difix3d_pose_view_selection_injection` | `stage2/pixel_fusion_pose_injection_single_model.sh` |
-| 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `..._two_seperated_models` | `stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh` |
+| 1 | 1 | stereosplat | whole | S1 | — | ✗ | ✗ | `infer_stereosplat_two_gt_views_forward` | `stage1/stereosplat_two_gt_views_forward.sh` |
+| 2 | 1 | stereosplat_plus | whole | S1 | — | 可选 | ✗ | `infer_stereosplat_plus_pose_injection_single_model` | `stage1/stereosplat_plus_progressive_single_model.sh` |
+| 3 | 1 | pixel_fusion | whole | S1 | — | 通常 ✓ | 可选 | `infer_pixel_fusion_pose_injection_single_model` | `stage1/pixel_fusion_pose_injection_single_model.sh` |
+| 4 | 2 | stereosplat | whole | S2 | — | ✗ | ✗ | 同 #1 | `stage2/stereosplat_two_gt_views_forward.sh` |
+| 5 | 2 | stereosplat_plus | whole | S2 | — | 可选 | ✗ | 同 #2 | `stage2/stereosplat_plus_progressive_single_model.sh` |
+| 6 | 2 | stereosplat_plus | separated | S2 | **S1** | 可选 | ✗ | `infer_stereosplat_plus_frozen_stage1_two_models` | `stage2/stereosplat_plus_progressive_frozen_stage1_two_models.sh`（`--pseudo_ratio`） |
+| 7 | 2 | pixel_fusion | whole | S2 | — | 通常 ✓ | 可选 | `infer_pixel_fusion_pose_injection_single_model` | `stage2/pixel_fusion_pose_injection_single_model.sh` |
+| 8 | 2 | pixel_fusion | separated | S2 | **S1** | 通常 ✓ | 可选 | `infer_pixel_fusion_pose_injection_frozen_stage1_two_models` | `stage2/pixel_fusion_pose_injection_frozen_stage1_two_models.sh` |
 
-函数全名见 `eval/routes.py`。可视化：在 shell 的 launch 命令末尾取消注释 `# --output_vis`（自动用 `demo.txt`）。
+Shell 文件名与模型函数名一一对应；路由见 `eval/routes.py`。可视化：shell 末尾取消注释 `# --output_vis`（自动用 `demo.txt`）。
+
+旧函数名在 `stereosplat.py` 类末尾保留为 **Legacy alias**（仍可调用，不推荐），例如：
+
+- `validation_on_the_forward_views` → `infer_stereosplat_two_gt_views_forward`
+- `infer_stereosplat_plus_progressive_single_model` / `validation_on_the_forward_views_progressive_iter_once_revised` → `infer_stereosplat_plus_pose_injection_single_model`
 
 ---
 
@@ -256,15 +261,43 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 2. **`First_Stage2` config 的真正差别在 S+ / pixel_fusion**  
    - 这些模式会用 pseudo view、双模型、融合等 Stage2 训练配套逻辑；不是 stereosplat 的 2-view 输入变了。
 
-3. **whole 下 S+ 与 pixel_fusion 是两套实现**  
-   - S+ → progressive，无 `pseudo_ratio`  
-   - pixel_fusion → pose injection + `pseudo_ratio` + 可选 fusion
+3. **whole 下 S+ 与 pixel_fusion 共用 pose injection + `pseudo_ratio`**  
+   - 默认 `0.5/1.0` 与原 progressive（center+last）等价  
+   - pixel_fusion 额外支持 `--conf_pixel_level_fusion`
 
 4. **separated 仅 Stage2 的 S+ / pixel_fusion**  
    - Stage1 训练只有单模型，评估也只有 `whole`。
 
 5. **14D 旧权重**  
    - 本仓库 rasterizer / `gs_dim=15` 不支持直接加载无 conf 旧 ckpt 跑上述流程。
+
+### `pseudo_ratio`：第二 / 第三组 stereo（pose view selection）怎么选
+
+你说的 **pose view selection** 就是这件事：在 **pose injection** 类推理里，除了固定的 **第一组 GT first stereo（2 张）**，还要再选 **两组 pseudo stereo** 作为第二、第三组输入，再 re-inject 做第二次 forward。
+
+| 输入位 | 含义 | 是否可调 |
+|--------|------|----------|
+| 第 1 组 stereo | GT first view 左右目 | **固定**（始终 2-view GT） |
+| 第 2 组 stereo | pseudo view #1 | 由 `pseudo_ratio[0]` 决定 |
+| 第 3 组 stereo | pseudo view #2 | 由 `pseudo_ratio[1]` 决定 |
+
+**超参**：`--pseudo_ratio <r2> <r3>`（shell 里常见 `pseudo_ratio="0.50 1.0"`）。
+
+| `pseudo_ratio` | 第二 / 第三组选谁 |
+|----------------|-------------------|
+| **`0.5 1.0`（默认）** | **center stereo + last stereo**（与 Stage2 训练默认一致；代码里对 `[0.5, 1.0]` 有快速分支） |
+| 其他组合 | 沿 bin 内其余渲染轨迹，按比例索引选 stereo pair（见 `prepare_tripleview_by_ratio_index`） |
+
+**哪些 inference 会用 `pseudo_ratio`：**
+
+| 会用 | 不用 |
+|------|------|
+| `infer_stereosplat_plus_pose_injection_single_model` | `infer_stereosplat_two_gt_views_forward`（纯 2-view） |
+| `infer_stereosplat_plus_frozen_stage1_two_models` | |
+| `infer_pixel_fusion_pose_injection_single_model` | |
+| `infer_pixel_fusion_pose_injection_frozen_stage1_two_models` | |
+
+实现入口：`stereosplat.py` 的 `prepare_tripleview_by_ratio_index()`；pose injection 推理函数里 Difix 增强分支也会按同一套 ratio 取 second/third stereo。
 
 更细的调用链、CLI、FAQ → **[eval/README.md](eval/README.md)**
 
@@ -273,13 +306,14 @@ Stage1 / Stage2 两个 dataloader 文件在这段 val 逻辑上**几乎相同**�
 ## 评估速查（Shell 与 CLI）
 
 评估逻辑在 **`eval/`**，主入口 **`eval/run.py`**。  
-Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么结构**（目录 `stage1/` / `stage2/` 表示用哪套 checkpoint）：
+Shell 在 `scripts/evaluation/stage{1,2}/`，**文件名 = 评什么 + 用什么结构**（目录 `stage1/` / `stage2/` 表示用哪套 checkpoint）。  
+文件名中仍可见 `progressive` 为历史命名；S+ whole / separated 均已统一 **pose injection + `--pseudo_ratio`**（默认 `0.5 1.0`）。
 
 | 文件名 | 在评什么 |
 |--------|----------|
 | `stereosplat_two_gt_views_forward.sh` | 最基础：2 张 GT 前向视角直接 forward |
-| `stereosplat_plus_progressive_single_model.sh` | S+ progressive，**一个**模型端到端 |
-| `stereosplat_plus_progressive_frozen_stage1_two_models.sh` | S+ progressive，**冻结 Stage1 + Stage2** 两个模型 |
+| `stereosplat_plus_progressive_single_model.sh` | S+ pose injection（`pseudo_ratio`），**一个**模型端到端 |
+| `stereosplat_plus_progressive_frozen_stage1_two_models.sh` | S+ pose injection（`pseudo_ratio`），**冻结 Stage1 + Stage2** |
 | `pixel_fusion_pose_injection_single_model.sh` | pixel_fusion pose injection，**一个**模型 |
 | `pixel_fusion_pose_injection_frozen_stage1_two_models.sh` | pixel_fusion，**冻结 Stage1 + Stage2** 两个模型 |
 
@@ -355,6 +389,7 @@ pixi run -e cu118 accelerate launch \
   --stage_1_model_path /path/to/stage1/checkpoint-145000 \
   --val_filelist filenames/kitti360/train_complete/val.txt \
   --pretrained_diffix_model_path /path/to/difix.pkl \
+  --pseudo_ratio 0.5 1.0 \
   --use_diffix3d --use_ref --conf_pixel_level_fusion
 ```
 
@@ -362,6 +397,7 @@ pixi run -e cu118 accelerate launch \
 
 | Flag | 说明 |
 |------|------|
+| `--pseudo_ratio` | 第二/第三组 pseudo stereo 比例，如 `0.5 1.0`（`stereosplat_plus` / `pixel_fusion`；未传时默认 `0.5 1.0`） |
 | `--output_vis` | 可视化模式（见下节） |
 | `--use_diffix3d` / `--use_ref` | 启用 Difix3D + stereo ref |
 | `--conf_pixel_level_fusion` | 逐像素 conf 融合（`pixel_fusion` 模式） |
