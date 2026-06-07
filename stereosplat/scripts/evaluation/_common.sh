@@ -21,8 +21,10 @@ _eval_export_env() {
 }
 
 _eval_default_paths() {
+  # 正式评估：全量 val；可视化：改用 demo_filelist（见 eval/run.py --output_vis）
   val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
-  demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
+  demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
+  demo_more_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
   ablation_type="NMRFStereo"
   dataset_type="First_LiDAR_3_Uniform"
   pseudo_ratio="0.50 1.0"
@@ -70,4 +72,10 @@ _eval_launch() {
     --pretrained_diffix_model_path "$pretrained_diffix_model_path" \
     --prompt "$prompt" \
     "$@"
+}
+
+# 可视化模式：自动切到 demo_filelist，不写 metric.json，模型侧保存 RGB/depth/conf 图
+# 用法与 _eval_launch 相同，末尾追加 --output_vis
+_eval_launch_vis() {
+  _eval_launch "$@" --output_vis
 }

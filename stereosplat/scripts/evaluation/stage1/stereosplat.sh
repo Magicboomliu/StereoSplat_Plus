@@ -16,4 +16,15 @@ eval_stage1_stereosplat() {
     --pretrained_model_path "$STAGE1_MODEL_PATH"
 }
 
+eval_stage1_stereosplat_vis() {
+  _eval_resolve_root
+  _eval_default_paths
+  _eval_config_stage1
+  _eval_export_env
+  _eval_launch_vis gpu_0.yaml stage1 stereosplat whole \
+    "${RESULTS_BASE}/vis" \
+    --pretrained_model_path "$STAGE1_MODEL_PATH"
+}
+
 eval_stage1_stereosplat
+#eval_stage1_stereosplat_vis

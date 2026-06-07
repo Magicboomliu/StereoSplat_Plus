@@ -29,5 +29,18 @@ eval_stage2_stereosplat_plus_separated_with_difix() {
     --use_diffix3d --use_ref
 }
 
+eval_stage2_stereosplat_plus_separated_vis() {
+  _eval_resolve_root
+  _eval_default_paths
+  _eval_config_stage2
+  _eval_export_env
+  _eval_launch_vis gpu_0.yaml stage2 stereosplat_plus separated \
+    "${RESULTS_BASE}/vis" \
+    --pretrained_model_path "${STAGE2_MODEL_DIR}/latest" \
+    --stage_1_model_path "$STAGE1_MODEL_PATH" \
+    --use_diffix3d --use_ref
+}
+
 eval_stage2_stereosplat_plus_separated_no_difix
 #eval_stage2_stereosplat_plus_separated_with_difix
+#eval_stage2_stereosplat_plus_separated_vis

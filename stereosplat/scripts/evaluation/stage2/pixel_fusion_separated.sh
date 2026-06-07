@@ -31,5 +31,19 @@ eval_stage2_pixel_fusion_separated_activate() {
     --conf_pixel_level_fusion
 }
 
+eval_stage2_pixel_fusion_separated_vis() {
+  _eval_resolve_root
+  _eval_default_paths
+  _eval_config_stage2
+  _eval_export_env
+  _eval_launch_vis gpu_0.yaml stage2 pixel_fusion separated \
+    "${RESULTS_BASE}/fusion_activate/vis" \
+    --pretrained_model_path "${STAGE2_MODEL_DIR}/latest" \
+    --stage_1_model_path "$STAGE1_MODEL_PATH" \
+    --use_diffix3d --use_ref \
+    --conf_pixel_level_fusion
+}
+
 #eval_stage2_pixel_fusion_separated_deactivate
 eval_stage2_pixel_fusion_separated_activate
+#eval_stage2_pixel_fusion_separated_vis

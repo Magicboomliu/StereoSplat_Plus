@@ -131,7 +131,7 @@ Legacy paths (`validator/*.py`, `scripts/evaluation/stereosplat_plus/conf_fusion
 
 | Flag | Description |
 |------|-------------|
-| `--output_vis` | Save per-scene visualizations (uses `demo_more.txt`) |
+| `--output_vis` | Save per-scene visualizations (uses `demo.txt` by default; skips `metric.json`) |
 | `--use_diffix3d` | Enable Difix3D restoration (S+ / pixel_fusion) |
 | `--use_ref` | Stereo reference for Difix3D |
 | `--conf_pixel_level_fusion` | Per-pixel conf fusion (`pixel_fusion` mode) |
@@ -201,5 +201,6 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 bash scripts/evaluation/stage2/stereosplat_whole_s2.sh
 bash scripts/evaluation/stage2/pixel_fusion_separated.sh
 
-# Save visualizations: add --output_vis to eval/run.py or edit shell extra args
+# Visualize on demo.txt (9 bins): use *_vis() in shell or add --output_vis
+#eval_stage2_stereosplat_whole_s2_vis   # see scripts/evaluation/stage2/stereosplat_whole_s2.sh
 ```

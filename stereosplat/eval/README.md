@@ -217,7 +217,8 @@ pretrained_diffix_model_path=".../model_130001.pkl"
 | 用途 | 路径 |
 |------|------|
 | 正式评估 | `filenames/kitti360/train_complete/val.txt`（约 5485 bins） |
-| 可视化 / demo | `filenames/kitti360/train_complete/demo_more.txt`（`--output_vis` 时自动切换） |
+| 可视化（默认） | `filenames/kitti360/train_complete/demo.txt`（9 bins，`--output_vis` 时自动切换） |
+| 可视化（扩展） | `demo_more.txt`（27 bins，可手动 `--demo_filelist .../demo_more.txt`） |
 
 ---
 
@@ -371,15 +372,35 @@ pixi run -e cu118 accelerate launch \
 
 **正在跑的进程不会因你改仓库代码而中断**；只有**新启动**的任务会使用新代码。
 
-### 7.5 快速验证（demo 子集 + 可视化）
+### 7.5 可视化（`--output_vis` + `demo.txt`）
 
-在任意 launch 命令末尾加上：
+**代码已实现**（`eval/run.py` + `stereosplat.py` 的 `vis=True` 分支），行为与旧 validator 一致：
+
+1. 加 `--output_vis` 后，dataloader 改用 `--demo_filelist`（默认 `demo.txt`，9 个 bin）
+2. 各 bin 在 `output_folder/<bin_token>/` 下保存 RGB、depth、conf 等图
+3. **不写** `metric.json`（仅看图，不算全量指标）
+
+**方式 A：shell 里切到 vis 函数**（`scripts/evaluation/stage{1,2}/*.sh` 均已提供 `*_vis()`）：
 
 ```bash
---output_vis
+# 例如 stage2/stereosplat_whole_s2.sh 底部注释切换：
+#eval_stage2_stereosplat_whole_s2
+eval_stage2_stereosplat_whole_s2_vis
 ```
 
-会自动改用 `demo_filelist`（`demo_more.txt`），并在 `output_folder` 下保存 RGB / depth / conf 可视化。
+**方式 B：命令行追加 flag**：
+
+```bash
+pixi run -e cu118 accelerate launch ... eval/run.py \
+  ... \
+  --output_vis
+```
+
+**方式 C：用更大的 demo 子集**：
+
+```bash
+--output_vis --demo_filelist filenames/kitti360/train_complete/demo_more.txt
+```
 
 ### 7.6 查看帮助
 

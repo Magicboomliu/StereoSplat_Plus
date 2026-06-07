@@ -22,7 +22,7 @@ _conf_fusion_export_env() {
 _conf_fusion_default_paths() {
   configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
   val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
-  demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
+  demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
   ablation_type="NMRFStereo"
   dataset_type="First_LiDAR_3_Uniform"
   pseudo_ratio="0.50 1.0"
@@ -62,4 +62,8 @@ _conf_fusion_launch() {
     --pretrained_diffix_model_path "$pretrained_diffix_model_path" \
     --prompt "$prompt" \
     "$@"
+}
+
+_conf_fusion_launch_vis() {
+  _conf_fusion_launch "$@" --output_vis
 }

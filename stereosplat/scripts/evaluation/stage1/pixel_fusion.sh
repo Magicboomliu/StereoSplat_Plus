@@ -29,5 +29,18 @@ eval_stage1_pixel_fusion_activate() {
     --conf_pixel_level_fusion
 }
 
+eval_stage1_pixel_fusion_vis() {
+  _eval_resolve_root
+  _eval_default_paths
+  _eval_config_stage1
+  _eval_export_env
+  _eval_launch_vis gpu_0.yaml stage1 pixel_fusion whole \
+    "${RESULTS_BASE}/vis" \
+    --pretrained_model_path "$STAGE1_MODEL_PATH" \
+    --use_diffix3d --use_ref \
+    --conf_pixel_level_fusion
+}
+
 eval_stage1_pixel_fusion_deactivate
 #eval_stage1_pixel_fusion_activate
+#eval_stage1_pixel_fusion_vis
