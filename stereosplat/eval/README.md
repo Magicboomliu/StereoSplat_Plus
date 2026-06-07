@@ -1,0 +1,592 @@
+# Confidence StereoSplat — 评估系统完整说明
+
+本仓库的核心是 **带 confidence 的 StereoSplat（15D Gaussians）** 的训练与评估（**StereoSplat_Plus / with-conf 专用**）。  
+所有 checkpoint、评估脚本与 pixel-level fusion 均默认 **15D conf 模型**；不支持加载原版 14D 无 conf 权重跑默认流程。
+
+- 自定义 rasterizer 输出 `rendered_conf`，fusion 与 conf 指标依赖此通道
+- 无 `train_kitti360_stereosplat.py`（14D）训练入口；仅 `train_kitti360_stereosplat_with_conf.py`
+
+所有评估逻辑集中在 `eval/` 目录；`validator/` 与部分旧 shell 仅为**兼容入口**，最终都会调用 `eval/run.py`。
+
+---
+
+## 目录
+
+1. [概念：Stage × 评估模式 × 架构](#1-概念stage--评估模式--架构)
+2. [调用链总览](#2-调用链总览)
+3. [目录结构](#3-目录结构)
+4. [实验矩阵（该跑哪个脚本）](#4-实验矩阵该跑哪个脚本)
+5. [三种评估模式详解](#5-三种评估模式详解)
+6. [训练与评估的对应关系](#6-训练与评估的对应关系)
+7. [使用方法](#7-使用方法)
+8. [CLI 参数完整说明](#8-cli-参数完整说明)
+9. [旧路径兼容映射](#9-旧路径兼容映射)
+10. [输出结果说明](#10-输出结果说明)
+11. [自定义路径与调试](#11-自定义路径与调试)
+12. [常见问题](#12-常见问题)
+
+---
+
+## 1. 概念：Stage × 评估模式 × 架构
+
+评估用三个维度描述一次实验：
+
+| 维度 | 取值 | 含义 |
+|------|------|------|
+| **training_stage** | `stage1` / `stage2` | 用哪套 config、dataloader；对应哪一阶段训练产物 |
+| **eval_mode** | `stereosplat` / `stereosplat_plus` / `pixel_fusion` | 推理管线复杂度（递进关系，见下文） |
+| **architecture** | `whole` / `separated` | 单 checkpoint 还是「冻结 Stage1 + Stage2」双模型 |
+
+### Stage1 vs Stage2
+
+| | **Stage1** | **Stage2** |
+|--|------------|------------|
+| **训练数据** | 全部 GT view | Pseudo-GT mix（冻结 Stage1 产 GS，随机混入 GT） |
+| **训练脚本** | `scripts/train/stereosplat/train.sh` | `scripts/train/stereosplat/train_stereosplat_stage2.sh` |
+| **Trainer** | `trainer/train_kitti360_stereosplat_with_conf.py` | `trainer/train_kitti360_stereosplat_stage2_with_difix3d.py` |
+| **Config** | `input_invariant_stereosplat_default.py` | `input_invariant_stereosplat_stage2.py` |
+| **world_center** | `First_LiDAR_3_Uniform` | `First_Stage2` |
+| **典型权重** | `.../withconf/stage1/latest/checkpoint-145000` | `.../withconf/stage2_resume/latest` |
+| **评估架构** | 仅 `whole` | `whole` + `separated` |
+
+### 三种 eval_mode（递进）
+
+```
+① stereosplat
+   输入 2-view GT → forward 一次 → 3DGS → 渲染 novel view → 指标
+
+② stereosplat_plus（在 ① 基础上）
+   2-view → 3DGS → 渲染 pseudo view → Difix3D enhance → re-inject → 再 forward → 指标
+
+③ pixel_fusion（在 ② 基础上）
+   两路 render（例如 Stage1 vs Stage2，或 2-view GS vs pseudo-multiview GS）
+   → 按 confidence 逐像素融合 → 指标
+```
+
+`--conf_pixel_level_fusion` 仅在 `eval_mode=pixel_fusion` 时生效；关闭时仍走 pixel_fusion 管线但不融合。
+
+### whole vs separated
+
+| architecture | 何时使用 | 加载的权重 |
+|--------------|----------|------------|
+| **whole** | 单模型推理 | 仅 `--pretrained_model_path` |
+| **separated** | Stage2 的 S+ / fusion | `--pretrained_model_path`（Stage2）+ `--stage_1_model_path`（冻结 Stage1） |
+
+Stage1 评估只有 `whole`（单 checkpoint）。
+
+---
+
+## 2. 调用链总览
+
+### 2.1 整体数据流
+
+```mermaid
+flowchart TB
+    subgraph launch ["启动层 scripts/evaluation/"]
+        S1["stage1/*.sh"]
+        S2["stage2/*.sh"]
+        OLD["旧 conf_fusion/pixel_level/*.sh"]
+        LEG["旧 validator/*.py"]
+    end
+
+    subgraph eval_pkg ["评估逻辑 eval/"]
+        RUN["eval/run.py\n主入口 + argparse"]
+        ROUTES["eval/routes.py\n路由到模型函数"]
+        COMMON["eval/common.py\npath / dataloader / load ckpt"]
+    end
+
+    subgraph model ["模型层"]
+        SP["stereosplat.py\nStereoSplat 类方法"]
+    end
+
+    S1 --> RUN
+    S2 --> RUN
+    OLD --> RUN
+    LEG --> RUN
+    RUN --> COMMON
+    RUN --> ROUTES
+    ROUTES --> SP
+    RUN --> METRIC["metric.json"]
+```
+
+### 2.2 一次评估的内部步骤（`eval/run.py`）
+
+1. **Bootstrap**：把 `stereosplat/` 根目录加入 `sys.path`（支持 `python eval/run.py` 与 wrapper 两种启动方式）。
+2. **解析参数**：`--training_stage`、`--eval_mode`、`--architecture` 及 checkpoint / Difix3D 等。
+3. **加载 config**：未指定 `--config_path` 时，按 stage 自动选择 default / stage2 config。
+4. **构建 dataloader**：根据 config 的 `world_center` 选对应 dataloader 模块（含 `First_Stage2` → `KITTI360_First_LiDAR_Random_Stage2`）。
+5. **加载模型**：
+   - 主模型 `my_model` ← `--pretrained_model_path`
+   - 若 `architecture=separated`：额外加载冻结 `frozen_stage_1_model` ← `--stage_1_model_path`
+   - 若需要 Difix3D：加载 `DifixRef` ← `--pretrained_diffix_model_path`
+6. **逐 bin 推理**：`eval/routes.py` 的 `run_batch_inference()` 根据 mode 调用 `stereosplat.py` 中对应函数。
+7. **聚合指标**：RGB / Depth / Conf 等写入 `output_folder/metric.json`。
+
+### 2.3 eval_mode → 模型函数映射
+
+| eval_mode | architecture | stereosplat.py 中的函数 | 关键参数 |
+|-----------|--------------|---------------------------|----------|
+| `stereosplat` | whole | `validation_on_the_forward_views()` | `view_num=2` |
+| `stereosplat_plus` | whole | `validation_on_the_forward_views_progressive_iter_once_revised()` | 固定 progressive（center+last pseudo） |
+| `stereosplat_plus` | separated | `stereosplatplus_pose_view_selection_injection_two_seperated_models()` | `pixel_level_conf_fusion=False` |
+| `pixel_fusion` | whole | `stereosplatplus_difix3d_pose_view_selection_injection()` | `--pseudo_ratio`，可选 `--conf_pixel_level_fusion` |
+| `pixel_fusion` | separated | `stereosplatplus_pose_view_selection_injection_two_seperated_models()` | `--conf_pixel_level_fusion` |
+| 任意（消融） | 任意 | `oracle_upper_bound_ablation()` | `--use_gt_view` |
+
+**whole 模式下两种 S+ 的区别（重要）：**
+
+- `stereosplat_plus` → **progressive** 函数（与 `render_inside_bin_whole_model.sh` 行为一致）
+- `pixel_fusion` → **pose injection** 函数（与旧 pixel-level validator 行为一致，支持 `pseudo_ratio`）
+
+---
+
+## 3. 目录结构
+
+```
+stereosplat/
+├── eval/                                    # ★ 评估逻辑（维护这里）
+│   ├── README.md                            # 本文件
+│   ├── run.py                               # 主入口
+│   ├── routes.py                            # mode → 模型函数
+│   └── common.py                            # 公共工具
+│
+├── validator/                               # 兼容层（薄 wrapper，勿在这里写业务逻辑）
+│   ├── stereosplat/
+│   │   ├── rendered_views_inside_bin.py     → eval/run.py (stereosplat)
+│   │   └── rendered_view_inside_bin_plus_diffix.py → eval/run.py (stereosplat_plus whole)
+│   ├── stereosplat_plus/
+│   │   ├── posed_input_view_injected_selected_stage2.py → stereosplat_plus separated
+│   │   └── posed_input_view_injected_selected.py        → pixel_fusion whole (legacy dev)
+│   └── stereosplat_plus_conf_fusion/two-stage/
+│       ├── posed_input_view_injected_selected_whole_model_pixel_level.py
+│       └── posed_input_view_injected_selected_sep_model_pixel_level.py
+│
+├── scripts/evaluation/
+│   ├── _common.sh                           # 新 shell 共用 launch（调 eval/run.py）
+│   ├── stage1/                              # ★ Stage1 评估（推荐）
+│   │   ├── stereosplat.sh
+│   │   ├── stereosplat_plus.sh
+│   │   └── pixel_fusion.sh
+│   ├── stage2/                              # ★ Stage2 评估（推荐）
+│   │   ├── stereosplat_whole_s2.sh
+│   │   ├── stereosplat_whole_s1.sh
+│   │   ├── stereosplat_plus_whole.sh
+│   │   ├── stereosplat_plus_separated.sh
+│   │   ├── pixel_fusion_whole.sh
+│   │   └── pixel_fusion_separated.sh
+│   └── stereosplat_plus/conf_fusion/pixel_level/  # 旧路径（仍可用，内部已改调 eval/run.py）
+│
+├── src/stereosplat/models_lab/StereoSplat/stereosplat.py   # 推理算法实现
+├── trainer/                                 # 训练入口（eval 不经过这里）
+└── accelerate_configs/inference/gpu_*.yaml  # 推理 GPU 配置
+```
+
+---
+
+## 4. 实验矩阵（该跑哪个脚本）
+
+### 4.1 Stage1 评估（3 种 mode，均 whole）
+
+| eval_mode | Shell（推荐） | 主 checkpoint | Config |
+|-----------|---------------|---------------|--------|
+| stereosplat | `scripts/evaluation/stage1/stereosplat.sh` | Stage1 | `default.py` |
+| stereosplat_plus | `scripts/evaluation/stage1/stereosplat_plus.sh` | Stage1 | `default.py` |
+| pixel_fusion | `scripts/evaluation/stage1/pixel_fusion.sh` | Stage1 | `default.py` |
+
+### 4.2 Stage2 评估
+
+| eval_mode | architecture | 含义 | Shell（推荐） | 主 checkpoint | 额外权重 |
+|-----------|--------------|------|---------------|---------------|----------|
+| stereosplat | whole | 纯 2-view，Stage2 权重 | `stage2/stereosplat_whole_s2.sh` | Stage2 | — |
+| stereosplat | whole | 纯 2-view，Stage1 权重（对照） | `stage2/stereosplat_whole_s1.sh` | Stage1 | 仍用 stage2 config/dataloader |
+| stereosplat_plus | whole | 单模型 progressive S+ | `stage2/stereosplat_plus_whole.sh` | Stage2 | Difix3D（可选） |
+| stereosplat_plus | separated | 冻结 S1 + S2 | `stage2/stereosplat_plus_separated.sh` | Stage2 | `--stage_1_model_path` |
+| pixel_fusion | whole | 2-view vs pseudo-multiview 融合 | `stage2/pixel_fusion_whole.sh` | Stage2 | Difix3D |
+| pixel_fusion | separated | Stage1 render vs Stage2 render 融合 | `stage2/pixel_fusion_separated.sh` | Stage2 | `--stage_1_model_path` |
+
+### 4.3 默认 checkpoint 路径（在 `_common.sh` 中，改这里即可全局生效）
+
+```bash
+STAGE1_MODEL_PATH=".../withconf/stage1/latest/checkpoint-145000"
+STAGE2_MODEL_DIR=".../withconf/stage2_resume"    # 实际加载 ${STAGE2_MODEL_DIR}/latest
+pretrained_diffix_model_path=".../model_130001.pkl"
+```
+
+### 4.4 默认数据列表
+
+| 用途 | 路径 |
+|------|------|
+| 正式评估 | `filenames/kitti360/train_complete/val.txt`（约 5485 bins） |
+| 可视化 / demo | `filenames/kitti360/train_complete/demo_more.txt`（`--output_vis` 时自动切换） |
+
+---
+
+## 5. 三种评估模式详解
+
+### 5.1 Mode ①：stereosplat
+
+- **输入**：2 张 GT stereo view（first view pair）
+- **流程**：单次 `forward` → 3D Gaussians → 在 bin 内所有 forward view 上渲染
+- **不涉及**：pseudo view、Difix3D、confidence fusion
+- **典型用途**：基础 feed-forward 3DGS 质量基线
+
+### 5.2 Mode ②：stereosplat_plus
+
+**whole（progressive）**
+
+- 同一 checkpoint 内做两阶段：先 2-view 建 GS，再选 pseudo pose → Difix enhance → re-inject → 再 forward
+- 使用 `validation_on_the_forward_views_progressive_iter_once_revised`（pseudo 视角策略固定在代码内）
+
+**separated**
+
+- Stage1 冻结模型：从 2-view 生成初始 3DGS / pseudo 渲染
+- Stage2 模型：负责 reinject 后的主推理
+- 使用 `stereosplatplus_pose_view_selection_injection_two_seperated_models`，`pseudo_ratio` 由 `--pseudo_ratio 0.5 1.0` 控制
+
+### 5.3 Mode ③：pixel_fusion
+
+在 S+ 管线上，对 **两路 novel-view 渲染** 做逐像素 confidence 融合（`fuse_renders_by_conf_pixelwise`）：
+
+| architecture | 融合的两路 |
+|--------------|------------|
+| whole | 同 checkpoint：2-view GS 渲染 vs pseudo-multiview GS 渲染 |
+| separated | Stage1 渲染 vs Stage2 渲染 |
+
+- **fusion off**（不加 `--conf_pixel_level_fusion`）：只走 S+ 管线，取其中一路为主（与改 fusion 前 deactivate 行为一致）
+- **fusion on**（加 `--conf_pixel_level_fusion`）：逐像素 `conf_b >= conf_a` 选 B，fused_conf 取被选中路的 conf
+
+---
+
+## 6. 训练与评估的对应关系
+
+```mermaid
+flowchart LR
+    subgraph train ["训练"]
+        T1["Stage1 train.sh\nGT views + conf"]
+        T2["Stage2 train_stereosplat_stage2.sh\npseudo-GT mix + Difix3D"]
+    end
+
+    subgraph ckpt ["Checkpoint"]
+        C1["stage1/checkpoint-145000"]
+        C2["stage2_resume/latest"]
+    end
+
+    subgraph eval ["评估 eval/run.py"]
+        E1["stage1/*"]
+        E2s["stage2/stereosplat_whole_s2"]
+        E2p["stage2/stereosplat_plus_separated"]
+        E2f["stage2/pixel_fusion_*"]
+    end
+
+    T1 --> C1
+    T2 --> C2
+    C1 --> E1
+    C1 --> E2p
+    C2 --> E2s
+    C2 --> E2p
+    C2 --> E2f
+```
+
+| 训练产出 | 常用于哪些评估 |
+|----------|----------------|
+| Stage1 only | Stage1 全部三种 mode；Stage2 separated 的 `--stage_1_model_path`；`stereosplat_whole_s1` 对照 |
+| Stage2 | Stage2 的 stereosplat / S+ whole / pixel_fusion whole；separated 的 `--pretrained_model_path` |
+
+---
+
+## 7. 使用方法
+
+### 7.1 前置条件
+
+```bash
+cd stereosplat
+pixi install -e cu118 && pixi run -e cu118 setup
+```
+
+所有评估脚本默认：
+
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
+```
+
+并使用 `pixi run -e cu118 accelerate launch`。
+
+### 7.2 推荐：用新 shell 跑（最简单）
+
+在 `stereosplat/` 根目录执行：
+
+```bash
+# Stage2 | pixel fusion | separated | fusion ON
+bash scripts/evaluation/stage2/pixel_fusion_separated.sh
+
+# Stage1 | pixel fusion | whole | fusion OFF
+bash scripts/evaluation/stage1/pixel_fusion.sh
+
+# Stage2 | 基础 stereosplat | Stage2 权重
+bash scripts/evaluation/stage2/stereosplat_whole_s2.sh
+```
+
+每个 shell 文件底部有**函数调用行**（类似 `eval_stage2_pixel_fusion_separated_activate`）。  
+用 `#` 注释切换 activate / deactivate、with_difix / no_difix 等变体。
+
+### 7.3 直接调用 eval/run.py（最灵活）
+
+```bash
+cd stereosplat
+
+pixi run -e cu118 accelerate launch \
+  --config-file accelerate_configs/inference/gpu_1.yaml \
+  eval/run.py \
+  --training_stage stage2 \
+  --eval_mode pixel_fusion \
+  --architecture separated \
+  --output_folder /data1/.../results/my_exp \
+  --pretrained_model_path /data1/.../stage2_resume/latest \
+  --stage_1_model_path /data1/.../stage1/latest/checkpoint-145000 \
+  --val_filelist filenames/kitti360/train_complete/val.txt \
+  --demo_filelist filenames/kitti360/train_complete/demo_more.txt \
+  --pretrained_diffix_model_path /data4/.../model_130001.pkl \
+  --pseudo_ratio 0.5 1.0 \
+  --use_diffix3d \
+  --use_ref \
+  --conf_pixel_level_fusion
+```
+
+`--config_path` 可省略；由 `--training_stage` 自动选择。
+
+### 7.4 旧 shell / 旧 validator 路径（向后兼容）
+
+以下路径**仍然可用**，行为与迁移前一致，内部已转发到 `eval/run.py`：
+
+| 旧入口 | 等效新语义 |
+|--------|------------|
+| `scripts/evaluation/stereosplat/render_inside_bin.sh` | stage2 / stereosplat / whole / s2 ckpt |
+| `scripts/evaluation/stereosplat_plus/render_inside_bin_whole_model.sh` | stage2 / stereosplat_plus / whole |
+| `scripts/evaluation/stereosplat_plus/dev/stereosplat_plus_statge2_sep_model.sh` | stage2 / stereosplat_plus / separated |
+| `conf_fusion/pixel_level/whole_mode.sh` | stage2 / pixel_fusion / whole |
+| `conf_fusion/pixel_level/sep_model.sh` | stage2 / pixel_fusion / separated |
+| `conf_fusion/pixel_level/whole_model_stage1.sh` | stage1 / pixel_fusion / whole |
+| `validator/.../posed_input_view_injected_selected_sep_model_pixel_level.py` | 同上 sep |
+
+**正在跑的进程不会因你改仓库代码而中断**；只有**新启动**的任务会使用新代码。
+
+### 7.5 快速验证（demo 子集 + 可视化）
+
+在任意 launch 命令末尾加上：
+
+```bash
+--output_vis
+```
+
+会自动改用 `demo_filelist`（`demo_more.txt`），并在 `output_folder` 下保存 RGB / depth / conf 可视化。
+
+### 7.6 查看帮助
+
+```bash
+pixi run -e cu118 python eval/run.py --help
+```
+
+---
+
+## 8. CLI 参数完整说明
+
+### 8.1 核心三元组（必填语义）
+
+| 参数 | 取值 | 说明 |
+|------|------|------|
+| `--training_stage` | `stage1` / `stage2` | 决定默认 config 与训练阶段语义 |
+| `--eval_mode` | `stereosplat` / `stereosplat_plus` / `pixel_fusion` | 评估管线（见第 5 节） |
+| `--architecture` | `whole` / `separated` | 默认 `whole`；separated 需 Stage1 冻结权重 |
+
+### 8.2 路径与 IO
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--output_folder` | **是** | 结果目录；写入 `metric.json` 与可选可视化 |
+| `--config_path` | 否 | 默认按 stage 自动选择 |
+| `--pretrained_model_path` | 推荐 | 主模型 checkpoint（目录或权重文件） |
+| `--stage_1_model_path` | separated 必填 | 冻结 Stage1 权重 |
+| `--val_filelist` | 推荐 | 正式评估 bin 列表 |
+| `--demo_filelist` | 推荐 | `--output_vis` 时使用 |
+
+### 8.3 Difix3D 相关
+
+| 参数 | 说明 |
+|------|------|
+| `--use_diffix3d` | 启用 Difix3D 修复 pseudo 图 |
+| `--use_ref` | 使用 stereo reference（mv_unet） |
+| `--pretrained_diffix_model_path` | Difix3D 权重 `.pkl` |
+| `--timestep` | 默认 `199` |
+| `--prompt` | 默认 `"remove degradation"` |
+| `--deterministic_vae_encode` / `--deterministic_scheduler_step` | 确定性推理 |
+
+> `pixel_fusion + whole` 会**强制加载** Difix3D 权重（与旧 whole pixel validator 行为一致），即使未加 `--use_diffix3d`。
+
+### 8.4 Confidence fusion
+
+| 参数 | 说明 |
+|------|------|
+| `--conf_pixel_level_fusion` | 开启逐像素 conf 融合（仅 `pixel_fusion` 有意义） |
+| `--pseudo_ratio` | 空格分隔列表，如 `0.5 1.0`（pose injection / separated / pixel_fusion） |
+
+### 8.5 消融与其它
+
+| 参数 | 说明 |
+|------|------|
+| `--use_gt_view` | Oracle 上界（`oracle_upper_bound_ablation`） |
+| `--output_vis` | 保存可视化；切换到 demo filelist |
+| `--use-wandb` 及 `--wandb-*` | 可选 W&B 日志 |
+
+---
+
+## 9. 旧路径兼容映射
+
+### 9.1 validator wrapper 机制
+
+每个旧 `validator/*.py` 现在类似：
+
+```python
+# validator/.../posed_input_view_injected_selected_sep_model_pixel_level.py
+from eval.run import main
+
+if __name__ == "__main__":
+    main(defaults={
+        "training_stage": "stage2",
+        "eval_mode": "pixel_fusion",
+        "architecture": "separated",
+    })
+```
+
+命令行传入的 `--output_folder`、`--pretrained_model_path` 等**覆盖** defaults。  
+因此旧 shell 里写的 validator 路径**无需修改**也能跑。
+
+### 9.2 文件对照表
+
+| 旧 validator 文件 | defaults |
+|-------------------|----------|
+| `validator/stereosplat/rendered_views_inside_bin.py` | stage2, stereosplat, whole |
+| `validator/stereosplat/rendered_view_inside_bin_plus_diffix.py` | stage2, stereosplat_plus, whole |
+| `validator/stereosplat_plus/posed_input_view_injected_selected_stage2.py` | stage2, stereosplat_plus, separated |
+| `validator/.../whole_model_pixel_level.py` | stage2, pixel_fusion, whole |
+| `validator/.../sep_model_pixel_level.py` | stage2, pixel_fusion, separated |
+| `validator/stereosplat_plus/posed_input_view_injected_selected.py` | stage1, pixel_fusion, whole（legacy dev） |
+
+---
+
+## 10. 输出结果说明
+
+### 10.1 metric.json
+
+评估结束后，主进程在 `--output_folder/metric.json` 写入：
+
+```json
+{
+  "rgb": { "all_view_psnr_average": ..., "all_view_ssim_average": ..., ... },
+  "depth": { "all_view_Abs_Rel_average": ..., ... },
+  "conf": { ... },
+  "conf_fused": { ... },
+  "conf_stage1": { ... },
+  "conf_stage2": { ... },
+  "conf_2view": { ... },
+  "conf_pseudo_multiview": { ... }
+}
+```
+
+哪些 key 出现取决于 `eval_mode` 与是否开启 fusion；空 section 不会写入。
+
+### 10.2 可视化目录（`--output_vis`）
+
+每个 bin 下可能包含：
+
+```
+<bin_token>/
+├── rendered_images/
+├── rendered_depth/
+├── rendered_conf/          # conf 模型
+├── GT Images/
+└── GT Depth/
+```
+
+separated / fusion 模式可能额外有 `rendered_conf_stage1/` 等。
+
+---
+
+## 11. 自定义路径与调试
+
+### 11.1 改默认权重 / Difix 路径
+
+编辑 **`scripts/evaluation/_common.sh`** 中的 `_eval_default_paths()`：
+
+```bash
+STAGE1_MODEL_PATH="你的/stage1/路径"
+STAGE2_MODEL_DIR="你的/stage2/目录"
+pretrained_diffix_model_path="你的/difix.pkl"
+```
+
+旧 `conf_fusion/pixel_level/_common.sh` 里有一份相同变量（旧脚本专用）。
+
+### 11.2 改 GPU
+
+- 新 shell：修改各脚本里 `_eval_launch` 的第一个参数，如 `gpu_0.yaml` → `gpu_1.yaml`
+- 配置目录：`accelerate_configs/inference/gpu_*.yaml`
+
+### 11.3 改输出目录
+
+在各 shell 的 `RESULTS_BASE` 或 `OUTPUT_BASE` 变量处修改。
+
+### 11.4 性能注意
+
+- 全量 `val.txt` 约 5485 bins，耗时很长
+- 脚本默认 `CUDA_LAUNCH_BLOCKING=1` 便于查错，但**极慢**；确认无误后可去掉该行加速
+- `pixel_fusion` 比 `stereosplat` 多一路渲染，更慢
+
+### 11.5 修改评估逻辑时改哪里
+
+| 想改什么 | 改哪个文件 |
+|----------|------------|
+| 加新 eval_mode、换模型函数 | `eval/routes.py` |
+| 参数、dataloader、加载权重 | `eval/run.py` / `eval/common.py` |
+| 启动命令、默认路径 | `scripts/evaluation/_common.sh` 与各 shell |
+| 算法本身（融合、渲染） | `src/.../stereosplat.py` |
+| **不要**在 `validator/` 写业务逻辑 | 仅保留 wrapper |
+
+---
+
+## 12. 常见问题
+
+**Q：eval 和 validator 有什么区别？**  
+A：功能相同。`eval/` 是唯一实现；`validator/` 是旧路径兼容壳。
+
+**Q：改代码会打断正在跑的任务吗？**  
+A：不会。已启动进程用的是启动时的内存代码；只有新启动的 job 用新代码。
+
+**Q：stage2 stereosplat_whole_s1 和 stage1 stereosplat 有何不同？**  
+A：两者都用 Stage1 权重做纯 2-view forward，但 `whole_s1` 使用 **Stage2 的 config/dataloader**（`First_Stage2`），用于 Stage2 设定下的对照；`stage1/stereosplat.sh` 用 Stage1 config。
+
+**Q：whole_mode 和 stereosplat_plus_whole 一样吗？**  
+A：**不一样**。`whole_mode` / `pixel_fusion` 走 pose injection + `pseudo_ratio`；`stereosplat_plus_whole` 走 progressive 函数（固定 pseudo 策略）。
+
+**Q：`ImportError: DifixRef` 或 dataloader 越界？**  
+A：确认 `PYTHONPATH` 含 `stereosplat` 根目录；Stage2 评估必须用 `input_invariant_stereosplat_stage2.py`（`world_center=First_Stage2`），否则输入 view 数与 index 不匹配。
+
+**Q：如何用 bash 跑旧脚本？**  
+A：用 `bash script.sh`，不要用 `sh script.sh`（旧脚本已加 bash re-exec，但推荐直接用 `bash`）。
+
+---
+
+## 附录：一条命令对照表
+
+| 我想跑… | 命令 |
+|---------|------|
+| Stage1 基础 2-view 评估 | `bash scripts/evaluation/stage1/stereosplat.sh` |
+| Stage1 S+ progressive | `bash scripts/evaluation/stage1/stereosplat_plus.sh` |
+| Stage1 pixel fusion 消融 | `bash scripts/evaluation/stage1/pixel_fusion.sh` |
+| Stage2 基础 2-view（S2 权重） | `bash scripts/evaluation/stage2/stereosplat_whole_s2.sh` |
+| Stage2 基础 2-view（S1 权重对照） | `bash scripts/evaluation/stage2/stereosplat_whole_s1.sh` |
+| Stage2 S+ unified progressive | `bash scripts/evaluation/stage2/stereosplat_plus_whole.sh` |
+| Stage2 S+ separated | `bash scripts/evaluation/stage2/stereosplat_plus_separated.sh` |
+| Stage2 pixel fusion whole | `bash scripts/evaluation/stage2/pixel_fusion_whole.sh` |
+| Stage2 pixel fusion separated | `bash scripts/evaluation/stage2/pixel_fusion_separated.sh` |
+
+更完整的参数控制请直接用 `eval/run.py`（第 7.3 节）。

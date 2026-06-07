@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# Deprecated: prefer scripts/evaluation/stage{1,2}/*.sh
-# Kept so old paths keep working; launches eval/run.py directly.
+# Shared launch helpers for scripts/evaluation/stage{1,2}/*.sh
+# Source: source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"   (from stage1/ or stage2/)
+#         source "$(dirname "${BASH_SOURCE[0]}")/../_common.sh" (from nested dirs)
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "ERROR: run with bash, not sh." >&2
   exit 1
 fi
 
-_conf_fusion_resolve_root() {
+_eval_resolve_root() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-  STEREOSPLAT_ROOT="$(cd "${script_dir}/../../../../../" && pwd)"
+  STEREOSPLAT_ROOT="$(cd "${script_dir}/../../.." && pwd)"
   cd "$STEREOSPLAT_ROOT" || exit 1
 }
 
-_conf_fusion_export_env() {
+_eval_export_env() {
   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
 }
 
-_conf_fusion_default_paths() {
-  configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
+_eval_default_paths() {
   val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
   demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo_more.txt"
   ablation_type="NMRFStereo"
@@ -35,8 +35,16 @@ _conf_fusion_default_paths() {
   timestep=199
 }
 
-# Usage: _conf_fusion_launch <gpu_yaml> <training_stage> <eval_mode> <architecture> <output_folder> <extra args...>
-_conf_fusion_launch() {
+_eval_config_stage1() {
+  configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
+}
+
+_eval_config_stage2() {
+  configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
+}
+
+# Usage: _eval_launch <gpu_yaml> <training_stage> <eval_mode> <architecture> <output_folder> [extra args...]
+_eval_launch() {
   local gpu_yaml="$1"
   local training_stage="$2"
   local eval_mode="$3"
