@@ -11,6 +11,10 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+
+# Prefer offline HF/transformers when cache exists (Difix3D base weights).
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 import os.path as osp
 import sys
 import warnings
@@ -127,6 +131,8 @@ def validate_args(args) -> None:
             )
     if args.conf_fusion_margin is not None and not args.conf_pixel_level_fusion:
         raise ValueError("--conf_fusion_margin requires --conf_pixel_level_fusion.")
+    if args.fusion_mode == "per_view_adaptive" and not args.conf_pixel_level_fusion:
+        raise ValueError("--fusion_mode per_view_adaptive requires --conf_pixel_level_fusion.")
     if args.gs_conf_fusion and args.eval_mode not in ("pixel_fusion", "stereosplat_plus"):
         raise ValueError("--gs_conf_fusion requires eval_mode pixel_fusion or stereosplat_plus.")
 
@@ -175,6 +181,44 @@ def main(args=None, defaults: dict | None = None):
             "A1 conf fusion: pick plus only when conf_plus > conf_base + margin "
             "(ties prefer base). Omit for legacy conf_plus >= conf_base (ties prefer plus)."
         ),
+    )
+    parser.add_argument(
+        "--fusion_mode",
+        type=str,
+        default="legacy",
+        choices=["legacy", "per_view_adaptive"],
+        help="legacy=global margin; per_view_adaptive=per-view margins + optional calibration.",
+    )
+    parser.add_argument(
+        "--fusion_first_margin",
+        type=float,
+        default=999.0,
+        help="First-frame margin (999 forces base). Used with per_view_adaptive.",
+    )
+    parser.add_argument(
+        "--fusion_center_margin",
+        type=float,
+        default=0.0,
+        help="Center-frame margin for per_view_adaptive.",
+    )
+    parser.add_argument(
+        "--fusion_last_margin",
+        type=float,
+        default=0.0,
+        help="Last-frame margin for per_view_adaptive.",
+    )
+    parser.add_argument(
+        "--fusion_calibration",
+        type=str,
+        default="none",
+        choices=["none", "zscore", "minmax"],
+        help="Per-image conf calibration before fusion (per_view_adaptive).",
+    )
+    parser.add_argument(
+        "--fusion_temperature",
+        type=float,
+        default=None,
+        help="Soft blending temperature; omit for hard selection (per_view_adaptive).",
     )
     parser.add_argument(
         "--gs_conf_fusion",

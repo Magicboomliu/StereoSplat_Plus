@@ -28,7 +28,7 @@ from .losses import Custom_Depth_Loss
 from .utils.interpolation import interpolate_extrinsics
 from tqdm import tqdm
 from .gs_fuse import transform_g2_to_g1
-from .utilsdir.gaussain_fusion import fuse_gaussians_by_voxel_conf_margin
+from .utilsdir.gaussain_fusion import fuse_gaussians_by_voxel_conf_margin_batched
 from .depth_error_vis import disp_error_img,depths_to_colors
 import moviepy.editor as mpy
 import wandb
@@ -419,6 +419,138 @@ def fuse_renders_by_conf_pixelwise(
     fused_depth = torch.where(pick_b, depth_b, depth_a)
     fused_conf = torch.where(pick_b, conf_b, conf_a)
     return fused_rgb, fused_depth, fused_conf
+
+
+def _build_per_view_fusion_margins(
+    num_views,
+    device,
+    first_margin,
+    center_margin,
+    last_margin,
+):
+    """Per-view margin tensor for KITTI-360 6-view render layout (pre-interleave).
+
+    V order: [center_L, last_L, center_R, last_R, first_L, first_R].
+    """
+    margins = torch.zeros(1, num_views, 1, 1, device=device, dtype=torch.float32)
+    if num_views == 6:
+        margins[0, 0, 0, 0] = center_margin
+        margins[0, 1, 0, 0] = last_margin
+        margins[0, 2, 0, 0] = center_margin
+        margins[0, 3, 0, 0] = last_margin
+        margins[0, 4, 0, 0] = first_margin
+        margins[0, 5, 0, 0] = first_margin
+    else:
+        margins.fill_(center_margin)
+    return margins
+
+
+def _calibrate_conf_maps(conf_a, conf_b, calibration):
+    if calibration == "zscore":
+        conf_a_cal = (conf_a - conf_a.mean(dim=(-2, -1), keepdim=True)) / (
+            conf_a.std(dim=(-2, -1), keepdim=True) + 1e-8
+        )
+        conf_b_cal = (conf_b - conf_b.mean(dim=(-2, -1), keepdim=True)) / (
+            conf_b.std(dim=(-2, -1), keepdim=True) + 1e-8
+        )
+        return conf_a_cal, conf_b_cal
+    if calibration == "minmax":
+        a_min = conf_a.amin(dim=(-2, -1), keepdim=True)
+        a_max = conf_a.amax(dim=(-2, -1), keepdim=True)
+        b_min = conf_b.amin(dim=(-2, -1), keepdim=True)
+        b_max = conf_b.amax(dim=(-2, -1), keepdim=True)
+        conf_a_cal = (conf_a - a_min) / (a_max - a_min + 1e-8)
+        conf_b_cal = (conf_b - b_min) / (b_max - b_min + 1e-8)
+        return conf_a_cal, conf_b_cal
+    return conf_a, conf_b
+
+
+def fuse_renders_per_view_adaptive(
+    rgb_a,
+    rgb_b,
+    depth_a,
+    depth_b,
+    conf_a,
+    conf_b,
+    first_margin=999.0,
+    center_margin=0.0,
+    last_margin=0.0,
+    calibration="none",
+    temperature=None,
+):
+    """Per-view adaptive fusion: different margins / calibration per trajectory view."""
+    if conf_a is None and conf_b is None:
+        return rgb_b, depth_b, None
+    if conf_a is None:
+        return rgb_b, depth_b, conf_b
+    if conf_b is None:
+        return rgb_a, depth_a, conf_a
+
+    _, num_views, _, _ = conf_a.shape
+    margins = _build_per_view_fusion_margins(
+        num_views,
+        conf_a.device,
+        first_margin,
+        center_margin,
+        last_margin,
+    )
+    conf_a_cal, conf_b_cal = _calibrate_conf_maps(conf_a, conf_b, calibration)
+
+    if temperature is None:
+        pick_b = conf_b_cal > conf_a_cal + margins
+        pick_b_rgb = pick_b.unsqueeze(2)
+        fused_rgb = torch.where(pick_b_rgb, rgb_b, rgb_a)
+        fused_depth = torch.where(pick_b, depth_b, depth_a)
+        fused_conf = torch.where(pick_b, conf_b, conf_a)
+    else:
+        conf_diff = conf_b_cal - conf_a_cal - margins
+        weight_b = torch.sigmoid(conf_diff * temperature)
+        weight_a = 1.0 - weight_b
+        fused_rgb = weight_a.unsqueeze(2) * rgb_a + weight_b.unsqueeze(2) * rgb_b
+        fused_depth = weight_a * depth_a + weight_b * depth_b
+        fused_conf = weight_a * conf_a + weight_b * conf_b
+
+    return fused_rgb, fused_depth, fused_conf
+
+
+def pixel_fuse_renders(
+    rgb_a,
+    rgb_b,
+    depth_a,
+    depth_b,
+    conf_a,
+    conf_b,
+    fusion_mode="legacy",
+    conf_fusion_margin=None,
+    fusion_first_margin=999.0,
+    fusion_center_margin=0.0,
+    fusion_last_margin=0.0,
+    fusion_calibration="none",
+    fusion_temperature=None,
+):
+    if fusion_mode == "per_view_adaptive":
+        return fuse_renders_per_view_adaptive(
+            rgb_a,
+            rgb_b,
+            depth_a,
+            depth_b,
+            conf_a,
+            conf_b,
+            first_margin=fusion_first_margin,
+            center_margin=fusion_center_margin,
+            last_margin=fusion_last_margin,
+            calibration=fusion_calibration,
+            temperature=fusion_temperature,
+        )
+    return fuse_renders_by_conf_pixelwise(
+        rgb_a,
+        rgb_b,
+        depth_a,
+        depth_b,
+        conf_a,
+        conf_b,
+        conf_fusion_margin=conf_fusion_margin,
+    )
 
 
 def save_stereo_conf_plots(rendered_conf_fusion, conf_folder_path):
@@ -9211,6 +9343,17 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
+                                        fusion_mode="legacy",
+                                        fusion_first_margin=999.0,
+                                        fusion_center_margin=0.0,
+                                        fusion_last_margin=0.0,
+                                        fusion_calibration="none",
+                                        fusion_temperature=None,
+                                        gs_conf_fusion=False,
+                                        gs_fusion_voxel_size=0.1,
+                                        gs_fusion_margin=0.05,
+                                        gs_fusion_conf_agg="mean",
+                                        gs_fusion_base_conf_thresh=None,
                                         ):
         """pixel_fusion + separated：Stage1/Stage2 各渲染一路，pose injection + 可选 conf 逐像素融合。"""
         return self.infer_pose_injection_frozen_stage1_two_models(
@@ -9227,6 +9370,17 @@ class StereoSplat(BaseModule):
             vis=vis,
             pixel_level_conf_fusion=pixel_level_conf_fusion,
             conf_fusion_margin=conf_fusion_margin,
+            fusion_mode=fusion_mode,
+            fusion_first_margin=fusion_first_margin,
+            fusion_center_margin=fusion_center_margin,
+            fusion_last_margin=fusion_last_margin,
+            fusion_calibration=fusion_calibration,
+            fusion_temperature=fusion_temperature,
+            gs_conf_fusion=gs_conf_fusion,
+            gs_fusion_voxel_size=gs_fusion_voxel_size,
+            gs_fusion_margin=gs_fusion_margin,
+            gs_fusion_conf_agg=gs_fusion_conf_agg,
+            gs_fusion_base_conf_thresh=gs_fusion_base_conf_thresh,
         )
 
     def infer_pose_injection_frozen_stage1_two_models(self,
@@ -9243,6 +9397,17 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
+                                        fusion_mode="legacy",
+                                        fusion_first_margin=999.0,
+                                        fusion_center_margin=0.0,
+                                        fusion_last_margin=0.0,
+                                        fusion_calibration="none",
+                                        fusion_temperature=None,
+                                        gs_conf_fusion=False,
+                                        gs_fusion_voxel_size=0.1,
+                                        gs_fusion_margin=0.05,
+                                        gs_fusion_conf_agg="mean",
+                                        gs_fusion_base_conf_thresh=None,
                                         ):
 
         
@@ -9569,44 +9734,101 @@ class StereoSplat(BaseModule):
         render_fovxs = output_batch_dict["output_fovxs"]
         render_fovys = output_batch_dict["output_fovys"]
 
-        render_pkg_stage2 = self.renderer.render(
-            gaussians=gaussians_all_stage2,
-            c2w=render_c2w,
-            fovx=render_fovxs,
-            fovy=render_fovys,
-            rays_o=None,
-            rays_d=None
-        )
-
-        rendered_color_stage2 = render_pkg_stage2['image']
-        rendered_depth_stage2 = render_pkg_stage2['depth'].squeeze(2)
-        rendered_conf_stage2 = conf_from_render_pkg(render_pkg_stage2)
-        rendered_color_stage2 = torch.clamp(rendered_color_stage2, min=0, max=1.0)
-        rendered_depth_stage2 = torch.clamp(rendered_depth_stage2, min=0, max=150)
-
         rendered_conf_stage1_final = None
-        if pixel_level_conf_fusion:
-            render_pkg_stage1_final = self.renderer.render(
-                gaussians=gaussians_all_stage1,
+        rendered_color_gs_fused = None
+        rendered_depth_gs_fused = None
+        rendered_conf_gs_fused = None
+        rendered_color_stage2 = None
+        rendered_depth_stage2 = None
+        rendered_conf_stage2 = None
+
+        if gs_conf_fusion:
+            pc_range = self.dataset_params.pc_range
+            if hasattr(pc_range, "tolist"):
+                pc_range = pc_range.tolist()
+            else:
+                pc_range = list(pc_range)
+            gaussians_for_render, _ = fuse_gaussians_by_voxel_conf_margin_batched(
+                gaussians_all_stage1,
+                gaussians_all_stage2,
+                point_cloud_range=pc_range,
+                voxel_size=gs_fusion_voxel_size,
+                conf_fusion_margin=gs_fusion_margin,
+                conf_agg=gs_fusion_conf_agg,
+                base_conf_thresh=gs_fusion_base_conf_thresh,
+            )
+
+            render_pkg_gs_fused = self.renderer.render(
+                gaussians=gaussians_for_render,
+                c2w=render_c2w,
+                fovx=render_fovxs,
+                fovy=render_fovys,
+                rays_o=None,
+                rays_d=None,
+            )
+            rendered_color_gs_fused = torch.clamp(
+                render_pkg_gs_fused['image'], min=0, max=1.0)
+            rendered_depth_gs_fused = torch.clamp(
+                render_pkg_gs_fused['depth'].squeeze(2), min=0, max=150)
+            rendered_conf_gs_fused = conf_from_render_pkg(render_pkg_gs_fused)
+
+        if not gs_conf_fusion:
+            render_pkg_stage2 = self.renderer.render(
+                gaussians=gaussians_all_stage2,
                 c2w=render_c2w,
                 fovx=render_fovxs,
                 fovy=render_fovys,
                 rays_o=None,
                 rays_d=None
             )
-            rendered_color_stage1_final = torch.clamp(
-                render_pkg_stage1_final['image'], min=0, max=1.0)
-            rendered_depth_stage1_final = torch.clamp(
-                render_pkg_stage1_final['depth'].squeeze(2), min=0, max=150)
-            rendered_conf_stage1_final = conf_from_render_pkg(render_pkg_stage1_final)
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = fuse_renders_by_conf_pixelwise(
+            rendered_color_stage2 = render_pkg_stage2['image']
+            rendered_depth_stage2 = render_pkg_stage2['depth'].squeeze(2)
+            rendered_conf_stage2 = conf_from_render_pkg(render_pkg_stage2)
+            rendered_color_stage2 = torch.clamp(rendered_color_stage2, min=0, max=1.0)
+            rendered_depth_stage2 = torch.clamp(rendered_depth_stage2, min=0, max=150)
+
+        if gs_conf_fusion and pixel_level_conf_fusion:
+            # Reuse frozen Stage1 render from pseudo-injection (same G_stage1 & cameras).
+            rendered_color_stage1_final = rendered_color_fuse
+            rendered_depth_stage1_final = rendered_depth_fuse
+            rendered_conf_stage1_final = rendered_conf_stage1
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
+                rendered_color_stage1_final,
+                rendered_color_gs_fused,
+                rendered_depth_stage1_final,
+                rendered_depth_gs_fused,
+                rendered_conf_stage1_final,
+                rendered_conf_gs_fused,
+                fusion_mode=fusion_mode,
+                conf_fusion_margin=conf_fusion_margin,
+                fusion_first_margin=fusion_first_margin,
+                fusion_center_margin=fusion_center_margin,
+                fusion_last_margin=fusion_last_margin,
+                fusion_calibration=fusion_calibration,
+                fusion_temperature=fusion_temperature,
+            )
+        elif gs_conf_fusion:
+            rendered_color_fuse = rendered_color_gs_fused
+            rendered_depth_fuse = rendered_depth_gs_fused
+            rendered_conf_fuse = rendered_conf_gs_fused
+        elif pixel_level_conf_fusion:
+            rendered_color_stage1_final = rendered_color_fuse
+            rendered_depth_stage1_final = rendered_depth_fuse
+            rendered_conf_stage1_final = rendered_conf_stage1
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
                 rendered_color_stage1_final,
                 rendered_color_stage2,
                 rendered_depth_stage1_final,
                 rendered_depth_stage2,
                 rendered_conf_stage1_final,
                 rendered_conf_stage2,
+                fusion_mode=fusion_mode,
                 conf_fusion_margin=conf_fusion_margin,
+                fusion_first_margin=fusion_first_margin,
+                fusion_center_margin=fusion_center_margin,
+                fusion_last_margin=fusion_last_margin,
+                fusion_calibration=fusion_calibration,
+                fusion_temperature=fusion_temperature,
             )
         else:
             rendered_color_fuse = rendered_color_stage2
@@ -9628,6 +9850,9 @@ class StereoSplat(BaseModule):
         if rendered_conf_stage1_final is not None:
             rendered_conf_stage1_final_fusion = interleave_left_right_depth(
                 rendered_conf_stage1_final)
+        rendered_conf_gs_fused_fusion = None
+        if rendered_conf_gs_fused is not None:
+            rendered_conf_gs_fused_fusion = interleave_left_right_depth(rendered_conf_gs_fused)
         sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
         rendered_images_gt = interleave_left_right(output_rgb)
         
@@ -9758,7 +9983,22 @@ class StereoSplat(BaseModule):
             "RGB":evaluation_rgb_results_stat,
             "Depth":evaluation_depth_results_stat,
         }
-        if pixel_level_conf_fusion:
+        if gs_conf_fusion and pixel_level_conf_fusion:
+            conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
+            if conf_stats_fused is not None:
+                evaluation_results_stat["Conf"] = conf_stats_fused
+            conf_stats_gs_fused = stereosplat_conf_eval_stats(rendered_conf_gs_fused_fusion)
+            if conf_stats_gs_fused is not None:
+                evaluation_results_stat["Conf_gs_fused"] = conf_stats_gs_fused
+            conf_stats_stage1_final = stereosplat_conf_eval_stats(
+                rendered_conf_stage1_final_fusion)
+            if conf_stats_stage1_final is not None:
+                evaluation_results_stat["Conf_stage1"] = conf_stats_stage1_final
+        elif gs_conf_fusion:
+            conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
+            if conf_stats_fused is not None:
+                evaluation_results_stat["Conf"] = conf_stats_fused
+        elif pixel_level_conf_fusion:
             conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
             if conf_stats_fused is not None:
                 evaluation_results_stat["Conf"] = conf_stats_fused
@@ -9950,6 +10190,12 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
+                                        fusion_mode="legacy",
+                                        fusion_first_margin=999.0,
+                                        fusion_center_margin=0.0,
+                                        fusion_last_margin=0.0,
+                                        fusion_calibration="none",
+                                        fusion_temperature=None,
                                         gs_conf_fusion=False,
                                         gs_fusion_voxel_size=0.1,
                                         gs_fusion_margin=0.05,
@@ -10040,6 +10286,7 @@ class StereoSplat(BaseModule):
         
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
+        rendered_conf_2view_cached = conf_from_render_pkg(render_pkg_fuse)
         
         output_rgb = output_batch_dict['output_imgs'] # This is the GT Images
         sparse_depth_gt = output_batch_dict['output_sparse_depth']  
@@ -10328,30 +10575,15 @@ class StereoSplat(BaseModule):
                 pc_range = pc_range.tolist()
             else:
                 pc_range = list(pc_range)
-            fused_gaussians_list = []
-            max_fused_len = 0
-            gauss_dim = gaussians_all_2view.shape[-1]
-            for b in range(bs):
-                fused_b = fuse_gaussians_by_voxel_conf_margin(
-                    gaussians_all_2view[b],
-                    gaussians_all_pseudo_multiview[b],
-                    point_cloud_range=pc_range,
-                    voxel_size=gs_fusion_voxel_size,
-                    conf_fusion_margin=gs_fusion_margin,
-                    conf_agg=gs_fusion_conf_agg,
-                    base_conf_thresh=gs_fusion_base_conf_thresh,
-                )
-                fused_gaussians_list.append(fused_b)
-                max_fused_len = max(max_fused_len, fused_b.shape[0])
-
-            gaussians_for_render = torch.zeros(
-                (bs, max_fused_len, gauss_dim),
-                dtype=gaussians_all_2view.dtype,
-                device=gaussians_all_2view.device,
+            gaussians_for_render, _ = fuse_gaussians_by_voxel_conf_margin_batched(
+                gaussians_all_2view,
+                gaussians_all_pseudo_multiview,
+                point_cloud_range=pc_range,
+                voxel_size=gs_fusion_voxel_size,
+                conf_fusion_margin=gs_fusion_margin,
+                conf_agg=gs_fusion_conf_agg,
+                base_conf_thresh=gs_fusion_base_conf_thresh,
             )
-            for b, fused_b in enumerate(fused_gaussians_list):
-                if fused_b.shape[0] > 0:
-                    gaussians_for_render[b, : fused_b.shape[0]] = fused_b
 
             render_pkg_gs_fused = self.renderer.render(
                 gaussians=gaussians_for_render,
@@ -10388,54 +10620,46 @@ class StereoSplat(BaseModule):
             )
 
         if gs_conf_fusion and pixel_level_conf_fusion:
-            render_pkg_2view_final = self.renderer.render(
-                gaussians=gaussians_all_2view,
-                c2w=render_c2w,
-                fovx=render_fovxs,
-                fovy=render_fovys,
-                rays_o=None,
-                rays_d=None
-            )
-            rendered_color_2view_final = torch.clamp(
-                render_pkg_2view_final['image'], min=0, max=1.0)
-            rendered_depth_2view_final = torch.clamp(
-                render_pkg_2view_final['depth'].squeeze(2), min=0, max=150)
-            rendered_conf_2view_final = conf_from_render_pkg(render_pkg_2view_final)
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = fuse_renders_by_conf_pixelwise(
+            rendered_color_2view_final = rendered_color_fuse
+            rendered_depth_2view_final = rendered_depth_fuse
+            rendered_conf_2view_final = rendered_conf_2view_cached
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
                 rendered_color_2view_final,
                 rendered_color_gs_fused,
                 rendered_depth_2view_final,
                 rendered_depth_gs_fused,
                 rendered_conf_2view_final,
                 rendered_conf_gs_fused,
+                fusion_mode=fusion_mode,
                 conf_fusion_margin=conf_fusion_margin,
+                fusion_first_margin=fusion_first_margin,
+                fusion_center_margin=fusion_center_margin,
+                fusion_last_margin=fusion_last_margin,
+                fusion_calibration=fusion_calibration,
+                fusion_temperature=fusion_temperature,
             )
         elif gs_conf_fusion:
             rendered_color_fuse = rendered_color_gs_fused
             rendered_depth_fuse = rendered_depth_gs_fused
             rendered_conf_fuse = rendered_conf_gs_fused
         elif pixel_level_conf_fusion:
-            render_pkg_2view_final = self.renderer.render(
-                gaussians=gaussians_all_2view,
-                c2w=render_c2w,
-                fovx=render_fovxs,
-                fovy=render_fovys,
-                rays_o=None,
-                rays_d=None
-            )
-            rendered_color_2view_final = torch.clamp(
-                render_pkg_2view_final['image'], min=0, max=1.0)
-            rendered_depth_2view_final = torch.clamp(
-                render_pkg_2view_final['depth'].squeeze(2), min=0, max=150)
-            rendered_conf_2view_final = conf_from_render_pkg(render_pkg_2view_final)
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = fuse_renders_by_conf_pixelwise(
+            rendered_color_2view_final = rendered_color_fuse
+            rendered_depth_2view_final = rendered_depth_fuse
+            rendered_conf_2view_final = rendered_conf_2view_cached
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
                 rendered_color_2view_final,
                 rendered_color_pseudo_multiview,
                 rendered_depth_2view_final,
                 rendered_depth_pseudo_multiview,
                 rendered_conf_2view_final,
                 rendered_conf_pseudo_multiview,
+                fusion_mode=fusion_mode,
                 conf_fusion_margin=conf_fusion_margin,
+                fusion_first_margin=fusion_first_margin,
+                fusion_center_margin=fusion_center_margin,
+                fusion_last_margin=fusion_last_margin,
+                fusion_calibration=fusion_calibration,
+                fusion_temperature=fusion_temperature,
             )
         else:
             rendered_color_fuse = rendered_color_pseudo_multiview
@@ -13774,7 +13998,18 @@ def convert_pil_to_tensor(pil_image):
     img = img.permute(2,0,1)
     img = img.unsqueeze(0).unsqueeze(0)
     return img
-        
+
+
+_LPIPS_FN_CACHE: dict[tuple[str, str], lpips.LPIPS] = {}
+
+
+def _cached_lpips(net: str, device: torch.device) -> lpips.LPIPS:
+    key = (net, str(device))
+    if key not in _LPIPS_FN_CACHE:
+        _LPIPS_FN_CACHE[key] = lpips.LPIPS(net=net).to(device).eval()
+    return _LPIPS_FN_CACHE[key]
+
+
 @torch.no_grad()
 def lpips_mean(pred: torch.Tensor, gt: torch.Tensor, net: str = "alex") -> torch.Tensor:
     """
@@ -13785,7 +14020,7 @@ def lpips_mean(pred: torch.Tensor, gt: torch.Tensor, net: str = "alex") -> torch
     assert pred.ndim == 5 and pred.shape[0] == 1 and pred.shape[2] == 3
 
     device = pred.device
-    loss_fn = lpips.LPIPS(net=net).to(device).eval()
+    loss_fn = _cached_lpips(net, device)
 
     B, V, C, H, W = pred.shape  # B=1
     pred_ = pred.view(B * V, C, H, W) * 2.0 - 1.0
@@ -13813,8 +14048,8 @@ def metrics_mean(pred: torch.Tensor, gt: torch.Tensor, lpips_net: str = "alex"):
     # SSIM (torchmetrics expects data_range)
     ssim = ssim_fn(pred_01, gt_01, data_range=1.0).mean()
 
-    # LPIPS
-    loss_fn = lpips.LPIPS(net=lpips_net).to(device).eval()
+    # LPIPS (cached — avoid reloading alex weights every metrics_mean call)
+    loss_fn = _cached_lpips(lpips_net, device)
     lp = loss_fn(pred_01 * 2 - 1, gt_01 * 2 - 1).mean()
 
     return {"lpips": lp, "psnr": psnr, "ssim": ssim}

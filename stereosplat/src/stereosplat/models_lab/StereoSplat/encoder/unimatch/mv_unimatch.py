@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,6 +15,15 @@ from .utils import mv_feature_add_position
 from .dpt_head import DPTHead
 from .ldm_unet.unet import UNetModel, AttentionBlock
 from einops import rearrange
+
+
+def _load_dinov2(encoder: str) -> nn.Module:
+    """Load DINOv2; prefer local torch.hub cache to avoid GitHub metadata 504."""
+    model_name = f"dinov2_{encoder}14"
+    local_hub = os.path.join(torch.hub.get_dir(), "facebookresearch_dinov2_main")
+    if os.path.isdir(local_hub):
+        return torch.hub.load(local_hub, model_name, source="local")
+    return torch.hub.load("facebookresearch/dinov2", model_name)
 
 
 class MultiViewUniMatch(nn.Module):
@@ -79,9 +90,7 @@ class MultiViewUniMatch(nn.Module):
 
         # monodepth
         encoder = vit_type  # can also be 'vitb' or 'vitl'
-        self.pretrained = torch.hub.load(
-            "facebookresearch/dinov2", "dinov2_{:}14".format(encoder)
-        )
+        self.pretrained = _load_dinov2(encoder)
 
         del self.pretrained.mask_token  # unused
 
