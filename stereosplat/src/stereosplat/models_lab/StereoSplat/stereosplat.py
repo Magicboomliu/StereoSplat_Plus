@@ -1386,7 +1386,7 @@ class StereoSplat(BaseModule):
 
                 rec_loss = (rgb_gt - render_pkg_fuse["image"]) ** 2
                 fusion_branch_loss = loss + (rec_loss.mean() * self.losses_params.fusion_sup_dict.weight_recon)
-                set_loss("recon_fusion", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
+                set_loss("recon_gs", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
                 
             else:
                 raise NotImplementedError
@@ -1422,7 +1422,7 @@ class StereoSplat(BaseModule):
                 fusion_branch_loss = fusion_branch_loss + (preception_loss_fuse.mean() \
                                     * self.losses_params.fusion_sup_dict.weight_perceptual)
                 
-                set_loss("perceptual_fusion", mode, preception_loss_fuse.mean(), 
+                set_loss("perceptual_gs", mode, preception_loss_fuse.mean(), 
                             self.losses_params.fusion_sup_dict.weight_perceptual)
                 
             else:
@@ -1485,7 +1485,7 @@ class StereoSplat(BaseModule):
                 depth_abs_loss = torch.abs(render_pkg_fuse["depth"].squeeze(2) - rendered_gt_depth)
                 depth_abs_loss = depth_abs_loss.mean()
                 fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
-                set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+                set_loss("depth_abs_gs", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
 
                 # ==================== Conf Loss (Method B: self-supervised photometric soft label) ==
                 # conf_gt = exp(-lambda * mean_L1(rendered, gt))  [stop gradient]
@@ -1500,7 +1500,7 @@ class StereoSplat(BaseModule):
                     conf_loss = torch.nn.functional.mse_loss(rendered_conf_fuse, conf_gt)
                     weight_conf = getattr(self.losses_params.fusion_sup_dict, 'weight_conf', 0.1)
                     fusion_branch_loss = fusion_branch_loss + weight_conf * conf_loss
-                    set_loss("conf_fusion", mode, conf_loss, weight_conf)
+                    set_loss("conf_gs", mode, conf_loss, weight_conf)
             
             
             else:
@@ -2000,7 +2000,7 @@ class StereoSplat(BaseModule):
 
                 rec_loss = (rgb_gt - render_pkg_fuse["image"]) ** 2
                 fusion_branch_loss = loss + (rec_loss.mean() * self.losses_params.fusion_sup_dict.weight_recon)
-                set_loss("recon_fusion", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
+                set_loss("recon_gs", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
                 
             else:
                 raise NotImplementedError
@@ -2036,7 +2036,7 @@ class StereoSplat(BaseModule):
                 fusion_branch_loss = fusion_branch_loss + (preception_loss_fuse.mean() \
                                     * self.losses_params.fusion_sup_dict.weight_perceptual)
                 
-                set_loss("perceptual_fusion", mode, preception_loss_fuse.mean(), 
+                set_loss("perceptual_gs", mode, preception_loss_fuse.mean(), 
                             self.losses_params.fusion_sup_dict.weight_perceptual)
                 
             else:
@@ -2099,7 +2099,7 @@ class StereoSplat(BaseModule):
                 depth_abs_loss = torch.abs(render_pkg_fuse["depth"].squeeze(2) - rendered_gt_depth)
                 depth_abs_loss = depth_abs_loss.mean()
                 fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
-                set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+                set_loss("depth_abs_gs", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
             
             
             else:
@@ -2140,6 +2140,7 @@ class StereoSplat(BaseModule):
                 frozen_stage_1_model=None,
                 pretrained_diffix_model=None,
                 mix_psuedo_views_ratio=0.5,
+                use_self_for_pseudo=False,
                 cfg=None):
         input_batch_dict,input_batch_dict_for_psuedo_view_rendering, output_batch_dict = self.prepare_input_multiview_stage2(batch=batch,view_num=view_num,
                                                                          matching_nums=matching_nums)
@@ -2152,7 +2153,7 @@ class StereoSplat(BaseModule):
         
 
         def create_input_psuedo_views(batch,
-                                      frozen_stage_1_model,
+                                      pseudo_source_model,
                                       render_c2w,
                                       render_fovx,
                                       render_fovy,
@@ -2162,11 +2163,19 @@ class StereoSplat(BaseModule):
             input_batch_dict,output_batch_dict = self.prepare_input_multiview(batch=batch,view_num=2,
                                                                          matching_nums=2)
             
+            # self-bootstrap: render pseudo views from the model's *own* current
+            # weights (used purely as reinjected INPUT views, not as a distillation
+            # target). Use eval-mode behaviour (no dropout) to render, then restore
+            # train mode so the model keeps training normally afterwards.
+            pseudo_source_is_self = pseudo_source_model is self
+            was_training = self.training if pseudo_source_is_self else None
+            if pseudo_source_is_self:
+                self.eval()
             
             with torch.no_grad():
                 
-                stage1_3dgs_output = frozen_stage_1_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
-                rendered_psuedo_results = frozen_stage_1_model.renderer.render(
+                stage1_3dgs_output = pseudo_source_model.forward_to_3dgs(input_batch_dict,cfg=cfg) # (B,N,15) when stage-1 is conf model
+                rendered_psuedo_results = pseudo_source_model.renderer.render(
                     gaussians=stage1_3dgs_output,
                     c2w=render_c2w,
                     fovx=render_fovx,
@@ -2180,6 +2189,9 @@ class StereoSplat(BaseModule):
                 # sanitize: replace NaN/Inf first, then clamp to valid image range
                 psuedo_input_views = torch.nan_to_num(psuedo_input_views, nan=0.0, posinf=1.0, neginf=0.0)
                 psuedo_input_views = torch.clamp(psuedo_input_views, min=0.0, max=1.0)
+            
+            if pseudo_source_is_self and was_training:
+                self.train()
                 
             return psuedo_input_views
         
@@ -2190,9 +2202,13 @@ class StereoSplat(BaseModule):
         use_mix_psuedo_views = _mix_rng.random()
         use_mix_psuedo_difix3d_views = _mix_rng.random()
 
-        if frozen_stage_1_model is not None and use_mix_psuedo_views <= mix_psuedo_views_ratio:
+        # pseudo views come from frozen Stage1 (two-model) or from the model itself
+        # (self-bootstrap). Either way they are only reinjected as INPUT views.
+        pseudo_source_model = self if use_self_for_pseudo else frozen_stage_1_model
+
+        if pseudo_source_model is not None and use_mix_psuedo_views <= mix_psuedo_views_ratio:
             psuedo_input_views = create_input_psuedo_views(
-                batch, frozen_stage_1_model,
+                batch, pseudo_source_model,
                 render_c2w=input_batch_dict_for_psuedo_view_rendering['c2w'],
                 render_fovx=input_batch_dict_for_psuedo_view_rendering['fovx'],
                 render_fovy=input_batch_dict_for_psuedo_view_rendering['fovy'],
@@ -2477,7 +2493,7 @@ class StereoSplat(BaseModule):
 
                 rec_loss = (rgb_gt - render_pkg_fuse["image"]) ** 2
                 fusion_branch_loss = loss + (rec_loss.mean() * self.losses_params.fusion_sup_dict.weight_recon)
-                set_loss("recon_fusion", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
+                set_loss("recon_gs", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
                 
             else:
                 raise NotImplementedError
@@ -2513,7 +2529,7 @@ class StereoSplat(BaseModule):
                 fusion_branch_loss = fusion_branch_loss + (preception_loss_fuse.mean() \
                                     * self.losses_params.fusion_sup_dict.weight_perceptual)
                 
-                set_loss("perceptual_fusion", mode, preception_loss_fuse.mean(), 
+                set_loss("perceptual_gs", mode, preception_loss_fuse.mean(), 
                             self.losses_params.fusion_sup_dict.weight_perceptual)
                 
             else:
@@ -2576,7 +2592,7 @@ class StereoSplat(BaseModule):
                 depth_abs_loss = torch.abs(render_pkg_fuse["depth"].squeeze(2) - rendered_gt_depth)
                 depth_abs_loss = depth_abs_loss.mean()
                 fusion_branch_loss = fusion_branch_loss + self.losses_params.fusion_sup_dict.weight_depth_abs * depth_abs_loss
-                set_loss("depth_abs_fusion", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
+                set_loss("depth_abs_gs", mode, depth_abs_loss, self.losses_params.fusion_sup_dict.weight_depth_abs)
             
             
             else:
@@ -2593,7 +2609,66 @@ class StereoSplat(BaseModule):
                 conf_loss_stage2 = torch.nn.functional.mse_loss(rendered_conf_fuse, conf_gt_stage2)
                 _w_conf = getattr(self.losses_params.fusion_sup_dict, 'weight_conf', 0.1)
                 fusion_branch_loss = fusion_branch_loss + _w_conf * conf_loss_stage2
-                set_loss("conf_fusion", mode, conf_loss_stage2, _w_conf)
+                set_loss("conf_gs", mode, conf_loss_stage2, _w_conf)
+                # track mean confidence (predicted vs. soft GT) to monitor its evolution
+                with torch.no_grad():
+                    loss_terms[f"{mode}/conf_gs_mean"] = rendered_conf_fuse.mean().item()
+                    loss_terms[f"{mode}/conf_gt_mean"] = conf_gt_stage2.mean().item()
+
+            # ==================== Fusion Supervision Loss ================
+            # Aligns training with inference: render a pure 2-view 3DGS (no_grad),
+            # pixel-fuse it with the multiview render, then supervise the fused RGB.
+            # Gradient only flows through the multiview conf/RGB branch, teaching it
+            # to be confident exactly where it beats the 2-view baseline.
+            _w_fused = getattr(self.losses_params.fusion_sup_dict, 'weight_fusion_sup', 0.0)
+            if mode == 'train' and view_num > 2 and rendered_conf_fuse is not None and _w_fused > 0:
+                # Use eval mode for the 2-view reference render so behaviour matches
+                # inference (no dropout, stable BN stats).
+                _was_training = self.training
+                self.eval()
+                with torch.no_grad():
+                    _in2v, _ = self.prepare_input_multiview(batch=batch, view_num=2, matching_nums=2)
+                    _feats2v = self.extract_img_feat(img=_in2v["imgs"])
+                    _g_cv_2v, _g_feat_2v, _ = self.costvolume_gs(_in2v, cfg=cfg, images_feat=_feats2v[0])
+                    _pc = self.dataset_params.pc_range
+                    _x0, _y0, _z0, _x1, _y1, _z1 = _pc
+                    _cv_mask2v, _feat_mask2v = [], []
+                    for _b in range(_g_cv_2v.shape[0]):
+                        _m = (_g_cv_2v[_b,:,0] >= _x0) & (_g_cv_2v[_b,:,0] <= _x1) & \
+                             (_g_cv_2v[_b,:,1] >= _y0) & (_g_cv_2v[_b,:,1] <= _y1) & \
+                             (_g_cv_2v[_b,:,2] >= _z0) & (_g_cv_2v[_b,:,2] <= _z1)
+                        _cv_mask2v.append(_g_cv_2v[_b][_m])
+                        _feat_mask2v.append(_g_feat_2v[_b][_m])
+                    _g_vol_2v = self.volume_gs(
+                        [_feats2v[0]], _in2v['extrinsics'],
+                        _cv_mask2v, _feat_mask2v, _in2v['img_metas'])
+                    _g_cv_2v = sanitize_gaussians_tensor(_g_cv_2v)
+                    _g_vol_2v = sanitize_gaussians_tensor(_g_vol_2v)
+                    _g_all_2v = torch.cat([_g_cv_2v, _g_vol_2v], dim=1)
+                    _pkg_2v = self.renderer.render(
+                        gaussians=_g_all_2v,
+                        c2w=render_c2w,
+                        fovx=render_fovxs,
+                        fovy=render_fovys,
+                        rays_o=None, rays_d=None,
+                    )
+                    _rgb_2v = torch.clamp(_pkg_2v['image'], 0, 1.0)
+                    _conf_2v = conf_from_render_pkg(_pkg_2v)
+                if _was_training:
+                    self.train()
+
+                if _conf_2v is not None:
+                    # pixel-wise fusion: 2-view branch fully detached (reference only);
+                    # grad flows only through multiview RGB/conf.
+                    # depth_a is a zero dummy — fused depth is discarded (_) anyway.
+                    _rgb_fused, _, _ = pixel_fuse_renders(
+                        _rgb_2v.detach(), rendered_color_fuse,
+                        torch.zeros_like(rendered_depth_fuse), rendered_depth_fuse,
+                        _conf_2v.detach(), rendered_conf_fuse,
+                    )
+                    _loss_fused = (rgb_gt - _rgb_fused).pow(2).mean()
+                    fusion_branch_loss = fusion_branch_loss + _w_fused * _loss_fused
+                    set_loss("recon_pixel_fused", mode, _loss_fused, _w_fused)
 
             loss =cost_volume_branch_loss * self.losses_params.cv_sup_dict.branch_weight + \
                         trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
@@ -2622,17 +2697,25 @@ class StereoSplat(BaseModule):
 
 
 
-    def validation_step(self, batch, val_result_savedir,cfg=None):
+    def validation_step(self, batch, val_result_savedir,cfg=None, view_num=None, matching_nums=None, save_visuals=True):
         
         bin_token_name = batch['bin_token'][0][:-4]
 
         # loss and loss terms
         with torch.no_grad():
+            if view_num is not None:
+                fwd_out = self.forward(
+                    batch, mode='val',
+                    view_num=view_num,
+                    matching_nums=matching_nums if matching_nums is not None else view_num,
+                    cfg=cfg,
+                )
+            else:
+                fwd_out = self.forward(batch, mode='val', cfg=cfg)
             loss, loss_terms,rendered_fusion_list,\
                 rendered_volume_list,rendered_cv_results_list, \
                     predicted_input_depth,input_sparse_gt_depth,\
-                        output_rgb,sparse_depth_gt,input_images = self.forward(batch,mode='val',
-                                                            cfg=cfg)
+                        output_rgb,sparse_depth_gt,input_images = fwd_out
 
         batch_data_for_eval = {
             "output_gt_rgb": output_rgb,
@@ -2656,12 +2739,12 @@ class StereoSplat(BaseModule):
         # GT Depths
         # Estimated Depths
         
-        output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = self.save_val_results(batch_data_for_eval,val_result_savedir,cfg=cfg)
+        output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict = self.save_val_results(batch_data_for_eval,val_result_savedir,cfg=cfg,save_visuals=save_visuals)
         
         return output_rgb_meter_dict,output_depth_meter_dict,input_depth_meter_dict
     
     
-    def save_val_results(self,batch_data_for_eval,saved_dir,cfg):
+    def save_val_results(self,batch_data_for_eval,saved_dir,cfg,save_visuals=True):
         
         '''input batch data for evaluation'''
         
@@ -2842,9 +2925,8 @@ class StereoSplat(BaseModule):
             
             
             # saved into images.
-            os.makedirs(saved_dir,exist_ok=True)
-
-            if cfg.validation_vis_progress:
+            if save_visuals and cfg.validation_vis_progress:
+                os.makedirs(saved_dir,exist_ok=True)
                 saved_bin_token_name = batch_data_for_eval["bin_token_name"]
 
                 # saved the output rendered images and the GT Images

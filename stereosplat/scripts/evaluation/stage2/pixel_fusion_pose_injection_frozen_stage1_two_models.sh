@@ -64,7 +64,7 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_2.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/seperated-model/fusion/pixel-level-fusion"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/seperated-model/fusion/pixel-level-fusion-repeat"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"

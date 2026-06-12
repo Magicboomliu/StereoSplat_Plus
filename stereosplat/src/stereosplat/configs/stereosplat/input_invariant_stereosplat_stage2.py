@@ -229,6 +229,7 @@ loss_args = dict(
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
         weight_conf=0.1,      # conf MSE loss weight (used when use_conf_loss=True)
+        weight_fusion_sup=0.1, # fusion supervision: recon on pixel-fused result (2view+multiview)
         branch_weight =1.0,
     ),
     use_conf_loss=True,       # enable self-supervised conf supervision (Method B)

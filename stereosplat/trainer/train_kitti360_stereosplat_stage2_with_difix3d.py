@@ -105,6 +105,16 @@ def _load_state_dict_any(path: str, map_location: str = "cpu") -> dict:
     state_dict = _strip_prefix_if_present(state_dict, "model.")
     return state_dict
 
+def _is_accelerate_checkpoint(path: str) -> bool:
+    """Return True if path is a full accelerate checkpoint (contains optimizer state).
+    A plain Stage1 weights directory only has model.safetensors / .bin, no optimizer."""
+    if not os.path.isdir(path):
+        return False
+    return any(
+        os.path.exists(os.path.join(path, fname))
+        for fname in ("optimizer.bin", "optimizer.safetensors", "random_states_0.pkl")
+    )
+
 def _make_side_dict(factory):
     return {"left": factory(), "right": factory()}
 
@@ -404,31 +414,36 @@ def main(args):
     )
     
     ############################ Stage 1 Pretrained Model Here : Frozen, Just for Creating Psuedo Views, Not Optimized ###########################################
-    frozen_stage_1_model = StereoSplat(backbone=cfg.model.backbone,
-                                    neck=cfg.model.neck,
-                                    costvolume_gs=cfg.model.costvolume_gs,
-                                    volume_gs=cfg.model.volume_gs,
-                                    losses_params=cfg.model.losses_params,
-                                    camera_args=cfg.camera_args,
-                                    dataset_params=cfg.dataset_params,
-                                    use_checkpoint=cfg.use_checkpoint)
-                                    
-    if args.stage_1_model_path is None:
-        raise ValueError(
-            "You must pass `--stage_1_model_path` (checkpoint dir or weights file) "
-            "to load the frozen stage-1 model."
+    # In self-bootstrap mode (--self_pseudo) we do NOT keep a separate frozen Stage1.
+    # The student generates pseudo views from its own (current) weights instead, so we
+    # only load --stage_1_model_path later as the student's initialization.
+    frozen_stage_1_model = None
+    if not args.self_pseudo:
+        frozen_stage_1_model = StereoSplat(backbone=cfg.model.backbone,
+                                        neck=cfg.model.neck,
+                                        costvolume_gs=cfg.model.costvolume_gs,
+                                        volume_gs=cfg.model.volume_gs,
+                                        losses_params=cfg.model.losses_params,
+                                        camera_args=cfg.camera_args,
+                                        dataset_params=cfg.dataset_params,
+                                        use_checkpoint=cfg.use_checkpoint)
+
+        if args.stage_1_model_path is None:
+            raise ValueError(
+                "You must pass `--stage_1_model_path` (checkpoint dir or weights file) "
+                "to load the frozen stage-1 model."
+            )
+        accelerator.print(f"[Stage1] loading frozen model from: {args.stage_1_model_path}")
+        sd_stage1 = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
+        incompatible = frozen_stage_1_model.load_state_dict(sd_stage1, strict=True)
+        accelerator.print(
+            f"[Stage1] loaded. missing={len(incompatible.missing_keys)}, "
+            f"unexpected={len(incompatible.unexpected_keys)}"
         )
-    accelerator.print(f"[Stage1] loading frozen model from: {args.stage_1_model_path}")
-    sd_stage1 = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
-    incompatible = frozen_stage_1_model.load_state_dict(sd_stage1, strict=True)
-    accelerator.print(
-        f"[Stage1] loaded. missing={len(incompatible.missing_keys)}, "
-        f"unexpected={len(incompatible.unexpected_keys)}"
-    )
-    # Freeze stage-1 model (used only for pseudo view creation)
-    frozen_stage_1_model.eval()
-    for p in frozen_stage_1_model.parameters():
-        p.requires_grad_(False)
+        # Freeze stage-1 model (used only for pseudo view creation)
+        frozen_stage_1_model.eval()
+        for p in frozen_stage_1_model.parameters():
+            p.requires_grad_(False)
     
 
     #### Pre-Trained Difix3D Model Here ###########################################
@@ -460,7 +475,23 @@ def main(args):
                                     camera_args=cfg.camera_args,
                                     dataset_params=cfg.dataset_params,
                                     use_checkpoint=cfg.use_checkpoint)
-    
+
+    # Self-bootstrap: weights-only init from --stage_1_model_path BEFORE
+    # accelerator.prepare.  This sets model weights for the first launch.
+    # A later accelerator.load_state(resume_from) will override both the model
+    # weights AND restore optimizer / scheduler / global_iter when resuming.
+    if args.self_pseudo:
+        if args.stage_1_model_path is not None:
+            accelerator.print(f"[SelfPseudo] init student weights from: {args.stage_1_model_path}")
+            sd_init = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
+            incompatible = my_model.load_state_dict(sd_init, strict=True)
+            accelerator.print(
+                f"[SelfPseudo] init done. missing={len(incompatible.missing_keys)}, "
+                f"unexpected={len(incompatible.unexpected_keys)}"
+            )
+        else:
+            accelerator.print("[SelfPseudo] --stage_1_model_path not set; student starts from random weights.")
+
     n_parameters = sum(p.numel() for p in my_model.parameters() if p.requires_grad)
     if logger is not None:
         logger.info(f'Number of params: {n_parameters}')
@@ -496,8 +527,9 @@ def main(args):
         my_model, optimizer, train_dataloader, val_dataloader, scheduler
     )
     
-    frozen_stage_1_model.to(accelerator.device)
-    frozen_stage_1_model.eval()
+    if frozen_stage_1_model is not None:
+        frozen_stage_1_model.to(accelerator.device)
+        frozen_stage_1_model.eval()
     pretrained_diffix_model.to(accelerator.device)
     pretrained_diffix_model.eval()
 
@@ -521,17 +553,32 @@ def main(args):
             path = cfg.resume_from
         else:
             # Get the most recent checkpoint
-            dirs = os.listdir(cfg.work_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            if len(dirs) > 0:
-                dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-                path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
+            if os.path.isdir(cfg.work_dir):
+                dirs = os.listdir(cfg.work_dir)
+                dirs = [d for d in dirs if d.startswith("checkpoint")]
+                if len(dirs) > 0:
+                    dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+                    path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
+                else:
+                    path = None
             else:
                 path = None
 
     if path:
         if not os.path.isabs(path):
             path = os.path.join(os.path.abspath(cfg.work_dir), path)
+        # In self-pseudo mode the initial resume_from may point to a plain Stage1
+        # weights checkpoint (no optimizer state). That was already handled above
+        # as a weights-only init; calling accelerator.load_state on it would load
+        # garbage optimizer state and set global_iter to the Stage1 step count.
+        if not _is_accelerate_checkpoint(path):
+            accelerator.print(
+                f"[Resume] {path} is a weights-only checkpoint (no optimizer state). "
+                "Skipping accelerator.load_state — weights-only init was done above."
+            )
+            path = None
+
+    if path:
         accelerator.print(f"Resuming from checkpoint {path}")
         accelerator.load_state(path, map_location='cpu', strict=False)
         global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
@@ -593,6 +640,7 @@ def main(args):
                             frozen_stage_1_model=frozen_stage_1_model,
                             pretrained_diffix_model=pretrained_diffix_model,
                             mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
+                            use_self_for_pseudo=args.self_pseudo,
                             cfg=cfg)
                     else:
                         loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.module.forward_stage2_with_difix3d(
@@ -603,6 +651,7 @@ def main(args):
                             frozen_stage_1_model=frozen_stage_1_model,
                             mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
                             pretrained_diffix_model=pretrained_diffix_model,
+                            use_self_for_pseudo=args.self_pseudo,
                             cfg=cfg)
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
@@ -654,15 +703,24 @@ def main(args):
                         "volume": _make_stage_meters(),
                         "cv": _make_stage_meters(),
                     }
+                    # dedicated 2-view-only meters: track pure 2-view GT performance
+                    # (guards against self-bootstrap / pseudo-view training degrading
+                    #  the canonical 2-input-image setting)
+                    meters_2view = {
+                        "fusion": _make_stage_meters(),
+                        "volume": _make_stage_meters(),
+                        "cv": _make_stage_meters(),
+                    }
                     stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
                     
                     for i_iter_val, batch_val in enumerate(val_dataloader):
                         print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
                         overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
                                                               "step-{}".format(global_iter))
-                        os.makedirs(overall_val_batch_save_dir,exist_ok=True)
                         val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
-                        os.makedirs(val_batch_save_dir,exist_ok=True)
+                        if getattr(cfg, 'validation_vis_progress', False):
+                            os.makedirs(val_batch_save_dir, exist_ok=True)
+                        os.makedirs(overall_val_batch_save_dir, exist_ok=True)  # always needed for json dumps
             
                         
                         if not use_ddp:
@@ -686,8 +744,27 @@ def main(args):
                                 output_depth_meter_dict,
                                 input_depth_meter_dict,
                             )
-                        
-                    
+
+                        # ---- extra pass: 2-view-only validation (pure GT, view_num=2) ----
+                        # metrics only, no visualization dump
+                        if not use_ddp:
+                            m2_rgb_list, m2_depth_list, m2_estdep_list = my_model.validation_step(
+                                batch_val, val_batch_save_dir, cfg, view_num=2, matching_nums=2, save_visuals=False)
+                        else:
+                            m2_rgb_list, m2_depth_list, m2_estdep_list = my_model.module.validation_step(
+                                batch_val, val_batch_save_dir, cfg, view_num=2, matching_nums=2, save_visuals=False)
+
+                        for i in range(len(m2_rgb_list)):
+                            stage = stage_by_index.get(i)
+                            if stage is None:
+                                continue
+                            _update_stage_meters(
+                                meters_2view[stage],
+                                m2_rgb_list[i],
+                                m2_depth_list[i],
+                                m2_estdep_list[i],
+                            )
+
                     stats = {k: _finalize_meters(v) for k, v in meters.items()}
 
                     results_dict_fusion = {
@@ -727,11 +804,33 @@ def main(args):
                     saved_into_json(data_dict=results_dict_cv,
                                     path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
 
+                    # ---- 2-view-only stats + json dump ----
+                    stats_2view = {k: _finalize_meters(v) for k, v in meters_2view.items()}
+                    results_2view = {}
+                    for stage_name in ("fusion", "volume", "cv"):
+                        results_2view[stage_name] = {
+                            "rgb_center": stats_2view[stage_name]["rgb"]["center"],
+                            "rgb_first": stats_2view[stage_name]["rgb"]["first"],
+                            "rgb_last": stats_2view[stage_name]["rgb"]["last"],
+                            "depth_center": stats_2view[stage_name]["depth"]["center"],
+                            "depth_first": stats_2view[stage_name]["depth"]["first"],
+                            "depth_last": stats_2view[stage_name]["depth"]["last"],
+                            "input_depth": stats_2view[stage_name]["input_depth"],
+                        }
+                        saved_into_json(
+                            data_dict=results_2view[stage_name],
+                            path=os.path.join(overall_val_batch_save_dir,
+                                              "{}_metric_2view.json".format(stage_name)))
+
                     if tracker_enabled:
                         wandb_logs = {}
                         wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
                         wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
                         wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
+                        for stage_name in ("fusion", "volume", "cv"):
+                            wandb_logs.update(
+                                _extract_wandb_metrics("val_2view/{}".format(stage_name),
+                                                       results_2view[stage_name]))
                         accelerator.log(wandb_logs, step=global_iter)
                     
                 accelerator.wait_for_everyone()
@@ -781,6 +880,10 @@ if __name__ == '__main__':
     # stereosplat stage 1 pre-trained model
     parser.add_argument('--stage_1_model_path', type=str, default=None)
     parser.add_argument('--mix_psuedo_views_ratio', type=float, default=0.5)
+    # self-bootstrap: one unified model. The student loads --stage_1_model_path as
+    # initialization and then generates pseudo views from its OWN current weights
+    # (no separate frozen Stage1 model).
+    parser.add_argument('--self_pseudo', action='store_true', default=False)
     
     
     # difix3d per-trained model

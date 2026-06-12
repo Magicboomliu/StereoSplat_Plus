@@ -70,7 +70,58 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 |----|-----|
 | Trainer | `trainer/train_kitti360_stereosplat_stage2_with_difix3d.py` |
 | Config | `input_invariant_stereosplat_stage2.py` |
-| 依赖 | 冻结 **Stage1 conf checkpoint**（`--stage_1_model_path`） |
+| Shell | `scripts/train/stereosplat/train_stereosplat_stage2.sh`（**一个脚本，两个函数**） |
+
+#### 核心逻辑
+
+Stage2 = **加载一个权重 → 生成 pseudo view → 回灌 → 训练**。每个 iter：
+
+1. 随机选 `view_num ∈ {2..6}`（多卡用 iter-seeded RNG 保持一致）。
+2. 以 `mix_psuedo_views_ratio` 概率，用一个模型渲染出 **pseudo view**（新视角图）。
+3. 再以同样概率，把 pseudo view 过 **Difix3D** 增强（`--pretrained_difix3d`，可关）。
+4. pseudo view **作为输入回灌**（替换 `imgs[:, 2:]`），训练当前模型。
+
+> pseudo view 只作 **输入**，不是蒸馏目标（不存在 teacher logits 监督）。
+
+#### 两种变体（同一 trainer / forward，靠开关区分）
+
+| | 变体 1：双模型（默认） | 变体 2：自举 self |
+|---|---|---|
+| Shell 函数 | `Train_StereoSplat_Stage2_With_Conf_And_Difix3D` | `Train_StereoSplat_Stage2_Self_Pseudo` |
+| 开关 | 无 | `--self_pseudo` |
+| pseudo 来源 | **冻结 Stage1**（额外一份权重，全程不变） | **模型自己**当前权重（`no_grad`+临时 `eval` 关 dropout，渲染后恢复 `train`） |
+| `--stage_1_model_path` 作用 | 加载到**冻结 Stage1** | 作为 **student 初始化权重**（resume 时被覆盖） |
+| 显存 | 多一份冻结模型 | 省一份 |
+| work_dir | `stage2_resume/` | `stage2_self_pseudo/` |
+| 特点 | pseudo 分布稳定 | self-training，pseudo 随训练变（moving target） |
+
+#### 启动规则
+
+编辑 `train_stereosplat_stage2.sh` **底部** 选一个函数（注释 / 取消注释）：
+
+```bash
+Train_StereoSplat_Stage2_With_Conf_And_Difix3D       # 双模型（默认）
+# Train_StereoSplat_Stage2_Self_Pseudo               # 自举（--self_pseudo）
+```
+
+- 两个函数各自完整独立（变量不共享），`work_dir` 分开，互不干扰。
+- `resume_from="latest"`：work_dir 有 checkpoint 就续训；没有则
+  - 双模型：从 cfg 初始化 + 加载冻结 Stage1；
+  - 自举：用 `--stage_1_model_path` 初始化 student。
+- 多卡走 `accelerate_config.yaml`（4 GPU，fp16），**不要**手动设 `CUDA_VISIBLE_DEVICES`。
+- 已内置 `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`，Difix3D 基座走本地 HF 缓存避免 504。
+
+#### 关键 CLI 选项（两个 trainer 共有 + Stage2 专有）
+
+| 参数 | 说明 |
+|------|------|
+| `--stage_1_model_path` | 冻结 Stage1 权重 / 或 self 模式的 student 初始化 |
+| `--mix_psuedo_views_ratio` | pseudo 混入概率（同时控制是否再过 Difix），脚本默认 `0.5` |
+| `--pretrained_difix3d` | Difix3D 权重；配 `--use_ref` 用参考帧 |
+| `--self_pseudo` | 开启自举单模型（见变体 2） |
+| `--resume-from` | `""` / `latest` / 具体 checkpoint 路径 |
+
+> 推理脚本**无需改动**：两种变体产出的 checkpoint 与普通 Stage2 完全同构（15D conf），eval 时只需把 `--pretrained_model_path` 指向对应 work_dir 的 checkpoint。
 
 ---
 
