@@ -233,7 +233,7 @@ loss_args = dict(
         weight_fusion_sup_percep=0.3,   # fused LPIPS; only when pseudo injected (B/C)
         weight_conf_comparative=0.3,    # B/C only (_did_mix_pseudo); err/conf_2v detached
         weight_fusion_2v_margin=0.8,    # B/C: mean PSNR(fused) >= mean PSNR(2v) + fusion_2v_psnr_margin
-        fusion_2v_psnr_margin=0.4,      # dB gap on per-view PSNR averaged over all render views
+        fusion_2v_psnr_margin=0.5,      # dB gap on per-view PSNR averaged over all render views
         fusion_2v_margin=0.0,           # extra dB slack subtracted from required gap
         weight_fusion_mv_margin=0.5,    # B/C: mean PSNR(fused) >= mean PSNR(mv) + fusion_mv_psnr_margin
         fusion_mv_psnr_margin=0.0,      # dB gap; 0 = fused only needs to match/be beat mv on avg PSNR

@@ -112,8 +112,8 @@ REPO="/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat"
 
 accelerate_config_path="${REPO}/accelerate_configs/accelerate_config.yaml"
 configs_path="${REPO}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_ratio/"
-output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_ratio/"
+work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_fusion05/"
+output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_fusion05/"
 
 # FIRST LAUNCH: set resume_from="" so no accelerate resume happens;
 #               stage_1_model_path provides the initial model weights.
@@ -148,7 +148,7 @@ wandb_api_key="wandb_v1_YliF0x1Iq5w3bDTEjVukGufHM95_Zp3Un1o0Me4Sf9MHOMNGmOsvhsAb
 wandb_entity="liuzihua1004"
 wandb_project="StereoSplat_Plus_Conf"
 wandb_mode="online"
-wandb_run_name="stereosplat_self_psuedo_with_conf_and_difix3d_09_09_ratio"
+wandb_run_name="stereosplat_self_psuedo_09_09_fusion05"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$(pwd):${PYTHONPATH}"

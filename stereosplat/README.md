@@ -66,6 +66,8 @@ L_conf  = MSE(rendered_conf, conf_gt)
 bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 ```
 
+> **详细文档**（当前 loss / 权重 / 收敛趋势）：[scripts/train/stereosplat/README_STAGE2.md](scripts/train/stereosplat/README_STAGE2.md)
+
 | 项 | 值 |
 |----|-----|
 | Trainer | `trainer/train_kitti360_stereosplat_stage2_with_difix3d.py` |
