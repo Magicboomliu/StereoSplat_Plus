@@ -76,12 +76,26 @@ bash scripts/train/stereosplat/train_stereosplat_stage2.sh
 
 Stage2 = **加载一个权重 → 生成 pseudo view → 回灌 → 训练**。每个 iter：
 
-1. 随机选 `view_num ∈ {2..6}`（多卡用 iter-seeded RNG 保持一致）。
-2. 以 `mix_psuedo_views_ratio` 概率，用一个模型渲染出 **pseudo view**（新视角图）。
-3. 再以同样概率，把 pseudo view 过 **Difix3D** 增强（`--pretrained_difix3d`，可关）。
+1. **加权随机**选 `view_num`：`view_num=2` 占 10%，`3/4/5/6` 各占 22.5%（保证 multi-view 占主导）。
+2. 以 `mix_psuedo_views_ratio`（默认 `0.9`）概率，用一个模型渲染出 **pseudo view**（新视角图）。
+3. 独立地，再以 `mix_difix3d_ratio`（默认 `0.9`）概率，把 pseudo view 过 **Difix3D** 增强。
 4. pseudo view **作为输入回灌**（替换 `imgs[:, 2:]`），训练当前模型。
 
 > pseudo view 只作 **输入**，不是蒸馏目标（不存在 teacher logits 监督）。
+
+#### Loss 组成与权重
+
+| 名称 | 公式/说明 | 权重 |
+|------|----------|------|
+| `recon_gs` | MSE(rendered_rgb, gt_rgb) on multiview GS | `weight_recon=1.0` |
+| `perceptual_gs` | VGG/LPIPS on multiview GS | `weight_percep=0.1` |
+| `conf_loss` | MSE(rendered_conf, exp(-λ·L1)) — conf 自监督 | `weight_conf=0.5` |
+| `depth_est_loss` | 深度估计监督 | `branch_weight=0.1` |
+| `recon_pixel_fused` | MSE(pixel_fused_rgb, gt_rgb) — **像素融合监督** | `weight_fusion_sup=1.5` |
+| `perceptual_pixel_fused` | LPIPS(pixel_fused_rgb, gt_rgb) — **融合感知质量** | `weight_fusion_sup_percep=0.3` |
+| `conf_comparative` | MSE(conf, sigmoid(λ·(err_2v − err_mv))) — **引导 conf 反映两路质量差** | `weight_conf_comparative=0.3` |
+
+> `recon_pixel_fused` / `perceptual_pixel_fused` / `conf_comparative` 仅当 `view_num > 2`（有 pseudo view）且处于 `train` 模式时计算。
 
 #### 两种变体（同一 trainer / forward，靠开关区分）
 
@@ -105,9 +119,10 @@ Train_StereoSplat_Stage2_With_Conf_And_Difix3D       # 双模型（默认）
 ```
 
 - 两个函数各自完整独立（变量不共享），`work_dir` 分开，互不干扰。
-- `resume_from="latest"`：work_dir 有 checkpoint 就续训；没有则
-  - 双模型：从 cfg 初始化 + 加载冻结 Stage1；
-  - 自举：用 `--stage_1_model_path` 初始化 student。
+- `resume_from="latest"`：work_dir 有 checkpoint 就续训（加载全部 optimizer / global_iter 状态）；没有则
+  - 双模型：用 `--stage_1_model_path` 初始化 student，另加载冻结 Stage1；
+  - 自举：用 `--stage_1_model_path` 初始化 student（只加载权重，不恢复 optimizer）。
+- `resume_from=""`（空字符串，等价于 None）：强制从头开始，用 `--stage_1_model_path` 初始化。
 - 多卡走 `accelerate_config.yaml`（4 GPU，fp16），**不要**手动设 `CUDA_VISIBLE_DEVICES`。
 - 已内置 `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`，Difix3D 基座走本地 HF 缓存避免 504。
 
@@ -115,13 +130,46 @@ Train_StereoSplat_Stage2_With_Conf_And_Difix3D       # 双模型（默认）
 
 | 参数 | 说明 |
 |------|------|
-| `--stage_1_model_path` | 冻结 Stage1 权重 / 或 self 模式的 student 初始化 |
-| `--mix_psuedo_views_ratio` | pseudo 混入概率（同时控制是否再过 Difix），脚本默认 `0.5` |
+| `--stage_1_model_path` | 冻结 Stage1 权重 / 或 self 模式的 student 初始化权重 |
+| `--mix_psuedo_views_ratio` | pseudo view 混入概率，脚本默认 **`0.9`** |
+| `--mix_difix3d_ratio` | Difix3D 应用概率（独立于 pseudo 混入），脚本默认 **`0.9`** |
 | `--pretrained_difix3d` | Difix3D 权重；配 `--use_ref` 用参考帧 |
 | `--self_pseudo` | 开启自举单模型（见变体 2） |
-| `--resume-from` | `""` / `latest` / 具体 checkpoint 路径 |
+| `--resume_from` | `""` / `latest` / 具体 checkpoint 路径 |
 
 > 推理脚本**无需改动**：两种变体产出的 checkpoint 与普通 Stage2 完全同构（15D conf），eval 时只需把 `--pretrained_model_path` 指向对应 work_dir 的 checkpoint。
+
+#### Validation 输出格式（每个 `step-N` 目录）
+
+每次 validation 只产出 **一个文件**：`fusion_metric.json`，包含三个 section：
+
+```json
+{
+  "2view": {
+    "psnr_first":  ...,
+    "psnr_center": ...,
+    "psnr_last":   ...,
+    "psnr_mean":   ...
+  },
+  "pseudo_multiview": {
+    "psnr_first":  ..., "psnr_center": ..., "psnr_last": ..., "psnr_mean": ...
+  },
+  "pseudo_fused": {
+    "psnr_first":  ..., "psnr_center": ..., "psnr_last": ..., "psnr_mean": ...
+  }
+}
+```
+
+| Section | 说明 |
+|---------|------|
+| `2view` | 纯 2-view GT（first stereo）baseline，无 pseudo，无 Difix |
+| `pseudo_multiview` | **6 view 输入**（2 GT first + 4 pseudo: center+last stereo），multiview 3DGS 直接渲染 |
+| `pseudo_fused` | 同上，但用 pixel-wise conf 融合（2-view GS vs multiview GS） |
+
+> **目标**：`pseudo_fused.psnr_mean > 2view.psnr_mean`（融合后优于纯 2-view baseline）。  
+> Progressive pass 用 `view_num=6, mix_psuedo_views_ratio=1.0, mix_difix3d_ratio=1.0`，与 inference 对齐。
+
+Wandb 对应 key：`val/2view/psnr_mean`、`val/pseudo_multiview/psnr_mean`、`val/pseudo_fused/psnr_mean`。
 
 ---
 

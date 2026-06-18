@@ -837,7 +837,8 @@ class StereoSplat(BaseModule):
         input_sparse_depth = input_cam_batch_data['sparse_gt_depth'] #(B,V,H,W)
         
         
-        stereo_pairs_nums = view_num//2
+        # 3→4 imgs, 5→6 imgs; only 2 uses one stereo pair.
+        stereo_pairs_nums = (view_num + 1) // 2
         
         if stereo_pairs_nums == 1:
             index = [0,3]
@@ -1622,7 +1623,8 @@ class StereoSplat(BaseModule):
         
 
         
-        stereo_pairs_nums = view_num//2
+        # 3→4 imgs, 5→6 imgs; only 2 uses one stereo pair.
+        stereo_pairs_nums = (view_num + 1) // 2
         
         if stereo_pairs_nums == 1:
             index = [0,3]
@@ -2140,7 +2142,9 @@ class StereoSplat(BaseModule):
                 frozen_stage_1_model=None,
                 pretrained_diffix_model=None,
                 mix_psuedo_views_ratio=0.5,
+                mix_difix3d_ratio=None,
                 use_self_for_pseudo=False,
+                frozen_2v_ref_model=None,
                 cfg=None):
         input_batch_dict,input_batch_dict_for_psuedo_view_rendering, output_batch_dict = self.prepare_input_multiview_stage2(batch=batch,view_num=view_num,
                                                                          matching_nums=matching_nums)
@@ -2202,10 +2206,14 @@ class StereoSplat(BaseModule):
         use_mix_psuedo_views = _mix_rng.random()
         use_mix_psuedo_difix3d_views = _mix_rng.random()
 
+        # Difix3D can have its own ratio (default: same as pseudo ratio for back-compat)
+        _difix3d_ratio = mix_difix3d_ratio if mix_difix3d_ratio is not None else mix_psuedo_views_ratio
+
         # pseudo views come from frozen Stage1 (two-model) or from the model itself
         # (self-bootstrap). Either way they are only reinjected as INPUT views.
         pseudo_source_model = self if use_self_for_pseudo else frozen_stage_1_model
 
+        _did_mix_pseudo = False
         if pseudo_source_model is not None and use_mix_psuedo_views <= mix_psuedo_views_ratio:
             psuedo_input_views = create_input_psuedo_views(
                 batch, pseudo_source_model,
@@ -2215,7 +2223,7 @@ class StereoSplat(BaseModule):
                 cfg=cfg)
 
 
-            if pretrained_diffix_model is not None and use_mix_psuedo_difix3d_views <= mix_psuedo_views_ratio:
+            if pretrained_diffix_model is not None and use_mix_psuedo_difix3d_views <= _difix3d_ratio:
                 # reference views
                 left_image_ref = input_batch_dict["imgs"][0,0,:,:,:]
                 right_image_ref = input_batch_dict["imgs"][0,1,:,:,:]
@@ -2253,6 +2261,8 @@ class StereoSplat(BaseModule):
 
             # update the input batch into  mix training
             input_batch_dict['imgs'][:,2:,:,:,:] = psuedo_input_views[:,2:,:,:,:]
+            # 4 or 6 input views (view_num 3/4 or 5/6) — pseudo replaces imgs[:,2:].
+            _did_mix_pseudo = view_num >= 3
         
         
         input_pseudo_depth = input_batch_dict['pseudo_depths']
@@ -2423,11 +2433,49 @@ class StereoSplat(BaseModule):
             trip_plane_branch_loss = 0.0
             fusion_branch_loss = 0.0
             depth_estimation_branch_loss = 0.0
+
+            _fsd = self.losses_params.fusion_sup_dict
+            _w_2v_floor = getattr(_fsd, 'weight_2v_floor', 0.0)
+            _w_2v_ceil = getattr(_fsd, 'weight_2v_ceiling', 0.0)
+            _w_2v_floor_mv = getattr(_fsd, 'weight_2v_floor_mv', 0.0)
+            _legacy_2v_distill = getattr(_fsd, 'weight_2v_distill', 0.0)
+            if _w_2v_floor == 0.0 and _w_2v_ceil == 0.0 and _legacy_2v_distill > 0.0:
+                _w_2v_floor = _legacy_2v_distill
+                _w_2v_ceil = _legacy_2v_distill * 0.6
+            # Only view_num=2 has 2 input images; view_num=3 uses 4 (same as 4).
+            _use_2v_anchor_only = (
+                mode == 'train' and view_num == 2 and
+                frozen_2v_ref_model is not None and (_w_2v_floor > 0.0 or _w_2v_ceil > 0.0))
+
+            def _render_frozen_stage1_2v(_ref_model):
+                with torch.no_grad():
+                    _in2v_r, _ = _ref_model.prepare_input_multiview(
+                        batch=batch, view_num=2, matching_nums=2)
+                    _f2v_r = _ref_model.extract_img_feat(img=_in2v_r["imgs"])
+                    _gcv_r, _gfeat_r, _ = _ref_model.costvolume_gs(
+                        _in2v_r, cfg=cfg, images_feat=_f2v_r[0])
+                    _pck_r = _ref_model.dataset_params.pc_range
+                    _x0r,_y0r,_z0r,_x1r,_y1r,_z1r = _pck_r
+                    _cmr, _fmr = [], []
+                    for _br in range(_gcv_r.shape[0]):
+                        _mr = (_gcv_r[_br,:,0]>=_x0r)&(_gcv_r[_br,:,0]<=_x1r)&\
+                              (_gcv_r[_br,:,1]>=_y0r)&(_gcv_r[_br,:,1]<=_y1r)&\
+                              (_gcv_r[_br,:,2]>=_z0r)&(_gcv_r[_br,:,2]<=_z1r)
+                        _cmr.append(_gcv_r[_br][_mr])
+                        _fmr.append(_gfeat_r[_br][_mr])
+                    _gvol_r = _ref_model.volume_gs(
+                        [_f2v_r[0]], _in2v_r['extrinsics'], _cmr, _fmr, _in2v_r['img_metas'])
+                    _gcv_r  = sanitize_gaussians_tensor(_gcv_r)
+                    _gvol_r = sanitize_gaussians_tensor(_gvol_r)
+                    _gall_r = torch.cat([_gcv_r, _gvol_r], dim=1)
+                    _pkg_r  = _ref_model.renderer.render(
+                        gaussians=_gall_r, c2w=render_c2w,
+                        fovx=render_fovxs, fovy=render_fovys, rays_o=None, rays_d=None)
+                    return torch.clamp(_pkg_r['image'], 0.0, 1.0)
             
-            
-            
+
             # ==================== Depth Estimation Loss =====================
-            if self.losses_params.depth_estimation:
+            if self.losses_params.depth_estimation and not _use_2v_anchor_only:
                 if self.losses_params.gt_depth_type=='sparse':
                     
                     valid_mask_01 = input_sparse_gt_depth>0
@@ -2477,7 +2525,7 @@ class StereoSplat(BaseModule):
                      self.losses_params.depth_est_sup_dict.branch_weight)
             
             # ==================== RGB Loss Here =====================
-            if self.losses_params.use_fusion: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
                 
                 if self.losses_params.use_volume:
                     rec_loss_vol = (rgb_gt * mask_dptm.unsqueeze(2) - render_pkg_volume["image"] * mask_dptm.unsqueeze(2)) ** 2
@@ -2496,10 +2544,11 @@ class StereoSplat(BaseModule):
                 set_loss("recon_gs", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
                 
             else:
-                raise NotImplementedError
+                if not _use_2v_anchor_only:
+                    raise NotImplementedError
 
             # ==================== Preception Loss Here ================
-            if self.losses_params.use_fusion: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
                 if self.losses_params.use_volume:
                     current_height, current_width = rgb_gt.shape[-2:]
                     preception_loss_volume = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width),
@@ -2533,11 +2582,12 @@ class StereoSplat(BaseModule):
                             self.losses_params.fusion_sup_dict.weight_perceptual)
                 
             else:
-                raise NotImplementedError
+                if not _use_2v_anchor_only:
+                    raise NotImplementedError
         
              # ==================== Rendered Depth Loss ================
             
-            if self.losses_params.use_fusion: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
                 
                 if self.losses_params.gt_depth_type=='sparse':
                     valid_mask_01 = sparse_depth_gt>0
@@ -2596,12 +2646,14 @@ class StereoSplat(BaseModule):
             
             
             else:
-                raise NotImplementedError
+                if not _use_2v_anchor_only:
+                    raise NotImplementedError
                 
             
 
             # ==================== Conf Loss (Method B: photometric soft label) ================
-            if getattr(self.losses_params, 'use_conf_loss', False) and rendered_conf_fuse is not None:
+            if (not _use_2v_anchor_only and
+                    getattr(self.losses_params, 'use_conf_loss', False) and rendered_conf_fuse is not None):
                 with torch.no_grad():
                     rgb_l1 = torch.abs(render_pkg_fuse["image"] - rgb_gt).mean(dim=2, keepdim=True)  # [B,V,1,H,W]
                     _lambda = getattr(self.losses_params, 'conf_lambda', 10.0)
@@ -2621,9 +2673,10 @@ class StereoSplat(BaseModule):
             # Gradient only flows through the multiview conf/RGB branch, teaching it
             # to be confident exactly where it beats the 2-view baseline.
             _w_fused = getattr(self.losses_params.fusion_sup_dict, 'weight_fusion_sup', 0.0)
-            if mode == 'train' and view_num > 2 and rendered_conf_fuse is not None and _w_fused > 0:
-                # Use eval mode for the 2-view reference render so behaviour matches
-                # inference (no dropout, stable BN stats).
+            if mode == 'train' and view_num >= 3 and rendered_conf_fuse is not None and _w_fused > 0:
+                # 2-view reference: always the CURRENT model in eval mode.
+                # This is the same 2v branch used to render pseudo views in self-pseudo
+                # mode, so fusion supervision and pseudo generation stay consistent.
                 _was_training = self.training
                 self.eval()
                 with torch.no_grad():
@@ -2657,18 +2710,159 @@ class StereoSplat(BaseModule):
                 if _was_training:
                     self.train()
 
+                # Weak floor on multiview steps: if backbone drift made 2v worse
+                # than Stage1, nudge it back (extra forward with grad).
+                if _w_2v_floor_mv > 0.0 and frozen_2v_ref_model is not None:
+                    _rgb_s1_mv = _render_frozen_stage1_2v(frozen_2v_ref_model)
+                    with torch.enable_grad():
+                        _in2v_g, _ = self.prepare_input_multiview(batch=batch, view_num=2, matching_nums=2)
+                        _feats2v_g = self.extract_img_feat(img=_in2v_g["imgs"])
+                        _g_cv_g, _g_feat_g, _ = self.costvolume_gs(_in2v_g, cfg=cfg, images_feat=_feats2v_g[0])
+                        _pc_g = self.dataset_params.pc_range
+                        _x0g,_y0g,_z0g,_x1g,_y1g,_z1g = _pc_g
+                        _cv_mask_g, _feat_mask_g = [], []
+                        for _bg in range(_g_cv_g.shape[0]):
+                            _mg = (_g_cv_g[_bg,:,0]>=_x0g)&(_g_cv_g[_bg,:,0]<=_x1g)&\
+                                  (_g_cv_g[_bg,:,1]>=_y0g)&(_g_cv_g[_bg,:,1]<=_y1g)&\
+                                  (_g_cv_g[_bg,:,2]>=_z0g)&(_g_cv_g[_bg,:,2]<=_z1g)
+                            _cv_mask_g.append(_g_cv_g[_bg][_mg])
+                            _feat_mask_g.append(_g_feat_g[_bg][_mg])
+                        _g_vol_g = self.volume_gs(
+                            [_feats2v_g[0]], _in2v_g['extrinsics'],
+                            _cv_mask_g, _feat_mask_g, _in2v_g['img_metas'])
+                        _g_cv_g  = sanitize_gaussians_tensor(_g_cv_g)
+                        _g_vol_g = sanitize_gaussians_tensor(_g_vol_g)
+                        _g_all_g = torch.cat([_g_cv_g, _g_vol_g], dim=1)
+                        _pkg_g = self.renderer.render(
+                            gaussians=_g_all_g, c2w=render_c2w,
+                            fovx=render_fovxs, fovy=render_fovys, rays_o=None, rays_d=None)
+                        _rgb_2v_g = torch.clamp(_pkg_g['image'], 0.0, 1.0)
+                    _err_2v_g = (rgb_gt - _rgb_2v_g).pow(2)
+                    _err_s1_g = (rgb_gt - _rgb_s1_mv).pow(2)
+                    _loss_2v_floor_mv = torch.nn.functional.relu(
+                        _err_2v_g - _err_s1_g.detach()).mean()
+                    fusion_branch_loss = fusion_branch_loss + _w_2v_floor_mv * _loss_2v_floor_mv
+                    set_loss("2v_floor_mv", mode, _loss_2v_floor_mv, _w_2v_floor_mv)
+
                 if _conf_2v is not None:
-                    # pixel-wise fusion: 2-view branch fully detached (reference only);
-                    # grad flows only through multiview RGB/conf.
-                    # depth_a is a zero dummy — fused depth is discarded (_) anyway.
-                    _rgb_fused, _, _ = pixel_fuse_renders(
-                        _rgb_2v.detach(), rendered_color_fuse,
-                        torch.zeros_like(rendered_depth_fuse), rendered_depth_fuse,
-                        _conf_2v.detach(), rendered_conf_fuse,
-                    )
-                    _loss_fused = (rgb_gt - _rgb_fused).pow(2).mean()
-                    fusion_branch_loss = fusion_branch_loss + _w_fused * _loss_fused
-                    set_loss("recon_pixel_fused", mode, _loss_fused, _w_fused)
+                    # Pixel-fused RGB supervision only when pseudo is injected (B/C).
+                    # Case A (all GT) has no fusion benefit — skip recon/percep on fused output.
+                    if _did_mix_pseudo:
+                        _rgb_fused, _, _ = pixel_fuse_renders(
+                            _rgb_2v.detach(), rendered_color_fuse,
+                            torch.zeros_like(rendered_depth_fuse), rendered_depth_fuse,
+                            _conf_2v.detach(), rendered_conf_fuse,
+                        )
+                        _h, _w = rgb_gt.shape[-2], rgb_gt.shape[-1]
+                        _loss_fused = (rgb_gt - _rgb_fused).pow(2).mean()
+                        fusion_branch_loss = fusion_branch_loss + _w_fused * _loss_fused
+                        set_loss("recon_pixel_fused", mode, _loss_fused, _w_fused)
+
+                        _w_fused_percep = getattr(
+                            self.losses_params.fusion_sup_dict, 'weight_fusion_sup_percep', 0.0)
+                        if _w_fused_percep > 0 and hasattr(self, 'perceptual_loss'):
+                            _loss_fused_percep = self.perceptual_loss(
+                                rgb_gt.reshape(-1, 3, _h, _w),
+                                _rgb_fused.reshape(-1, 3, _h, _w),
+                            ).mean()
+                            fusion_branch_loss = fusion_branch_loss + _w_fused_percep * _loss_fused_percep
+                            set_loss("perceptual_pixel_fused", mode, _loss_fused_percep, _w_fused_percep)
+
+                        # ---- Fusion vs 2-view / multiview margin: avg PSNR over all views (B/C) ----
+                        _psnr_eps = 1e-8
+                        _w_fus_2v_margin = getattr(
+                            self.losses_params.fusion_sup_dict, 'weight_fusion_2v_margin', 0.0)
+                        if _w_fus_2v_margin > 0:
+                            _fus_2v_psnr_db = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_2v_psnr_margin', 0.0)
+                            _fus_2v_margin_val = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_2v_margin', 0.0)
+                            # Per-view MSE [B,V], then mean PSNR across all rendered views.
+                            _err_fused_pv = (rgb_gt - _rgb_fused).pow(2).mean(dim=(2, 3, 4))
+                            with torch.no_grad():
+                                _err_2v_pv = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
+                            _psnr_f_avg = (-10.0 * torch.log10(
+                                _err_fused_pv + _psnr_eps)).mean()
+                            _psnr_2v_avg = (-10.0 * torch.log10(
+                                _err_2v_pv + _psnr_eps)).mean()
+                            _loss_fusion_2v_margin = torch.nn.functional.relu(
+                                _psnr_2v_avg + _fus_2v_psnr_db - _fus_2v_margin_val - _psnr_f_avg)
+                            fusion_branch_loss = fusion_branch_loss + _w_fus_2v_margin * _loss_fusion_2v_margin
+                            set_loss("fusion_2v_margin", mode, _loss_fusion_2v_margin, _w_fus_2v_margin)
+
+                        # ---- Fusion vs multiview margin: avg PSNR over all render views (B/C) ----
+                        _w_fus_mv_margin = getattr(
+                            self.losses_params.fusion_sup_dict, 'weight_fusion_mv_margin', 0.0)
+                        if _w_fus_mv_margin > 0:
+                            _fus_mv_psnr_db = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_mv_psnr_margin', 0.0)
+                            _fus_mv_margin_val = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_mv_margin', 0.0)
+                            _err_fused_pv_mv = (rgb_gt - _rgb_fused).pow(2).mean(dim=(2, 3, 4))
+                            with torch.no_grad():
+                                _err_mv_pv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
+                            _psnr_f_mv_avg = (-10.0 * torch.log10(
+                                _err_fused_pv_mv + _psnr_eps)).mean()
+                            _psnr_mv_avg = (-10.0 * torch.log10(
+                                _err_mv_pv + _psnr_eps)).mean()
+                            _loss_fusion_mv_margin = torch.nn.functional.relu(
+                                _psnr_mv_avg + _fus_mv_psnr_db - _fus_mv_margin_val - _psnr_f_mv_avg)
+                            fusion_branch_loss = fusion_branch_loss + _w_fus_mv_margin * _loss_fusion_mv_margin
+                            set_loss("fusion_mv_margin", mode, _loss_fusion_mv_margin, _w_fus_mv_margin)
+
+                    # ---- Comparative Confidence Loss (ranking: scheme B) ----
+                    # Where render error is larger, conf should be lower.
+                    # loss = ReLU((conf_mv - conf_2v) * (err_mv - err_2v))
+                    # err and conf_2v are detached → grad only into multiview conf.
+                    _w_conf_comp = getattr(
+                        self.losses_params.fusion_sup_dict, 'weight_conf_comparative', 0.0)
+                    # Case A (all GT, no pseudo): skip — conf ranking only on B/C pseudo paths.
+                    if _w_conf_comp > 0 and _did_mix_pseudo and rendered_conf_fuse is not None and _conf_2v is not None:
+                        with torch.no_grad():
+                            _err_2v = (rgb_gt - _rgb_2v).pow(2).mean(dim=2)   # [B,V,H,W]
+                            _err_mv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=2)
+                        _err_delta = (_err_mv - _err_2v).detach()
+                        _loss_conf_comp = torch.nn.functional.relu(
+                            (rendered_conf_fuse - _conf_2v.detach()) * _err_delta
+                        ).mean()
+                        fusion_branch_loss = fusion_branch_loss + _w_conf_comp * _loss_conf_comp
+                        set_loss("conf_comparative", mode, _loss_conf_comp, _w_conf_comp)
+
+                    # ---- Multiview vs 2-view margin: avg PSNR over all render views (B/C) ----
+                    _w_mv_margin = getattr(
+                        self.losses_params.fusion_sup_dict, 'weight_mv_margin', 0.0)
+                    if _w_mv_margin > 0 and _conf_2v is not None and _did_mix_pseudo:
+                        _mv_psnr_db = getattr(
+                            self.losses_params.fusion_sup_dict, 'mv_psnr_margin', 0.0)
+                        _mv_margin_val = getattr(
+                            self.losses_params.fusion_sup_dict, 'mv_margin', 0.0)
+                        _err_mv_pv_m = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
+                        with torch.no_grad():
+                            _err_2v_pv_m = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
+                        _psnr_mv_m_avg = (-10.0 * torch.log10(
+                            _err_mv_pv_m + 1e-8)).mean()
+                        _psnr_2v_m_avg = (-10.0 * torch.log10(
+                            _err_2v_pv_m + 1e-8)).mean()
+                        _loss_mv_margin = torch.nn.functional.relu(
+                            _psnr_2v_m_avg + _mv_psnr_db - _mv_margin_val - _psnr_mv_m_avg)
+                        fusion_branch_loss = fusion_branch_loss + _w_mv_margin * _loss_mv_margin
+                        set_loss("mv_margin", mode, _loss_mv_margin, _w_mv_margin)
+
+            # ---- 2-input Stage1 band anchor (view_num 2 or 3, train only) ----
+            if _use_2v_anchor_only:
+                _rgb_s1 = _render_frozen_stage1_2v(frozen_2v_ref_model)
+                _err_cur = (rgb_gt - rendered_color_fuse).pow(2)
+                _err_s1  = (rgb_gt - _rgb_s1).pow(2)
+                if _w_2v_floor > 0.0:
+                    _loss_2v_floor = torch.nn.functional.relu(
+                        _err_cur - _err_s1.detach()).mean()
+                    fusion_branch_loss = fusion_branch_loss + _w_2v_floor * _loss_2v_floor
+                    set_loss("2v_floor", mode, _loss_2v_floor, _w_2v_floor)
+                if _w_2v_ceil > 0.0:
+                    _loss_2v_ceil = torch.nn.functional.relu(
+                        _err_s1.detach() - _err_cur).mean()
+                    fusion_branch_loss = fusion_branch_loss + _w_2v_ceil * _loss_2v_ceil
+                    set_loss("2v_ceiling", mode, _loss_2v_ceil, _w_2v_ceil)
 
             loss =cost_volume_branch_loss * self.losses_params.cv_sup_dict.branch_weight + \
                         trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
@@ -2680,8 +2874,77 @@ class StereoSplat(BaseModule):
                 ([rendered_conf_fuse] if rendered_conf_fuse is not None else [])
             rendered_volume_list = [rendered_color_volume,rendered_depth_volume]
             rendered_cv_list = [rendered_color_cv,rendered_depth_cv]
-            
-            
+
+            # ---- val-mode only: PSNR of the pixel-fused render ----
+            # Replicates the train-time fusion supervision in eval mode:
+            #   1. render 2-view reference (no_grad)
+            #   2. pixel_fuse_renders(2view, multiview, conf_2v, conf_mv)
+            #   3. compute PSNR of fused result vs GT
+            # Also logs multiview-only PSNR so the caller can see the gap.
+            if mode == 'val' and rendered_color_fuse is not None and rendered_conf_fuse is not None:
+                with torch.no_grad():
+                    _in2v_val, _ = self.prepare_input_multiview(batch=batch, view_num=2, matching_nums=2)
+                    _feats2v_val = self.extract_img_feat(img=_in2v_val["imgs"])
+                    _g_cv_2v_val, _g_feat_2v_val, _ = self.costvolume_gs(_in2v_val, cfg=cfg, images_feat=_feats2v_val[0])
+                    _pc = self.dataset_params.pc_range
+                    _x0, _y0, _z0, _x1, _y1, _z1 = _pc
+                    _cv_mask2v_val, _feat_mask2v_val = [], []
+                    for _b in range(_g_cv_2v_val.shape[0]):
+                        _m = (_g_cv_2v_val[_b,:,0] >= _x0) & (_g_cv_2v_val[_b,:,0] <= _x1) & \
+                             (_g_cv_2v_val[_b,:,1] >= _y0) & (_g_cv_2v_val[_b,:,1] <= _y1) & \
+                             (_g_cv_2v_val[_b,:,2] >= _z0) & (_g_cv_2v_val[_b,:,2] <= _z1)
+                        _cv_mask2v_val.append(_g_cv_2v_val[_b][_m])
+                        _feat_mask2v_val.append(_g_feat_2v_val[_b][_m])
+                    _g_vol_2v_val = self.volume_gs(
+                        [_feats2v_val[0]], _in2v_val['extrinsics'],
+                        _cv_mask2v_val, _feat_mask2v_val, _in2v_val['img_metas'])
+                    _g_cv_2v_val  = sanitize_gaussians_tensor(_g_cv_2v_val)
+                    _g_vol_2v_val = sanitize_gaussians_tensor(_g_vol_2v_val)
+                    _g_all_2v_val = torch.cat([_g_cv_2v_val, _g_vol_2v_val], dim=1)
+                    _pkg_2v_val = self.renderer.render(
+                        gaussians=_g_all_2v_val,
+                        c2w=render_c2w, fovx=render_fovxs, fovy=render_fovys,
+                        rays_o=None, rays_d=None,
+                    )
+                    _rgb_2v_val  = torch.clamp(_pkg_2v_val['image'], 0.0, 1.0)
+                    _conf_2v_val = conf_from_render_pkg(_pkg_2v_val)
+
+                    _gt_f = rgb_gt.clamp(0.0, 1.0)
+                    _V    = _rgb_2v_val.shape[1]
+
+                    def _psnr_t(pred, gt, vi):
+                        _mse = (pred[:, vi] - gt[:, vi]).pow(2).mean()
+                        return (-10.0 * torch.log10(_mse + 1e-8)).item()
+
+                    # Output tensor layout (matches save_val_results / dataloader):
+                    #   index 0,2 → center left/right
+                    #   index 1,3 → last   left/right
+                    #   index 4,5 → first  left/right
+                    # Use left-channel index for each named view.
+                    _vi = {'center': 0, 'last': 1, 'first': 4}
+
+                    # multiview-only PSNR (no pixel fusion)
+                    _mv = rendered_color_fuse.clamp(0.0, 1.0)
+                    loss_terms['val/psnr_multiview_center'] = _psnr_t(_mv, _gt_f, _vi['center'])
+                    loss_terms['val/psnr_multiview_last']   = _psnr_t(_mv, _gt_f, _vi['last'])
+                    loss_terms['val/psnr_multiview_first']  = _psnr_t(_mv, _gt_f, _vi['first'])
+                    loss_terms['val/psnr_multiview_mean']   = sum(
+                        _psnr_t(_mv, _gt_f, v) for v in range(_V)) / _V
+
+                    # pixel-fused PSNR (2-view reference + multiview, conf-weighted)
+                    if _conf_2v_val is not None:
+                        _rgb_fused_val, _, _ = pixel_fuse_renders(
+                            _rgb_2v_val, rendered_color_fuse,
+                            torch.zeros_like(rendered_depth_fuse), rendered_depth_fuse,
+                            _conf_2v_val, rendered_conf_fuse,
+                        )
+                        _fv = _rgb_fused_val.clamp(0.0, 1.0)
+                        loss_terms['val/psnr_fused_center'] = _psnr_t(_fv, _gt_f, _vi['center'])
+                        loss_terms['val/psnr_fused_last']   = _psnr_t(_fv, _gt_f, _vi['last'])
+                        loss_terms['val/psnr_fused_first']  = _psnr_t(_fv, _gt_f, _vi['first'])
+                        loss_terms['val/psnr_fused_mean']   = sum(
+                            _psnr_t(_fv, _gt_f, v) for v in range(_V)) / _V
+
             if mode=='train':
                 return loss, loss_terms,rendered_fusion_list,rendered_volume_list,rendered_cv_list
             

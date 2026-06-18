@@ -369,9 +369,18 @@ def main(args=None, defaults: dict | None = None):
         cfg.pretrained_model_path = args.pretrained_model_path
     path = getattr(cfg, "pretrained_model_path", None) or None
     if path:
-        accelerator.print(f"Loading from checkpoint {path}")
-        accelerator.load_state(path, map_location="cpu", strict=False)
-        print(f"Successfully loaded from {path}")
+        accelerator.print(f"Loading model weights from {path}")
+        # Use weights-only load so eval never depends on optimizer/scaler/RNG
+        # state that may be absent (e.g. checkpoints saved with mixed_precision="no"
+        # have no scaler.pt, which accelerator.load_state would crash on).
+        sd = load_state_dict_any(path, map_location="cpu")
+        _model = my_model.module if hasattr(my_model, "module") else my_model
+        incompatible = _model.load_state_dict(sd, strict=False)
+        if incompatible.missing_keys:
+            accelerator.print(f"  [warn] missing keys: {incompatible.missing_keys[:5]}{'...' if len(incompatible.missing_keys)>5 else ''}")
+        if incompatible.unexpected_keys:
+            accelerator.print(f"  [warn] unexpected keys: {incompatible.unexpected_keys[:5]}{'...' if len(incompatible.unexpected_keys)>5 else ''}")
+        print(f"Successfully loaded model weights from {path}")
     else:
         print("Can't find checkpoint. Randomly initialize model parameters anyway.")
 

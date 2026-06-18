@@ -14,7 +14,7 @@ lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
 save_freq = 5000
-val_freq = 3000
+val_freq = 5000
 max_epochs = 150
 save_epoch_freq = -1
 
@@ -229,11 +229,25 @@ loss_args = dict(
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
         weight_conf=0.1,      # conf MSE loss weight (used when use_conf_loss=True)
-        weight_fusion_sup=0.1, # fusion supervision: recon on pixel-fused result (2view+multiview)
+        weight_fusion_sup=1.5,          # fused RGB L2; only when pseudo injected (B/C), not Case A
+        weight_fusion_sup_percep=0.3,   # fused LPIPS; only when pseudo injected (B/C)
+        weight_conf_comparative=0.3,    # B/C only (_did_mix_pseudo); err/conf_2v detached
+        weight_fusion_2v_margin=0.8,    # B/C: mean PSNR(fused) >= mean PSNR(2v) + fusion_2v_psnr_margin
+        fusion_2v_psnr_margin=0.4,      # dB gap on per-view PSNR averaged over all render views
+        fusion_2v_margin=0.0,           # extra dB slack subtracted from required gap
+        weight_fusion_mv_margin=0.5,    # B/C: mean PSNR(fused) >= mean PSNR(mv) + fusion_mv_psnr_margin
+        fusion_mv_psnr_margin=0.0,      # dB gap; 0 = fused only needs to match/be beat mv on avg PSNR
+        fusion_mv_margin=0.0,           # extra dB slack
+        weight_mv_margin=0.5,           # B/C: mean PSNR(mv) >= mean PSNR(2v) + mv_psnr_margin
+        mv_psnr_margin=0.0,             # dB gap; 0 = mv only needs to beat 2v on avg PSNR
+        mv_margin=0.0,                  # extra dB slack
+        weight_2v_floor=0.5,            # view_num=2: penalise only when 2v is WORSE than Stage1
+        weight_2v_ceiling=0.3,          # view_num=2: penalise only when 2v is BETTER than Stage1
+        weight_2v_floor_mv=0.0,         # 0=skip extra 2v forward entirely; only used when >0
         branch_weight =1.0,
     ),
     use_conf_loss=True,       # enable self-supervised conf supervision (Method B)
-    conf_lambda=10.0,         # sharpness of photometric soft label
+    conf_lambda=10.0,         # sharpness of photometric soft label (for conf_gs self-supervised)
     
     cv_sup_dict = dict(
         recon_loss_cv_type="l2", # reconstrunction loss

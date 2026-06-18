@@ -172,6 +172,69 @@ def _finalize_meters(obj):
         return obj.get_stats()
     return obj
 
+# Volume / CV branch losses are intermediate; omit from wandb & console.
+_INTERMEDIATE_LOSS_NAMES = frozenset({
+    'recon_vol', 'perceptual_vol', 'depth_abs_volume',
+    'recon_cv', 'perceptual_cv', 'depth_abs_cv',
+})
+
+
+def _filter_display_logs(logs: dict) -> dict:
+    return {
+        k: v for k, v in logs.items()
+        if not any(f'loss_{name}' in k for name in _INTERMEDIATE_LOSS_NAMES)
+    }
+
+
+_MV_GT_METRICS = frozenset({
+    'recon_gs', 'perceptual_gs', 'depth_abs_gs', 'depth_est_loss',
+    'recon_pixel_fused', 'perceptual_pixel_fused',
+})
+_MV_CONF_METRICS = frozenset({
+    'conf_gs', 'conf_comparative', 'conf_gs_mean', 'conf_gt_mean',
+})
+_MV_MARGIN_METRICS = frozenset({
+    'fusion_2v_margin', 'fusion_mv_margin', 'mv_margin',
+})
+
+
+def _log_metric_core(suffix: str) -> str:
+    name = suffix
+    if name.startswith('loss_'):
+        name = name[5:]
+    if name.endswith('_w'):
+        name = name[:-2]
+    return name
+
+
+def _mv_wandb_subgroup(suffix: str) -> str:
+    core = _log_metric_core(suffix)
+    if core in _MV_MARGIN_METRICS:
+        return 'margin'
+    if core in _MV_CONF_METRICS:
+        return 'conf'
+    if core in _MV_GT_METRICS:
+        return 'gt'
+    return 'other'
+
+
+def _group_train_logs(logs: dict, view_num: int, total_loss: float) -> dict:
+    """WandB only: train/2v vs train/mv; mv split into gt / conf / margin."""
+    filtered = _filter_display_logs(logs)
+    out = {}
+    if view_num == 2:
+        out['train/2v/loss_total'] = float(total_loss)
+        for k, v in filtered.items():
+            suffix = k[len('train/'):] if k.startswith('train/') else k
+            out[f'train/2v/{suffix}'] = v
+    else:
+        out['train/mv/loss_total'] = float(total_loss)
+        for k, v in filtered.items():
+            suffix = k[len('train/'):] if k.startswith('train/') else k
+            sub = _mv_wandb_subgroup(suffix)
+            out[f'train/mv/{sub}/{suffix}'] = v
+    return out
+
 def _extract_wandb_metrics(prefix: str, results_dict: dict) -> dict:
     out = {}
     for view in ("center", "first", "last"):
@@ -221,12 +284,26 @@ def create_logger(log_file=None, is_main_process=False, log_level=logging.INFO):
 
 def sample_2_to_6(n=1, floats=False, rng=None):
     """Return 1 or n random values in 2..6.
-       ints by default; set floats=True for [2,6)."""
+       ints by default; set floats=True for [2,6).
+
+       view_num=2 is sampled at 10% to reduce pure-GT iterations;
+       view_num 3/4/5/6 share the remaining 90% equally (22.5% each).
+    """
     _rng = rng if rng is not None else random
     if floats:
         return _rng.uniform(2, 6) if n == 1 else [_rng.uniform(2, 6) for _ in range(n)]
     else:
-        return _rng.randint(2, 6) if n == 1 else [_rng.randint(2, 6) for _ in range(n)]
+        _population = [2, 3, 4, 5, 6]
+        _weights    = [0.10, 0.225, 0.225, 0.225, 0.225]
+        def _sample_one():
+            r = _rng.random()
+            cumsum = 0.0
+            for v, w in zip(_population, _weights):
+                cumsum += w
+                if r < cumsum:
+                    return v
+            return _population[-1]
+        return _sample_one() if n == 1 else [_sample_one() for _ in range(n)]
 
 
 def _iter_rng(global_iter: int, salt: int = 0) -> random.Random:
@@ -414,9 +491,31 @@ def main(args):
     )
     
     ############################ Stage 1 Pretrained Model Here : Frozen, Just for Creating Psuedo Views, Not Optimized ###########################################
-    # In self-bootstrap mode (--self_pseudo) we do NOT keep a separate frozen Stage1.
-    # The student generates pseudo views from its own (current) weights instead, so we
-    # only load --stage_1_model_path later as the student's initialization.
+    # Load a frozen Stage1 copy ONLY for 2-view distillation (view_num==2 steps).
+    # Keeps the 2v branch anchored to Stage1 quality so pseudo views stay stable.
+    # NOT used for fusion supervision — view_num>2 always uses the current model's
+    # own 2v render as the fusion reference / pseudo-view source.
+    frozen_2v_ref_model = None
+    if args.stage_1_model_path is not None:
+        accelerator.print(f"[2vDistill] loading frozen Stage1 as 2-view teacher from: {args.stage_1_model_path}")
+        frozen_2v_ref_model = StereoSplat(backbone=cfg.model.backbone,
+                                        neck=cfg.model.neck,
+                                        costvolume_gs=cfg.model.costvolume_gs,
+                                        volume_gs=cfg.model.volume_gs,
+                                        losses_params=cfg.model.losses_params,
+                                        camera_args=cfg.camera_args,
+                                        dataset_params=cfg.dataset_params,
+                                        use_checkpoint=cfg.use_checkpoint)
+        sd_2vref = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
+        incompatible = frozen_2v_ref_model.load_state_dict(sd_2vref, strict=True)
+        accelerator.print(
+            f"[2vDistill] loaded. missing={len(incompatible.missing_keys)}, "
+            f"unexpected={len(incompatible.unexpected_keys)}"
+        )
+        frozen_2v_ref_model.eval()
+        for p in frozen_2v_ref_model.parameters():
+            p.requires_grad_(False)
+
     frozen_stage_1_model = None
     if not args.self_pseudo:
         frozen_stage_1_model = StereoSplat(backbone=cfg.model.backbone,
@@ -530,6 +629,9 @@ def main(args):
     if frozen_stage_1_model is not None:
         frozen_stage_1_model.to(accelerator.device)
         frozen_stage_1_model.eval()
+    if frozen_2v_ref_model is not None:
+        frozen_2v_ref_model.to(accelerator.device)
+        frozen_2v_ref_model.eval()
     pretrained_diffix_model.to(accelerator.device)
     pretrained_diffix_model.eval()
 
@@ -598,6 +700,10 @@ def main(args):
     # training along the iterations.
     print_freq = cfg.print_freq
     use_ddp = accelerator.num_processes > 1
+
+    # ---- Step-0 validation: sanity-check the validation pipeline and record
+    #      the baseline metrics (Stage1-init weights) before any training.
+    _run_initial_val = True
     while epoch < max_num_epochs:
         my_model.train()
         data_time_s = time.time()
@@ -613,13 +719,13 @@ def main(args):
                 matching_nums = 2
             elif sample_view_nums == 3:
                 view_num = 3
-                matching_nums = 2
+                matching_nums = 3   # effective 4-view input (first+center)
             elif sample_view_nums == 4:
                 view_num = 4
                 matching_nums = 3
             elif sample_view_nums == 5:
                 view_num = 5
-                matching_nums = 4
+                matching_nums = 5   # effective 6-view input (all pairs)
             elif sample_view_nums == 6:
                 view_num = 6
                 matching_nums = 5
@@ -631,28 +737,20 @@ def main(args):
 
             try:
                 with accelerator.accumulate(my_model):
-                    if not use_ddp:
-                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.forward_stage2_with_difix3d(
-                            batch, "train",
-                            view_num=view_num,
-                            matching_nums=matching_nums,
-                            iter=global_iter,
-                            frozen_stage_1_model=frozen_stage_1_model,
-                            pretrained_diffix_model=pretrained_diffix_model,
-                            mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
-                            use_self_for_pseudo=args.self_pseudo,
-                            cfg=cfg)
-                    else:
-                        loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = my_model.module.forward_stage2_with_difix3d(
-                            batch, "train",
-                            view_num=view_num,
-                            matching_nums=matching_nums,
-                            iter=global_iter,
-                            frozen_stage_1_model=frozen_stage_1_model,
-                            mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
-                            pretrained_diffix_model=pretrained_diffix_model,
-                            use_self_for_pseudo=args.self_pseudo,
-                            cfg=cfg)
+                    _fwd = my_model if not use_ddp else my_model.module
+                    loss, logs, rendered_fusion_list, rendered_volume_list, rendered_cv_results_list = _fwd.forward_stage2_with_difix3d(
+                        batch, "train",
+                        view_num=view_num,
+                        matching_nums=matching_nums,
+                        iter=global_iter,
+                        frozen_stage_1_model=frozen_stage_1_model,
+                        pretrained_diffix_model=pretrained_diffix_model,
+                        mix_psuedo_views_ratio=args.mix_psuedo_views_ratio,
+                        mix_difix3d_ratio=args.mix_difix3d_ratio,
+                        use_self_for_pseudo=args.self_pseudo,
+                        frozen_2v_ref_model=frozen_2v_ref_model,
+                        cfg=cfg)
+
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -694,147 +792,124 @@ def main(args):
                         logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
                 accelerator.wait_for_everyone()
 
-            if accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.val_freq == 0:
+            _do_val = (accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.val_freq == 0)
+            # Step-1 baseline: run once at the very first update (effectively step-0
+            # weights; one batch update is negligible). Skipped when resuming
+            # mid-training (global_iter already >> 1 on first check).
+            if not _do_val and _run_initial_val and global_iter <= 1:
+                _do_val = True
+            if _run_initial_val:
+                _run_initial_val = False   # clear after first check regardless
+            if _do_val:
                 accelerator.wait_for_everyone()
                 my_model.eval()
                 if accelerator.is_main_process:
-                    meters = {
-                        "fusion": _make_stage_meters(),
-                        "volume": _make_stage_meters(),
-                        "cv": _make_stage_meters(),
-                    }
-                    # dedicated 2-view-only meters: track pure 2-view GT performance
-                    # (guards against self-bootstrap / pseudo-view training degrading
-                    #  the canonical 2-input-image setting)
-                    meters_2view = {
-                        "fusion": _make_stage_meters(),
-                        "volume": _make_stage_meters(),
-                        "cv": _make_stage_meters(),
-                    }
-                    stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
-                    
+                    # Validation produces ONE json per step:
+                    #   fusion_metric.json  — three sections:
+                    #     "2view"            : pure 2-view GT (first stereo input)
+                    #     "pseudo_multiview" : 6-view (2 GT + 4 pseudo), multiview render
+                    #     "pseudo_fused"     : same input, pixel-wise conf fusion
+                    #   Each section: psnr_first / psnr_center / psnr_last / psnr_mean
+
+                    def _new_acc():
+                        return {v: [] for v in ('first', 'center', 'last', 'all')}
+
+                    acc_2view      = _new_acc()
+                    acc_pseudo_mv  = _new_acc()
+                    acc_pseudo_fus = _new_acc()
+
+                    _prog_model  = my_model.module if use_ddp else my_model
+                    _prog_frozen = frozen_stage_1_model if not args.self_pseudo else None
+
+                    overall_val_batch_save_dir = osp.join(
+                        cfg.output_dir, cfg.exp_name, "validation",
+                        "step-{}".format(global_iter))
+                    os.makedirs(overall_val_batch_save_dir, exist_ok=True)
+
                     for i_iter_val, batch_val in enumerate(val_dataloader):
-                        print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                        overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
-                                                              "step-{}".format(global_iter))
-                        val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
+                        print("Processed {}/{}".format(i_iter_val, len(val_dataloader)))
+                        val_batch_save_dir = os.path.join(
+                            overall_val_batch_save_dir, "batch-{}".format(i_iter_val))
                         if getattr(cfg, 'validation_vis_progress', False):
                             os.makedirs(val_batch_save_dir, exist_ok=True)
-                        os.makedirs(overall_val_batch_save_dir, exist_ok=True)  # always needed for json dumps
-            
-                        
+
+                        # ── Pass 1: 2-view GT (first stereo only) ──────────────
                         if not use_ddp:
-                            metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir,cfg)
+                            m2_rgb, _, _ = my_model.validation_step(
+                                batch_val, val_batch_save_dir, cfg,
+                                view_num=2, matching_nums=2, save_visuals=False)
                         else:
-                            metrics_rendered_rgb_list,metrics_rendered_depth_list,metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir,cfg)
+                            m2_rgb, _, _ = my_model.module.validation_step(
+                                batch_val, val_batch_save_dir, cfg,
+                                view_num=2, matching_nums=2, save_visuals=False)
+                        # m2_rgb[0] = fusion branch rgb meter dict
+                        _r2 = m2_rgb[0] if m2_rgb else {}
+                        for _view in ('first', 'center', 'last'):
+                            _vk = '{}_view'.format(_view)
+                            if _vk in _r2:
+                                _p = (_r2[_vk]['left']['psnr'] + _r2[_vk]['right']['psnr']) / 2.0
+                                acc_2view[_view].append(_p)
+                                acc_2view['all'].append(_p)
 
-                        for i in range(len(metrics_rendered_rgb_list)):
-                            output_rgb_meter_dict = metrics_rendered_rgb_list[i]
-                            output_depth_meter_dict = metrics_rendered_depth_list[i]
-                            input_depth_meter_dict = metrics_estimated_depth_list[i]
-                            
-  
-                            
-                            stage = stage_by_index.get(i)
-                            if stage is None:
-                                continue
-                            _update_stage_meters(
-                                meters[stage],
-                                output_rgb_meter_dict,
-                                output_depth_meter_dict,
-                                input_depth_meter_dict,
+                        # ── Pass 2: progressive — 6 views (2 GT + 4 pseudo) ───
+                        # view_num=6: first(GT) + center(pseudo) + last(pseudo)
+                        # Mirrors inference script pseudo_ratio="0.50 1.0".
+                        with torch.no_grad():
+                            _prog_out = _prog_model.forward_stage2_with_difix3d(
+                                batch_val, 'val',
+                                view_num=6, matching_nums=3,
+                                iter=0,
+                                frozen_stage_1_model=_prog_frozen,
+                                pretrained_diffix_model=pretrained_diffix_model,
+                                mix_psuedo_views_ratio=1.0,
+                                mix_difix3d_ratio=1.0,
+                                use_self_for_pseudo=args.self_pseudo,
+                                cfg=cfg,
                             )
+                        _pl = _prog_out[1]
+                        for _view in ('first', 'center', 'last'):
+                            _mv_k  = 'val/psnr_multiview_{}'.format(_view)
+                            _fus_k = 'val/psnr_fused_{}'.format(_view)
+                            if _mv_k in _pl:
+                                acc_pseudo_mv[_view].append(_pl[_mv_k])
+                                acc_pseudo_mv['all'].append(_pl[_mv_k])
+                            if _fus_k in _pl:
+                                acc_pseudo_fus[_view].append(_pl[_fus_k])
+                                acc_pseudo_fus['all'].append(_pl[_fus_k])
 
-                        # ---- extra pass: 2-view-only validation (pure GT, view_num=2) ----
-                        # metrics only, no visualization dump
-                        if not use_ddp:
-                            m2_rgb_list, m2_depth_list, m2_estdep_list = my_model.validation_step(
-                                batch_val, val_batch_save_dir, cfg, view_num=2, matching_nums=2, save_visuals=False)
-                        else:
-                            m2_rgb_list, m2_depth_list, m2_estdep_list = my_model.module.validation_step(
-                                batch_val, val_batch_save_dir, cfg, view_num=2, matching_nums=2, save_visuals=False)
+                    # ── Finalise & build single JSON ───────────────────────────
+                    def _mean(lst):
+                        return sum(lst) / len(lst) if lst else None
 
-                        for i in range(len(m2_rgb_list)):
-                            stage = stage_by_index.get(i)
-                            if stage is None:
-                                continue
-                            _update_stage_meters(
-                                meters_2view[stage],
-                                m2_rgb_list[i],
-                                m2_depth_list[i],
-                                m2_estdep_list[i],
-                            )
-
-                    stats = {k: _finalize_meters(v) for k, v in meters.items()}
-
-                    results_dict_fusion = {
-                        "rgb_center": stats["fusion"]["rgb"]["center"],
-                        "rgb_first": stats["fusion"]["rgb"]["first"],
-                        "rgb_last": stats["fusion"]["rgb"]["last"],
-                        "depth_center": stats["fusion"]["depth"]["center"],
-                        "depth_first": stats["fusion"]["depth"]["first"],
-                        "depth_last": stats["fusion"]["depth"]["last"],
-                        "input_depth": stats["fusion"]["input_depth"],
-                    }
-                    results_dict_volume = {
-                        "rgb_center": stats["volume"]["rgb"]["center"],
-                        "rgb_first": stats["volume"]["rgb"]["first"],
-                        "rgb_last": stats["volume"]["rgb"]["last"],
-                        "depth_center": stats["volume"]["depth"]["center"],
-                        "depth_first": stats["volume"]["depth"]["first"],
-                        "depth_last": stats["volume"]["depth"]["last"],
-                        "input_depth": stats["volume"]["input_depth"],
-                    }
-                    results_dict_cv = {
-                        "rgb_center": stats["cv"]["rgb"]["center"],
-                        "rgb_first": stats["cv"]["rgb"]["first"],
-                        "rgb_last": stats["cv"]["rgb"]["last"],
-                        "depth_center": stats["cv"]["depth"]["center"],
-                        "depth_first": stats["cv"]["depth"]["first"],
-                        "depth_last": stats["cv"]["depth"]["last"],
-                        "input_depth": stats["cv"]["input_depth"],
-                    }
-                    
-                    saved_into_json(data_dict=results_dict_fusion,
-                                    path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
-
-                    saved_into_json(data_dict=results_dict_volume,
-                                    path=os.path.join(overall_val_batch_save_dir,"volume_metric.json"))
-
-                    saved_into_json(data_dict=results_dict_cv,
-                                    path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
-
-                    # ---- 2-view-only stats + json dump ----
-                    stats_2view = {k: _finalize_meters(v) for k, v in meters_2view.items()}
-                    results_2view = {}
-                    for stage_name in ("fusion", "volume", "cv"):
-                        results_2view[stage_name] = {
-                            "rgb_center": stats_2view[stage_name]["rgb"]["center"],
-                            "rgb_first": stats_2view[stage_name]["rgb"]["first"],
-                            "rgb_last": stats_2view[stage_name]["rgb"]["last"],
-                            "depth_center": stats_2view[stage_name]["depth"]["center"],
-                            "depth_first": stats_2view[stage_name]["depth"]["first"],
-                            "depth_last": stats_2view[stage_name]["depth"]["last"],
-                            "input_depth": stats_2view[stage_name]["input_depth"],
+                    def _section(acc):
+                        return {
+                            'psnr_first':  _mean(acc['first']),
+                            'psnr_center': _mean(acc['center']),
+                            'psnr_last':   _mean(acc['last']),
+                            'psnr_mean':   _mean(acc['all']),
                         }
-                        saved_into_json(
-                            data_dict=results_2view[stage_name],
-                            path=os.path.join(overall_val_batch_save_dir,
-                                              "{}_metric_2view.json".format(stage_name)))
+
+                    fusion_metric = {
+                        '2view':            _section(acc_2view),
+                        'pseudo_multiview': _section(acc_pseudo_mv),
+                        'pseudo_fused':     _section(acc_pseudo_fus),
+                    }
+
+                    saved_into_json(
+                        data_dict=fusion_metric,
+                        path=os.path.join(overall_val_batch_save_dir, "fusion_metric.json"))
 
                     if tracker_enabled:
                         wandb_logs = {}
-                        wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
-                        wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
-                        wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
-                        for stage_name in ("fusion", "volume", "cv"):
-                            wandb_logs.update(
-                                _extract_wandb_metrics("val_2view/{}".format(stage_name),
-                                                       results_2view[stage_name]))
+                        for _sec, _sec_data in fusion_metric.items():
+                            for _k, _v in _sec_data.items():
+                                if _v is not None:
+                                    wandb_logs["val/{}/{}".format(_sec, _k)] = _v
                         accelerator.log(wandb_logs, step=global_iter)
-                    
+
                 accelerator.wait_for_everyone()
                 my_model.train()
+
 
 
             time_e = time.time()
@@ -843,7 +918,7 @@ def main(args):
             if global_iter % print_freq == 0 and accelerator.is_main_process:
                 lr = optimizer.param_groups[0]['lr']
                 losses_str = ""
-                for loss_k, loss_v in logs.items():
+                for loss_k, loss_v in _filter_display_logs(logs).items():
                     losses_str += ("%s: %.3f, " % (loss_k, loss_v))
                 if logger is not None:
                     logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
@@ -854,9 +929,13 @@ def main(args):
 
             global_iter += 1
 
-            # dump loss log to wandb (if enabled)
+            # wandb only: group by view_num==2 (train/2v) vs view_num>2 (train/mv)
             if tracker_enabled:
-                accelerator.log(logs, step=global_iter)
+                accelerator.log(
+                    _group_train_logs(
+                        logs, view_num,
+                        loss.item() if hasattr(loss, 'item') else float(loss)),
+                    step=global_iter)
 
             data_time_s = time.time()
             time_s = time.time()
@@ -880,6 +959,9 @@ if __name__ == '__main__':
     # stereosplat stage 1 pre-trained model
     parser.add_argument('--stage_1_model_path', type=str, default=None)
     parser.add_argument('--mix_psuedo_views_ratio', type=float, default=0.5)
+    parser.add_argument('--mix_difix3d_ratio', type=float, default=None,
+                        help='Probability of applying Difix3D enhancement to pseudo views. '
+                             'Defaults to mix_psuedo_views_ratio if not set.')
     # self-bootstrap: one unified model. The student loads --stage_1_model_path as
     # initialization and then generates pseudo views from its OWN current weights
     # (no separate frozen Stage1 model).

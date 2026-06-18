@@ -13,13 +13,13 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_0.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_default.py"
-output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage1/stereosplat"
+output_folder="/data1/zliu/IROS26/Compared_With_Others_Pixi/results/with_conf/stage2/stereosplat-self-pseudo"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 
-STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage1/latest/checkpoint-145000"
+STAGE1_MODEL_PATH="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/checkpoint-145000/"
 pretrained_model_path="${STAGE1_MODEL_PATH}"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

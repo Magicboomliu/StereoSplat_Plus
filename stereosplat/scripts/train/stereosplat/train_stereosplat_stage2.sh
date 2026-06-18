@@ -43,7 +43,8 @@ stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosp
 # Difix3D pretrained model
 pretrained_difix3d="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 
-mix_psuedo_views_ratio=0.5
+mix_psuedo_views_ratio=0.9   # 90% of view_num>2 iters use pseudo views
+mix_difix3d_ratio=0.9        # 90% of pseudo-view iters apply Difix3D enhancement
 
 use_wandb=true
 wandb_api_key="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"
@@ -66,6 +67,7 @@ pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate
     --resume-from "${resume_from:-None}" \
     --stage_1_model_path $stage_1_model_path \
     --mix_psuedo_views_ratio $mix_psuedo_views_ratio \
+    --mix_difix3d_ratio $mix_difix3d_ratio \
     --pretrained_difix3d $pretrained_difix3d \
     ${exp_name:+--exp-name "$exp_name"} \
     ${output_dir:+--output-dir "$output_dir"} \
@@ -110,8 +112,8 @@ REPO="/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat"
 
 accelerate_config_path="${REPO}/accelerate_configs/accelerate_config.yaml"
 configs_path="${REPO}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/"
-output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/"
+work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_ratio/"
+output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_09_09_ratio/"
 
 # FIRST LAUNCH: set resume_from="" so no accelerate resume happens;
 #               stage_1_model_path provides the initial model weights.
@@ -138,14 +140,15 @@ unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x
 # Difix3D pretrained model (kept: pseudo views can still be enhanced)
 pretrained_difix3d="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 
-mix_psuedo_views_ratio=0.5
+mix_psuedo_views_ratio=0.9   # 90% of view_num>2 iters use pseudo views
+mix_difix3d_ratio=0.9        # 90% of pseudo-view iters apply Difix3D enhancement
 
 use_wandb=true
 wandb_api_key="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"
 wandb_entity="liuzihua1004"
 wandb_project="StereoSplat_Plus_Conf"
 wandb_mode="online"
-wandb_run_name="stereosplat_stage2_self_pseudo_with_conf_and_difix3d"
+wandb_run_name="stereosplat_self_psuedo_with_conf_and_difix3d_09_09_ratio"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$(pwd):${PYTHONPATH}"
@@ -161,6 +164,7 @@ pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate
     --resume-from "${resume_from:-None}" \
     --stage_1_model_path $stage_1_model_path \
     --mix_psuedo_views_ratio $mix_psuedo_views_ratio \
+    --mix_difix3d_ratio $mix_difix3d_ratio \
     --pretrained_difix3d $pretrained_difix3d \
     --self_pseudo \
     ${exp_name:+--exp-name "$exp_name"} \
@@ -187,5 +191,5 @@ pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate
 # =============================================================================
 # Pick ONE to run (comment / uncomment):
 # =============================================================================
-Train_StereoSplat_Stage2_With_Conf_And_Difix3D       # two-model (default)
-# Train_StereoSplat_Stage2_Self_Pseudo               # self-bootstrap (--self_pseudo)
+# Train_StereoSplat_Stage2_With_Conf_And_Difix3D       # two-model (default)
+Train_StereoSplat_Stage2_Self_Pseudo               # self-bootstrap (--self_pseudo)

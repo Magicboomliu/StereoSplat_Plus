@@ -60,23 +60,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEREOSPLAT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$STEREOSPLAT_ROOT" || exit 1
 
-accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_1.yaml"
+accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/gpu_2.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model/fusion/pixel-level-fusion"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 demo_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/demo.txt"
 ablation_type="NMRFStereo"
 dataset_type="First_LiDAR_3_Uniform"
 pseudo_ratio="0.50 1.0"
 
-STAGE2_MODEL_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume"
-pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_resume/checkpoint-145000"
+# ---- Model path: point to self-pseudo checkpoint ----
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/checkpoint-145000/"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
 timestep=199
 
+# ---- Pixel-level conf fusion margin settings ----
+# fusion_mode: "legacy" (global margin) or "per_view_adaptive" (per-view margin)
+fusion_mode="legacy"
+conf_fusion_margin="0.05"
+
+# Per-view margins (only used when fusion_mode=per_view_adaptive):
+# fusion_first_margin="999.0"   # first stereo → always keep 2-view result
+# fusion_center_margin="0.0"
+# fusion_last_margin="0.0"
+
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/pixel-level-fusion/margin_${conf_fusion_margin}"
+
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 
 TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 \
 pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval/run.py \
@@ -96,7 +109,10 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --prompt "$prompt" \
   --use_diffix3d \
   --use_ref \
-  --conf_pixel_level_fusion
+  --conf_pixel_level_fusion \
+  --fusion_mode "$fusion_mode" \
+  --conf_fusion_margin "$conf_fusion_margin"
+  # --fusion_first_margin "999.0" --fusion_center_margin "0.0" --fusion_last_margin "0.0"
   # --output_vis
 
 }
