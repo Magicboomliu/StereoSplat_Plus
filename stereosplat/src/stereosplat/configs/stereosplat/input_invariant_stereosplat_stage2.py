@@ -3,6 +3,12 @@ _base_ = [
     './_base_/schedule.py'
     ]
 
+# =============================================================================
+# Stage2 full KITTI360 training (Self-Pseudo + soft fusion stack from demo_full)
+# Schedule: save_freq=3000, val_freq=3000, max_train_steps=100000 (production)
+# Loss/fusion: aligned with input_invariant_stereosplat_stage2_demo_full.py
+# =============================================================================
+
 # exp name
 # output directionary
 exp_name = "input_invariant_stereosplat_kitti360_stereo_114x544"
@@ -13,21 +19,23 @@ validation_vis_progress=True
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 5000
-val_freq = 5000
-max_epochs = 150
+save_freq = 3000
+val_epoch_freq = 0         # 0 = iter-based val_freq
+val_freq = 3000
+max_epochs = 300           # legacy; trainer stops at max_train_steps
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
 max_train_steps = 100000
 warmup_steps = 1000
 mixed_precision = "no"
+train_skip_aux_renders = True   # train fuse-only; val still full renders
 gradient_accumulation_steps = 1
 resume_from = "latest"
 report_to = "tensorboard"
 
 seed=23
-mix_psuedo_views_ratio = 0.75
+mix_psuedo_views_ratio = 0.9
 
 # only using the center for training
 use_center, use_first, use_last = False, True, False
@@ -228,27 +236,36 @@ loss_args = dict(
         weight_recon=1.0,
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
-        weight_conf=0.1,      # conf MSE loss weight (used when use_conf_loss=True)
-        weight_fusion_sup=1.5,          # fused RGB L2; only when pseudo injected (B/C), not Case A
-        weight_fusion_sup_percep=0.3,   # fused LPIPS; only when pseudo injected (B/C)
-        val_fusion_mode="soft",         # val: "soft" or "hard" pixel fusion
-        weight_conf_comparative=0.3,    # B/C only (_did_mix_pseudo); err/conf_2v detached
-        weight_fusion_2v_margin=0.8,    # B/C: mean PSNR(fused) >= mean PSNR(2v) + fusion_2v_psnr_margin
-        fusion_2v_psnr_margin=0.5,      # dB gap on per-view PSNR averaged over all render views
-        fusion_2v_margin=0.0,           # extra dB slack subtracted from required gap
-        weight_fusion_mv_margin=0.5,    # B/C: mean PSNR(fused) >= mean PSNR(mv) + fusion_mv_psnr_margin
-        fusion_mv_psnr_margin=0.0,      # dB gap; 0 = fused only needs to match/be beat mv on avg PSNR
-        fusion_mv_margin=0.0,           # extra dB slack
-        weight_mv_margin=0.5,           # B/C: mean PSNR(mv) >= mean PSNR(2v) + mv_psnr_margin
-        mv_psnr_margin=0.0,             # dB gap; 0 = mv only needs to beat 2v on avg PSNR
-        mv_margin=0.0,                  # extra dB slack
-        weight_2v_floor=0.5,            # view_num=2: penalise only when 2v is WORSE than Stage1
-        weight_2v_ceiling=0.3,          # view_num=2: penalise only when 2v is BETTER than Stage1
-        weight_2v_floor_mv=0.0,         # 0=skip extra 2v forward entirely; only used when >0
+        weight_conf=0.0,                # legacy conf_gs off; use conf_mv_abs / conf_2v_abs
+        weight_conf_mv_abs=0.08,        # MSE(conf_mv, exp(-λ·|rgb_mv-gt|))
+        weight_conf_2v_abs=0.08,        # MSE(conf_2v, exp(-λ·|rgb_2v-gt|)) on mv steps
+        weight_fusion_sup=1.5,          # fused L2 via soft fusion + detach RGB
+        weight_fusion_sup_percep=0.3,   # fused LPIPS; same soft path
+        train_fusion_soft_temperature=50.0,
+        train_fusion_tie_logit_mv=4.595,
+        train_fusion_detach_rgb=True,
+        val_fusion_mode="soft",         # val aligned with train; set "hard" for deploy check
+        weight_conf_pick=0.0,
+        conf_pick_lambda=40.0,
+        weight_conf_comparative=0.0,
+        weight_fusion_2v_margin=1.5,
+        fusion_2v_psnr_margin=0.6,
+        fusion_2v_margin=0.0,
+        weight_fusion_mv_margin=1.0,
+        fusion_mv_psnr_margin=0.2,
+        fusion_mv_margin=0.0,
+        weight_mv_margin=0.5,
+        mv_psnr_margin=0.0,
+        mv_margin=0.0,
+        weight_margin_key_views=2.0,
+        weight_2v_floor=1.0,
+        weight_2v_ceiling=5.0,
+        weight_2v_floor_mv=0.0,
         branch_weight =1.0,
     ),
-    use_conf_loss=True,       # enable self-supervised conf supervision (Method B)
-    conf_lambda=10.0,         # sharpness of photometric soft label (for conf_gs self-supervised)
+    use_conf_loss=True,
+    conf_lambda=10.0,
+    conf_pick_lambda=40.0,
     
     cv_sup_dict = dict(
         recon_loss_cv_type="l2", # reconstrunction loss
