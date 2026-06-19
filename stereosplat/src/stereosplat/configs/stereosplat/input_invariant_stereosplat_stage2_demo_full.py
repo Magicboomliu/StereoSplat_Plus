@@ -3,53 +3,59 @@ _base_ = [
     './_base_/schedule.py'
     ]
 
-# exp name
-# output directionary
-exp_name = "input_invariant_stereosplat_kitti360_stereo_114x544"
-output_dir = "/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/"
-validation_vis_progress=True
+# =============================================================================
+# Stage2 demo_full quick-iteration config
+# Data: KITTI360_demo + filenames/kitti360/trainval/demo_full.txt (18 bins)
+# Train: 仅以 max_train_steps 停止（trainer 不再用 max_epochs 截断）
+# Val: val_freq=50 iter；save_freq=0 不写 checkpoint
+# =============================================================================
 
-# learning rate setiing
+REPO_ROOT = "/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat"
+DEMO_BINS = 18
+
+exp_name = "stereosplat_stage2_demo_full"
+output_dir = "/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_demo_full/"
+validation_vis_progress = False
+
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 5000
-val_freq = 5000
-max_epochs = 150
+# Val: iter-based for fast feedback (demo has 18 bins/epoch)
+#   val_freq=50 → step-0 / 50 / 100 / 150 / 200 / 250 / 300 / 350
+save_freq = 0              # demo: no checkpoint save (set 5000 for production)
+val_epoch_freq = 0         # 0 = use val_freq (iter-based)
+val_freq = 50
+max_epochs = 50            # 仅兼容字段；停止条件见 max_train_steps
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 100000
-warmup_steps = 1000
+max_train_steps = 350      # 唯一停止条件；4 GPU 下 4 iter/epoch → step-350 val 后结束
+warmup_steps = 54          # ~3 epoch warmup (must be < max_train_steps)
 mixed_precision = "no"
+# E: train 只 render fuse 分支，跳过 cv/volume 辅助 render（省显存）；val 仍完整三路
+train_skip_aux_renders = True
 gradient_accumulation_steps = 1
-resume_from = "latest"
+resume_from = ""
 report_to = "tensorboard"
 
 seed=23
-mix_psuedo_views_ratio = 0.75
+mix_psuedo_views_ratio = 0.9
 
-# only using the center for training
 use_center, use_first, use_last = False, True, False
-# resolution = [224, 832]
 resolution = [112, 544]
-# resolution = [224, 544] #FIXME Here
 
-
-# LiDAR Range id different
 point_cloud_range = [-3.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 background_color=[0.0, 0.0, 0.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+datapath = "/data1/StereoDatasets/KITTI/KITTI360_demo"
+train_filelist = f"{REPO_ROOT}/filenames/kitti360/trainval/demo_full.txt"
+val_filelist = f"{REPO_ROOT}/filenames/kitti360/trainval/demo_full.txt"
+test_filelist = f"{REPO_ROOT}/filenames/kitti360/trainval/demo_full.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
-world_center="First_Stage2" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
-# if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/checkpoint-159000/model.safetensors"
+world_center="First_Stage2"
+unimatch_weights_path="/data1/StereoDatasets/KITTI/KITTI360_demo/pretrained/depth_estimation_224x840/checkpoint-90000/model.safetensors"
+stage_1_model_path="/data1/StereoDatasets/KITTI/KITTI360_demo/pretrained/stage1/checkpoint-145000/"
 
 camera_model='OpenCV' # select from openCV and openGL
 used_3D_offset=True
@@ -78,9 +84,9 @@ dataset_params = dict(
     batch_size_train=1,
     batch_size_val=1,
     batch_size_test=4,
-    num_workers=8,
-    num_workers_val=8,
-    num_workers_test=4,
+    num_workers=2,
+    num_workers_val=2,
+    num_workers_test=2,
     supp_view_nums=supp_view_nums,
     depth_info_params = depth_info_params,
     camera_model=camera_model
@@ -228,27 +234,37 @@ loss_args = dict(
         weight_recon=1.0,
         weight_perceptual=0.05,
         weight_depth_abs=0.01,
-        weight_conf=0.1,      # conf MSE loss weight (used when use_conf_loss=True)
-        weight_fusion_sup=1.5,          # fused RGB L2; only when pseudo injected (B/C), not Case A
-        weight_fusion_sup_percep=0.3,   # fused LPIPS; only when pseudo injected (B/C)
-        val_fusion_mode="soft",         # val: "soft" or "hard" pixel fusion
-        weight_conf_comparative=0.3,    # B/C only (_did_mix_pseudo); err/conf_2v detached
-        weight_fusion_2v_margin=0.8,    # B/C: mean PSNR(fused) >= mean PSNR(2v) + fusion_2v_psnr_margin
-        fusion_2v_psnr_margin=0.5,      # dB gap on per-view PSNR averaged over all render views
+        weight_conf=0.0,                # legacy conf_gs off; use conf_mv_abs / conf_2v_abs (Plan B)
+        weight_conf_mv_abs=0.08,        # Plan B: MSE(conf_mv, exp(-λ·|rgb_mv-gt|))
+        weight_conf_2v_abs=0.08,        # Plan B: MSE(conf_2v, exp(-λ·|rgb_2v-gt|)) on mv steps
+        weight_fusion_sup=1.5,          # fused L2 via soft fusion + detach RGB -> grad to conf only
+        weight_fusion_sup_percep=0.3,   # fused LPIPS; same soft path as above
+        # Train / val soft fusion (val mode selectable via val_fusion_mode):
+        train_fusion_soft_temperature=50.0,   # 0=hard in train; 50≈hard with tie bias below
+        train_fusion_tie_logit_mv=4.595,      # logit(0.99): ties prefer mv like legacy >=
+        train_fusion_detach_rgb=True,         # margin/recon grad -> conf only
+        val_fusion_mode="soft",               # val: "soft" (train-aligned) or "hard" (legacy pick)
+        weight_conf_pick=0.0,           # off: stuck ~0.69/46% acc; soft fusion+margins drive conf
+        conf_pick_lambda=40.0,          # softer pick label (was 75)
+        weight_conf_comparative=0.0,    # off; superseded by conf_pick + abs pair
+        weight_fusion_2v_margin=1.5,    # B/C: mean PSNR(fused) >= mean PSNR(2v) + fusion_2v_psnr_margin
+        fusion_2v_psnr_margin=0.6,      # dB gap; val target fused-2v >= 0.6 (折中: was 0.8/0.5)
         fusion_2v_margin=0.0,           # extra dB slack subtracted from required gap
-        weight_fusion_mv_margin=0.5,    # B/C: mean PSNR(fused) >= mean PSNR(mv) + fusion_mv_psnr_margin
-        fusion_mv_psnr_margin=0.0,      # dB gap; 0 = fused only needs to match/be beat mv on avg PSNR
+        weight_fusion_mv_margin=1.0,    # B/C: mean PSNR(fused) >= mean PSNR(mv) + fusion_mv_psnr_margin
+        fusion_mv_psnr_margin=0.2,      # dB gap; fused must beat mv by 0.2 dB on avg PSNR
         fusion_mv_margin=0.0,           # extra dB slack
-        weight_mv_margin=0.5,           # B/C: mean PSNR(mv) >= mean PSNR(2v) + mv_psnr_margin
+        weight_mv_margin=0.5,           # B/C: mv beat 2v hinge (was 1.0; lower than fusion_sup 1.5)
         mv_psnr_margin=0.0,             # dB gap; 0 = mv only needs to beat 2v on avg PSNR
         mv_margin=0.0,                  # extra dB slack
-        weight_2v_floor=0.5,            # view_num=2: penalise only when 2v is WORSE than Stage1
-        weight_2v_ceiling=0.3,          # view_num=2: penalise only when 2v is BETTER than Stage1
-        weight_2v_floor_mv=0.0,         # 0=skip extra 2v forward entirely; only used when >0
+        weight_margin_key_views=2.0,    # extra hinge on center/last per margin type (L/R avg)
+        weight_2v_floor=1.0,            # anchor: penalise when pure 2v is WORSE than Stage1
+        weight_2v_ceiling=5.0,          # anchor: penalise when pure 2v beats Stage1
+        weight_2v_floor_mv=0.0,         # deprecated; mv steps use weight_2v_floor/ceiling + grad 2v forward
         branch_weight =1.0,
     ),
     use_conf_loss=True,       # enable self-supervised conf supervision (Method B)
     conf_lambda=10.0,         # sharpness of photometric soft label (for conf_gs self-supervised)
+    conf_pick_lambda=40.0,    # alias for fusion_sup_dict.conf_pick_lambda (Plan A)
     
     cv_sup_dict = dict(
         recon_loss_cv_type="l2", # reconstrunction loss

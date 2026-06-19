@@ -191,10 +191,17 @@ _MV_GT_METRICS = frozenset({
     'recon_pixel_fused', 'perceptual_pixel_fused',
 })
 _MV_CONF_METRICS = frozenset({
-    'conf_gs', 'conf_comparative', 'conf_gs_mean', 'conf_gt_mean',
+    'conf_gs', 'conf_mv_abs', 'conf_2v_abs',
+    'conf_comparative', 'conf_pick', 'conf_pick_accuracy',
+    'soft_hard_pick_agree', 'soft_w_mv_mean',
+    'conf_gs_mean', 'conf_gt_mean', 'conf_mv_mean', 'conf_mv_gt_mean',
+    'conf_2v_mean', 'conf_2v_gt_mean',
 })
 _MV_MARGIN_METRICS = frozenset({
     'fusion_2v_margin', 'fusion_mv_margin', 'mv_margin',
+})
+_MV_ANCHOR_METRICS = frozenset({
+    '2v_floor_mv', '2v_ceiling_mv',
 })
 
 
@@ -211,6 +218,8 @@ def _mv_wandb_subgroup(suffix: str) -> str:
     core = _log_metric_core(suffix)
     if core in _MV_MARGIN_METRICS:
         return 'margin'
+    if core in _MV_ANCHOR_METRICS:
+        return 'anchor'
     if core in _MV_CONF_METRICS:
         return 'conf'
     if core in _MV_GT_METRICS:
@@ -420,7 +429,6 @@ def main(args):
 
     #################### Dataset Configurration #############################
     dataset_config = cfg.dataset_params
-    max_num_epochs = cfg.max_epochs 
 
     # configure logger
     if accelerator.is_main_process:
@@ -704,7 +712,7 @@ def main(args):
     # ---- Step-0 validation: sanity-check the validation pipeline and record
     #      the baseline metrics (Stage1-init weights) before any training.
     _run_initial_val = True
-    while epoch < max_num_epochs:
+    while global_iter <= cfg.max_train_steps:
         my_model.train()
         data_time_s = time.time()
         time_s = time.time()
@@ -781,7 +789,8 @@ def main(args):
                 global_iter += 1
                 continue
 
-            if accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.save_freq == 0:
+            if (accelerator.sync_gradients and global_iter > 0
+                    and cfg.save_freq > 0 and global_iter % cfg.save_freq == 0):
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
@@ -939,6 +948,12 @@ def main(args):
 
             data_time_s = time.time()
             time_s = time.time()
+
+            if global_iter > cfg.max_train_steps:
+                break
+
+        if global_iter > cfg.max_train_steps:
+            break
 
         epoch += 1
 
