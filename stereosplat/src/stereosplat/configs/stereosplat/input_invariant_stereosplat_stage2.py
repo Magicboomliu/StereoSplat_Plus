@@ -5,7 +5,7 @@ _base_ = [
 
 # =============================================================================
 # Stage2 full KITTI360 training (Self-Pseudo + soft fusion stack from demo_full)
-# Schedule: save_freq=3000, val_freq=3000, max_train_steps=100000 (production)
+# Schedule: save_freq=500, val_freq=500, max_train_steps=100000 (production)
 # Loss/fusion: aligned with input_invariant_stereosplat_stage2_demo_full.py
 # =============================================================================
 
@@ -13,15 +13,15 @@ _base_ = [
 # output directionary
 exp_name = "input_invariant_stereosplat_kitti360_stereo_114x544"
 output_dir = "/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/"
-validation_vis_progress=True
+validation_vis_progress=False
 
 # learning rate setiing
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 3000
+save_freq = 500
 val_epoch_freq = 0         # 0 = iter-based val_freq
-val_freq = 3000
+val_freq = 500
 max_epochs = 300           # legacy; trainer stops at max_train_steps
 save_epoch_freq = -1
 
@@ -31,7 +31,7 @@ warmup_steps = 1000
 mixed_precision = "no"
 train_skip_aux_renders = True   # train fuse-only; val still full renders
 gradient_accumulation_steps = 1
-resume_from = "latest"
+resume_from = ""
 report_to = "tensorboard"
 
 seed=23
@@ -248,17 +248,19 @@ loss_args = dict(
         weight_conf_pick=0.0,
         conf_pick_lambda=40.0,
         weight_conf_comparative=0.0,
-        weight_fusion_2v_margin=1.5,
-        fusion_2v_psnr_margin=0.6,
+        weight_fusion_2v_margin=3.0,          # mean: fused >= 2v + fusion_2v_psnr_margin
+        fusion_2v_psnr_margin=0.6,            # mean target: fused-2v >= 0.6 dB
         fusion_2v_margin=0.0,
-        weight_fusion_mv_margin=1.0,
+        fusion_2v_psnr_margin_key_views=0.3,  # center/last: fused >= 2v + 0.3 dB (main paper gain)
+        weight_fusion_mv_margin=1.0,          # mean: fused >= mv + 0.2 dB
         fusion_mv_psnr_margin=0.2,
         fusion_mv_margin=0.0,
-        weight_mv_margin=0.5,
+        weight_mv_margin=0.5,               # mean: mv >= 2v
         mv_psnr_margin=0.0,
         mv_margin=0.0,
-        weight_margin_key_views=2.0,
-        weight_2v_floor=1.0,
+        mv_psnr_margin_key_views=0.3,         # center/last: mv >= 2v + 0.3 dB
+        weight_margin_key_views=4.0,        # center/last extra hinge (mv/fused per-view)
+        weight_2v_floor=1.5,
         weight_2v_ceiling=5.0,
         weight_2v_floor_mv=0.0,
         branch_weight =1.0,

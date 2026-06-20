@@ -64,7 +64,7 @@ export TRANSFORMERS_OFFLINE=1
 pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate_config_path trainer/train_kitti360_stereosplat_stage2_with_difix3d.py \
     --py-config $configs_path \
     --work-dir  $work_dir \
-    --resume-from "${resume_from:-None}" \
+    $([ -n "$resume_from" ] && echo --resume-from "$resume_from") \
     --stage_1_model_path $stage_1_model_path \
     --mix_psuedo_views_ratio $mix_psuedo_views_ratio \
     --mix_difix3d_ratio $mix_difix3d_ratio \
@@ -112,14 +112,14 @@ REPO="/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat"
 
 accelerate_config_path="${REPO}/accelerate_configs/accelerate_config.yaml"
 configs_path="${REPO}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
-work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/"
-output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo/"
+work_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/"
+output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/"
 
 # FIRST LAUNCH: set resume_from="" so no accelerate resume happens;
 #               stage_1_model_path provides the initial model weights.
-# RESUME RUN:   set resume_from="latest"; accelerate restores everything.
-resume_from=""
-# resume_from="latest"
+# RESUME RUN:   set resume_from to checkpoint dir; restores optimizer/scheduler/global_iter.
+resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/checkpoint-2000"
+# resume_from=""
 
 # Weights-only init for first launch (ignored on resume since accelerator.load_state
 # will override the model weights anyway, but harmless to keep set).
@@ -128,9 +128,9 @@ stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosp
 # Optional overrides (leave empty to use cfg defaults)
 exp_name="stereosplat_kitti360_stage2_self_pseudo_with_conf_and_difix3d"
 datapath="/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="${REPO}/filenames/kitti360/train_complete/all.txt"
-val_filelist="${REPO}/filenames/kitti360/train_complete/demo.txt"
-test_filelist="${REPO}/filenames/kitti360/train_complete/demo.txt"
+train_filelist="${REPO}/filenames/kitti360/train_complete/val.txt"
+val_filelist="${REPO}/filenames/kitti360/train_complete/val_tiny.txt"
+test_filelist="${REPO}/filenames/kitti360/train_complete/val_tiny.txt"
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
@@ -148,7 +148,7 @@ wandb_api_key="wandb_v1_YliF0x1Iq5w3bDTEjVukGufHM95_Zp3Un1o0Me4Sf9MHOMNGmOsvhsAb
 wandb_entity="liuzihua1004"
 wandb_project="StereoSplat_Plus_Conf_Latest"
 wandb_mode="online"
-wandb_run_name="stereosplat_self_pseudo"
+wandb_run_name="stereosplat_self_pseudo_kv_margin_resume1600"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$(pwd):${PYTHONPATH}"
@@ -158,10 +158,12 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 # Multi-GPU: do NOT set CUDA_VISIBLE_DEVICES here; accelerate_config.yaml uses gpu 0,1,2,3
 
+echo "[Launch] resume_from=${resume_from:-<none>}"
+
 pixi run -e cu118 python -m accelerate.commands.launch --config_file $accelerate_config_path trainer/train_kitti360_stereosplat_stage2_with_difix3d.py \
     --py-config $configs_path \
     --work-dir  $work_dir \
-    --resume-from "${resume_from:-None}" \
+    $([ -n "$resume_from" ] && echo --resume-from "$resume_from") \
     --stage_1_model_path $stage_1_model_path \
     --mix_psuedo_views_ratio $mix_psuedo_views_ratio \
     --mix_difix3d_ratio $mix_difix3d_ratio \

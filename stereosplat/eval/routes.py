@@ -21,6 +21,41 @@ def requires_pseudo_ratio(eval_mode: str) -> bool:
     return eval_mode in ("stereosplat_plus", "pixel_fusion") and True
 
 
+def make_training_val_eval_args(cfg, output_folder: str, architecture: str):
+    """Namespace mirroring eval/run.py pixel_fusion flags for training validation."""
+    from types import SimpleNamespace
+
+    fusion_sup = getattr(cfg.model, "losses_params", None)
+    fusion_mode = "soft"
+    if fusion_sup is not None:
+        fusion_sup = getattr(fusion_sup, "fusion_sup_dict", None)
+    if fusion_sup is not None:
+        fusion_mode = getattr(fusion_sup, "val_fusion_mode", "soft")
+    return SimpleNamespace(
+        eval_mode="pixel_fusion",
+        architecture=architecture,
+        conf_pixel_level_fusion=True,
+        conf_fusion_margin=0.0,
+        fusion_mode=str(fusion_mode),
+        fusion_first_margin=999.0,
+        fusion_center_margin=0.0,
+        fusion_last_margin=0.0,
+        fusion_calibration="none",
+        fusion_temperature=None,
+        gs_conf_fusion=False,
+        gs_fusion_voxel_size=0.1,
+        gs_fusion_margin=0.05,
+        gs_fusion_conf_agg="mean",
+        gs_fusion_base_conf_thresh=None,
+        output_folder=output_folder,
+        output_vis=False,
+        use_gt_view=False,
+        use_diffix3d=True,
+        use_ref=True,
+        pseudo_ratio=[0.5, 1.0],
+    )
+
+
 def run_batch_inference(
     model,
     batch,
@@ -156,12 +191,46 @@ CONF_KEY_ALIASES = {
     "Conf_gs_fused": "conf_gs_fused",
 }
 
+FUSION_BRANCH_RGB_KEYS = {
+    "RGB_2view": "2view",
+    "RGB_pseudo_multiview": "pseudo_multiview",
+    "RGB": "pseudo_fused",
+}
+
+FUSION_BRANCH_DEPTH_KEYS = {
+    "Depth_2view": "2view",
+    "Depth_pseudo_multiview": "pseudo_multiview",
+    "Depth": "pseudo_fused",
+}
+
+PSNR_SUMMARY_KEYS = {
+    "first_view_psnr_average": "psnr_first",
+    "center_view_psnr_average": "psnr_center",
+    "last_view_psnr_average": "psnr_last",
+    "all_view_psnr_average": "psnr_mean",
+}
+
+
+def _init_fusion_branch_accumulators(accum: dict) -> None:
+    for branch in ("2view", "pseudo_multiview", "pseudo_fused"):
+        accum[branch] = {"rgb": {}, "depth": {}}
+
+
+def _fusion_metric_summary_from_rgb(rgb_metrics: dict) -> dict:
+    return {
+        dst: rgb_metrics[src]
+        for src, dst in PSNR_SUMMARY_KEYS.items()
+        if src in rgb_metrics
+    }
+
 
 def init_metric_accumulators(eval_mode: str, architecture: str, conf_fusion: bool) -> dict:
     accum: dict[str, dict] = {
         "rgb": {},
         "depth": {},
     }
+    if eval_mode == "pixel_fusion":
+        _init_fusion_branch_accumulators(accum)
     if eval_mode in ("stereosplat_plus", "pixel_fusion"):
         accum["conf"] = {}
     if eval_mode == "pixel_fusion" and conf_fusion:
@@ -177,10 +246,37 @@ def init_metric_accumulators(eval_mode: str, architecture: str, conf_fusion: boo
 
 
 def accumulate_batch_metrics(accum: dict, evaluation_results_stat: dict, args) -> None:
+    eval_mode = getattr(args, "eval_mode", None)
     for key in evaluation_results_stat.get("RGB", {}):
         accum["rgb"][key] = accum["rgb"].get(key, 0.0) + evaluation_results_stat["RGB"][key]
+        if eval_mode == "pixel_fusion" and "pseudo_fused" in accum:
+            accum["pseudo_fused"]["rgb"][key] = (
+                accum["pseudo_fused"]["rgb"].get(key, 0.0)
+                + evaluation_results_stat["RGB"][key]
+            )
     for key in evaluation_results_stat.get("Depth", {}):
         accum["depth"][key] = accum["depth"].get(key, 0.0) + evaluation_results_stat["Depth"][key]
+        if eval_mode == "pixel_fusion" and "pseudo_fused" in accum:
+            accum["pseudo_fused"]["depth"][key] = (
+                accum["pseudo_fused"]["depth"].get(key, 0.0)
+                + evaluation_results_stat["Depth"][key]
+            )
+
+    if eval_mode == "pixel_fusion":
+        for src_key, branch in FUSION_BRANCH_RGB_KEYS.items():
+            if src_key == "RGB":
+                continue
+            if src_key not in evaluation_results_stat or branch not in accum:
+                continue
+            for key, val in evaluation_results_stat[src_key].items():
+                accum[branch]["rgb"][key] = accum[branch]["rgb"].get(key, 0.0) + val
+        for src_key, branch in FUSION_BRANCH_DEPTH_KEYS.items():
+            if src_key == "Depth":
+                continue
+            if src_key not in evaluation_results_stat or branch not in accum:
+                continue
+            for key, val in evaluation_results_stat[src_key].items():
+                accum[branch]["depth"][key] = accum[branch]["depth"].get(key, 0.0) + val
 
     conf_fusion = bool(getattr(args, "conf_pixel_level_fusion", False))
     if "Conf" in evaluation_results_stat:
@@ -208,20 +304,124 @@ def accumulate_batch_metrics(accum: dict, evaluation_results_stat: dict, args) -
 def finalize_metrics(accum: dict, batch_idx: int) -> dict:
     if batch_idx == 0:
         raise RuntimeError("Validation dataloader is empty; cannot compute metrics.")
-    results = {}
+
+    def _avg_section(values: dict) -> dict:
+        return {k: v / batch_idx for k, v in values.items()}
+
+    results: dict = {}
+    fusion_metric: dict = {}
+
+    if "2view" in accum:
+        for branch in ("2view", "pseudo_multiview", "pseudo_fused"):
+            branch_accum = accum.get(branch)
+            if not branch_accum:
+                continue
+            branch_results = {}
+            if branch_accum.get("rgb"):
+                branch_results["rgb"] = _avg_section(branch_accum["rgb"])
+                fusion_metric[branch] = _fusion_metric_summary_from_rgb(branch_results["rgb"])
+            if branch_accum.get("depth"):
+                branch_results["depth"] = _avg_section(branch_accum["depth"])
+            if branch_results:
+                results[branch] = branch_results
+        if fusion_metric:
+            results["fusion_metric"] = fusion_metric
+
     for section, values in accum.items():
+        if section in ("2view", "pseudo_multiview", "pseudo_fused"):
+            continue
         if not values:
             continue
-        results[section] = {k: v / batch_idx for k, v in values.items()}
+        results[section] = _avg_section(values)
+
+    if "pseudo_fused" in results and "rgb" not in results:
+        results["rgb"] = results["pseudo_fused"].get("rgb", {})
+    if "pseudo_fused" in results and "depth" not in results:
+        results["depth"] = results["pseudo_fused"].get("depth", {})
+
     return results
+
+
+def merge_metric_dicts(target: dict, source: dict) -> None:
+    """Recursively sum scalar leaves in nested metric accumulators."""
+    for key, val in source.items():
+        if isinstance(val, dict):
+            bucket = target.setdefault(key, {})
+            merge_metric_dicts(bucket, val)
+        else:
+            target[key] = target.get(key, 0.0) + float(val)
+
+
+def all_gather_rank_metrics(
+    accum: dict,
+    batch_count: int,
+) -> list[tuple[dict, int]]:
+    """Collect per-rank (accum, batch_count) via ``all_gather_object``."""
+    import torch.distributed as dist
+
+    if not dist.is_available() or not dist.is_initialized():
+        return [(accum, int(batch_count))]
+
+    world_size = dist.get_world_size()
+    payloads: list = [None] * world_size
+    dist.all_gather_object(
+        payloads,
+        {"accum": accum, "batch_count": int(batch_count)},
+    )
+    gathered: list[tuple[dict, int]] = []
+    for rank_id, item in enumerate(payloads):
+        if not isinstance(item, dict) or "accum" not in item or "batch_count" not in item:
+            raise TypeError(
+                f"Rank {rank_id} gathered invalid payload: {type(item)!r}"
+            )
+        gathered.append((item["accum"], int(item["batch_count"])))
+    return gathered
+
+
+def merge_gathered_metrics(
+    gathered_payloads: list[tuple[dict, int]],
+) -> dict:
+    """Sum per-rank metric accumulators and divide by total batch count."""
+    total_batches = sum(count for _, count in gathered_payloads)
+    if total_batches == 0:
+        raise RuntimeError(
+            "Validation dataloader produced no batches across all GPUs."
+        )
+
+    merged: dict = {}
+    for rank_accum, _ in gathered_payloads:
+        for section, values in rank_accum.items():
+            if not values:
+                continue
+            bucket = merged.setdefault(section, {})
+            merge_metric_dicts(bucket, values)
+
+    if not merged:
+        raise RuntimeError(
+            "No metric keys accumulated on any rank; check eval_mode / filelist."
+        )
+
+    return finalize_metrics(merged, total_batches)
 
 
 def wandb_logs_from_metrics(metrics: dict, args) -> dict:
     logs = {}
-    for k, v in metrics.get("rgb", {}).items():
-        logs[f"val/rgb/{k}"] = float(v)
-    for k, v in metrics.get("depth", {}).items():
-        logs[f"val/depth/{k}"] = float(v)
+    eval_mode = getattr(args, "eval_mode", None)
+    if eval_mode == "pixel_fusion":
+        for branch in ("2view", "pseudo_multiview", "pseudo_fused"):
+            branch_metrics = metrics.get(branch, {})
+            for metric_type in ("rgb", "depth"):
+                for k, v in branch_metrics.get(metric_type, {}).items():
+                    logs[f"val/{branch}/{metric_type}/{k}"] = float(v)
+        for branch, branch_metrics in metrics.get("fusion_metric", {}).items():
+            for k, v in branch_metrics.items():
+                logs[f"val/fusion_metric/{branch}/{k}"] = float(v)
+    else:
+        for k, v in metrics.get("rgb", {}).items():
+            logs[f"val/rgb/{k}"] = float(v)
+        for k, v in metrics.get("depth", {}).items():
+            logs[f"val/depth/{k}"] = float(v)
+
     conf_fusion = bool(getattr(args, "conf_pixel_level_fusion", False))
     for section in (
         "conf",

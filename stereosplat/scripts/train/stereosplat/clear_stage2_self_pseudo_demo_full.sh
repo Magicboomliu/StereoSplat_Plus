@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 清空 Self-Pseudo demo_full 训练的 work_dir 与 output_dir（与 train_stereosplat_stage2.sh 115-116 行一致）
+# 清空 Self-Pseudo debug 训练的 work_dir 与 output_dir（与 train_stereosplat_stage2.sh 115-116 行一致）
 set -euo pipefail
 
-WORK_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_demo_full/"
-OUTPUT_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_demo_full/"
+WORK_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/"
+OUTPUT_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/"
 
-EXPECTED_SUFFIX="stage2_self_pseudo_demo_full"
+EXPECTED_SUFFIX="stage2_self_pseudo_debug"
 
 clear_dir() {
     local target="$1"

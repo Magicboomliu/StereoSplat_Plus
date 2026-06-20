@@ -199,6 +199,9 @@ _MV_CONF_METRICS = frozenset({
 })
 _MV_MARGIN_METRICS = frozenset({
     'fusion_2v_margin', 'fusion_mv_margin', 'mv_margin',
+    'fusion_2v_margin_center', 'fusion_2v_margin_last',
+    'fusion_mv_margin_center', 'fusion_mv_margin_last',
+    'mv_margin_center', 'mv_margin_last',
 })
 _MV_ANCHOR_METRICS = frozenset({
     '2v_floor_mv', '2v_ceiling_mv',
@@ -647,9 +650,9 @@ def main(args):
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
 
     # resume and load
-    epoch = 0
     global_iter = 0
     first_epoch = 0
+    resume_step = -1
     path = None
     
 
@@ -682,10 +685,13 @@ def main(args):
         # as a weights-only init; calling accelerator.load_state on it would load
         # garbage optimizer state and set global_iter to the Stage1 step count.
         if not _is_accelerate_checkpoint(path):
-            accelerator.print(
+            _msg = (
                 f"[Resume] {path} is a weights-only checkpoint (no optimizer state). "
                 "Skipping accelerator.load_state — weights-only init was done above."
             )
+            accelerator.print(_msg)
+            if logger is not None:
+                logger.info(_msg)
             path = None
 
     if path:
@@ -694,30 +700,120 @@ def main(args):
         global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
-        if accelerator.is_main_process:
-            print(f'successfully resumed from epoch{first_epoch}-iter{global_iter}')
-    
+        if accelerator.is_main_process and logger is not None:
+            logger.info(
+                '[Resume] successfully resumed from %s -> iter=%d/%d',
+                path, global_iter, cfg.max_train_steps)
     else:
-        resume_step = -1
-    
-    if accelerator.is_main_process:
-        print('work dir: ', args.work_dir)
-        print("max iteration steps: ",cfg.max_train_steps)
+        if accelerator.is_main_process and logger is not None:
+            logger.info(
+                '[Train] starting from scratch (iter=0/%d)', cfg.max_train_steps)
+
+    epoch = first_epoch
+
+    if accelerator.is_main_process and logger is not None:
+        logger.info('work dir: %s', args.work_dir)
+        logger.info('max_train_steps: %d', cfg.max_train_steps)
         
 
     # training along the iterations.
     print_freq = cfg.print_freq
     use_ddp = accelerator.num_processes > 1
 
-    # ---- Step-0 validation: sanity-check the validation pipeline and record
-    #      the baseline metrics (Stage1-init weights) before any training.
-    _run_initial_val = True
+    # ---- Step-0 validation: record Stage1-init baseline BEFORE any optimizer step.
+    _run_initial_val = (global_iter == 0)
+
+    def _run_fusion_validation(val_step: int) -> None:
+        accelerator.wait_for_everyone()
+        my_model.eval()
+
+        from eval.routes import (
+            accumulate_batch_metrics,
+            all_gather_rank_metrics,
+            init_metric_accumulators,
+            make_training_val_eval_args,
+            merge_gathered_metrics,
+            run_batch_inference,
+        )
+
+        _val_arch = "whole" if args.self_pseudo else "separated"
+        _prog_model = my_model.module if use_ddp else my_model
+        _prog_frozen = frozen_stage_1_model if not args.self_pseudo else None
+
+        overall_val_batch_save_dir = osp.join(
+            cfg.output_dir, cfg.exp_name, "validation",
+            "step-{}".format(val_step))
+        if accelerator.is_main_process:
+            os.makedirs(overall_val_batch_save_dir, exist_ok=True)
+        accelerator.wait_for_everyone()
+
+        _val_args = make_training_val_eval_args(
+            cfg, overall_val_batch_save_dir, _val_arch)
+        accum = init_metric_accumulators("pixel_fusion", _val_arch, True)
+        batch_count = 0
+
+        for i_iter_val, batch_val in enumerate(val_dataloader):
+            if accelerator.is_main_process:
+                print("Processed {}/{}".format(i_iter_val, len(val_dataloader)))
+
+            with torch.no_grad():
+                evaluation_results_stat = run_batch_inference(
+                    _prog_model,
+                    batch_val,
+                    _val_args,
+                    cfg,
+                    batch_val["bin_token"],
+                    eval_mode="pixel_fusion",
+                    architecture=_val_arch,
+                    pretrained_diffix_model=pretrained_diffix_model,
+                    frozen_stage_1_model=_prog_frozen,
+                )
+            accumulate_batch_metrics(accum, evaluation_results_stat, _val_args)
+            batch_count += 1
+
+        accelerator.wait_for_everyone()
+        gathered_payloads = all_gather_rank_metrics(accum, batch_count)
+
+        if accelerator.is_main_process:
+            for rank_id, (_, rank_count) in enumerate(gathered_payloads):
+                print("[Val MultiGPU] rank {}: {} batches".format(
+                    rank_id, rank_count))
+            results = merge_gathered_metrics(gathered_payloads)
+            fusion_metric = results.get("fusion_metric", {})
+
+            saved_into_json(
+                data_dict=fusion_metric,
+                path=os.path.join(
+                    overall_val_batch_save_dir, "fusion_metric.json"))
+
+            if tracker_enabled:
+                wandb_logs = {}
+                for _sec, _sec_data in fusion_metric.items():
+                    for _k, _v in _sec_data.items():
+                        if _v is not None:
+                            wandb_logs["val/{}/{}".format(_sec, _k)] = _v
+                accelerator.log(wandb_logs, step=val_step)
+
+        accelerator.wait_for_everyone()
+        my_model.train()
+
+    if _run_initial_val:
+        if accelerator.is_main_process and logger is not None:
+            logger.info(
+                '[Val] iter=0/%d baseline (pre-train, Stage1-init weights)',
+                cfg.max_train_steps)
+        _run_fusion_validation(0)
+        _run_initial_val = False
+
     while global_iter <= cfg.max_train_steps:
         my_model.train()
         data_time_s = time.time()
         time_s = time.time()
         
         for i_iter, batch in enumerate(train_dataloader):
+            if epoch == first_epoch and i_iter < resume_step:
+                continue
+
             data_time_e = time.time()
 
             # same view_num on all ranks (iter-seeded RNG)
@@ -762,8 +858,10 @@ def main(args):
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
-                        if accelerator.is_main_process:
-                            print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
+                        if accelerator.is_main_process and logger is not None:
+                            logger.warning(
+                                '[Warning] NaN or INF loss at iter=%d/%d, skipping...',
+                                global_iter, cfg.max_train_steps)
                         local_skip = True
                     else:
                         accelerator.backward(loss)
@@ -776,8 +874,10 @@ def main(args):
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e):
-                    if accelerator.is_main_process:
-                        print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                    if accelerator.is_main_process and logger is not None:
+                        logger.warning(
+                            '[OOM] Skipping iter=%d/%d (view_num=%d) due to CUDA OOM.',
+                            global_iter, cfg.max_train_steps, view_num)
                     optimizer.zero_grad(set_to_none=True)
                     torch.cuda.empty_cache()
                     local_skip = True
@@ -801,123 +901,13 @@ def main(args):
                         logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
                 accelerator.wait_for_everyone()
 
-            _do_val = (accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.val_freq == 0)
-            # Step-1 baseline: run once at the very first update (effectively step-0
-            # weights; one batch update is negligible). Skipped when resuming
-            # mid-training (global_iter already >> 1 on first check).
-            if not _do_val and _run_initial_val and global_iter <= 1:
-                _do_val = True
-            if _run_initial_val:
-                _run_initial_val = False   # clear after first check regardless
+            _do_val = (
+                accelerator.sync_gradients
+                and global_iter > 0
+                and global_iter % cfg.val_freq == 0
+            )
             if _do_val:
-                accelerator.wait_for_everyone()
-                my_model.eval()
-                if accelerator.is_main_process:
-                    # Validation produces ONE json per step:
-                    #   fusion_metric.json  — three sections:
-                    #     "2view"            : pure 2-view GT (first stereo input)
-                    #     "pseudo_multiview" : 6-view (2 GT + 4 pseudo), multiview render
-                    #     "pseudo_fused"     : same input, pixel-wise conf fusion
-                    #   Each section: psnr_first / psnr_center / psnr_last / psnr_mean
-
-                    def _new_acc():
-                        return {v: [] for v in ('first', 'center', 'last', 'all')}
-
-                    acc_2view      = _new_acc()
-                    acc_pseudo_mv  = _new_acc()
-                    acc_pseudo_fus = _new_acc()
-
-                    _prog_model  = my_model.module if use_ddp else my_model
-                    _prog_frozen = frozen_stage_1_model if not args.self_pseudo else None
-
-                    overall_val_batch_save_dir = osp.join(
-                        cfg.output_dir, cfg.exp_name, "validation",
-                        "step-{}".format(global_iter))
-                    os.makedirs(overall_val_batch_save_dir, exist_ok=True)
-
-                    for i_iter_val, batch_val in enumerate(val_dataloader):
-                        print("Processed {}/{}".format(i_iter_val, len(val_dataloader)))
-                        val_batch_save_dir = os.path.join(
-                            overall_val_batch_save_dir, "batch-{}".format(i_iter_val))
-                        if getattr(cfg, 'validation_vis_progress', False):
-                            os.makedirs(val_batch_save_dir, exist_ok=True)
-
-                        # ── Pass 1: 2-view GT (first stereo only) ──────────────
-                        if not use_ddp:
-                            m2_rgb, _, _ = my_model.validation_step(
-                                batch_val, val_batch_save_dir, cfg,
-                                view_num=2, matching_nums=2, save_visuals=False)
-                        else:
-                            m2_rgb, _, _ = my_model.module.validation_step(
-                                batch_val, val_batch_save_dir, cfg,
-                                view_num=2, matching_nums=2, save_visuals=False)
-                        # m2_rgb[0] = fusion branch rgb meter dict
-                        _r2 = m2_rgb[0] if m2_rgb else {}
-                        for _view in ('first', 'center', 'last'):
-                            _vk = '{}_view'.format(_view)
-                            if _vk in _r2:
-                                _p = (_r2[_vk]['left']['psnr'] + _r2[_vk]['right']['psnr']) / 2.0
-                                acc_2view[_view].append(_p)
-                                acc_2view['all'].append(_p)
-
-                        # ── Pass 2: progressive — 6 views (2 GT + 4 pseudo) ───
-                        # view_num=6: first(GT) + center(pseudo) + last(pseudo)
-                        # Mirrors inference script pseudo_ratio="0.50 1.0".
-                        with torch.no_grad():
-                            _prog_out = _prog_model.forward_stage2_with_difix3d(
-                                batch_val, 'val',
-                                view_num=6, matching_nums=3,
-                                iter=0,
-                                frozen_stage_1_model=_prog_frozen,
-                                pretrained_diffix_model=pretrained_diffix_model,
-                                mix_psuedo_views_ratio=1.0,
-                                mix_difix3d_ratio=1.0,
-                                use_self_for_pseudo=args.self_pseudo,
-                                cfg=cfg,
-                            )
-                        _pl = _prog_out[1]
-                        for _view in ('first', 'center', 'last'):
-                            _mv_k  = 'val/psnr_multiview_{}'.format(_view)
-                            _fus_k = 'val/psnr_fused_{}'.format(_view)
-                            if _mv_k in _pl:
-                                acc_pseudo_mv[_view].append(_pl[_mv_k])
-                                acc_pseudo_mv['all'].append(_pl[_mv_k])
-                            if _fus_k in _pl:
-                                acc_pseudo_fus[_view].append(_pl[_fus_k])
-                                acc_pseudo_fus['all'].append(_pl[_fus_k])
-
-                    # ── Finalise & build single JSON ───────────────────────────
-                    def _mean(lst):
-                        return sum(lst) / len(lst) if lst else None
-
-                    def _section(acc):
-                        return {
-                            'psnr_first':  _mean(acc['first']),
-                            'psnr_center': _mean(acc['center']),
-                            'psnr_last':   _mean(acc['last']),
-                            'psnr_mean':   _mean(acc['all']),
-                        }
-
-                    fusion_metric = {
-                        '2view':            _section(acc_2view),
-                        'pseudo_multiview': _section(acc_pseudo_mv),
-                        'pseudo_fused':     _section(acc_pseudo_fus),
-                    }
-
-                    saved_into_json(
-                        data_dict=fusion_metric,
-                        path=os.path.join(overall_val_batch_save_dir, "fusion_metric.json"))
-
-                    if tracker_enabled:
-                        wandb_logs = {}
-                        for _sec, _sec_data in fusion_metric.items():
-                            for _k, _v in _sec_data.items():
-                                if _v is not None:
-                                    wandb_logs["val/{}/{}".format(_sec, _k)] = _v
-                        accelerator.log(wandb_logs, step=global_iter)
-
-                accelerator.wait_for_everyone()
-                my_model.train()
+                _run_fusion_validation(global_iter)
 
 
 
@@ -930,11 +920,11 @@ def main(args):
                 for loss_k, loss_v in _filter_display_logs(logs).items():
                     losses_str += ("%s: %.3f, " % (loss_k, loss_v))
                 if logger is not None:
-                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
-                        epoch, i_iter, len(train_dataloader), 
-                        loss.item(), losses_str, grad_norm, lr,
-                        time_e - time_s, data_time_e - data_time_s
-                    ))
+                    logger.info(
+                        '[TRAIN] iter %5d/%d | Loss: %.3f, %s grad_norm: %.1f, '
+                        'lr: %.7f, time: %.3f (%.3f)',
+                        global_iter, cfg.max_train_steps, loss.item(), losses_str,
+                        grad_norm, lr, time_e - time_s, data_time_e - data_time_s)
 
             global_iter += 1
 
