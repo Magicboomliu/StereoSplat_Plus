@@ -41,6 +41,11 @@ from tqdm import tqdm
 import importlib
 
 from difix3d import DifixRef
+from eval.fusion_validation import (
+    accumulate_batch_fusion_metrics,
+    fusion_metric_from_accumulators,
+    new_fusion_metric_accumulators,
+)
 
 def _strip_prefix_if_present(state_dict: dict, prefix: str) -> dict:
     if not state_dict:
@@ -866,15 +871,7 @@ def main(args):
                     #     "pseudo_fused"     : same input, pixel-wise conf fusion
                     #   Each section: psnr_first / psnr_center / psnr_last / psnr_mean
 
-                    def _new_acc():
-                        return {v: [] for v in ('first', 'center', 'last', 'all')}
-
-                    acc_2view      = _new_acc()
-                    acc_pseudo_mv  = _new_acc()
-                    acc_pseudo_fus = _new_acc()
-
-                    _prog_model  = my_model.module if use_ddp else my_model
-                    _prog_frozen = frozen_stage_1_model if not args.self_pseudo else None
+                    acc_2view, acc_pseudo_mv, acc_pseudo_fus = new_fusion_metric_accumulators()
 
                     overall_val_batch_save_dir = osp.join(
                         cfg.output_dir, cfg.exp_name, "validation",
@@ -888,67 +885,22 @@ def main(args):
                         if getattr(cfg, 'validation_vis_progress', False):
                             os.makedirs(val_batch_save_dir, exist_ok=True)
 
-                        # ── Pass 1: 2-view GT (first stereo only) ──────────────
-                        if not use_ddp:
-                            m2_rgb, _, _ = my_model.validation_step(
-                                batch_val, val_batch_save_dir, cfg,
-                                view_num=2, matching_nums=2, save_visuals=False)
-                        else:
-                            m2_rgb, _, _ = my_model.module.validation_step(
-                                batch_val, val_batch_save_dir, cfg,
-                                view_num=2, matching_nums=2, save_visuals=False)
-                        # m2_rgb[0] = fusion branch rgb meter dict
-                        _r2 = m2_rgb[0] if m2_rgb else {}
-                        for _view in ('first', 'center', 'last'):
-                            _vk = '{}_view'.format(_view)
-                            if _vk in _r2:
-                                _p = (_r2[_vk]['left']['psnr'] + _r2[_vk]['right']['psnr']) / 2.0
-                                acc_2view[_view].append(_p)
-                                acc_2view['all'].append(_p)
+                        accumulate_batch_fusion_metrics(
+                            acc_2view,
+                            acc_pseudo_mv,
+                            acc_pseudo_fus,
+                            my_model,
+                            batch_val,
+                            cfg,
+                            frozen_stage_1_model=frozen_stage_1_model,
+                            pretrained_diffix_model=pretrained_diffix_model,
+                            self_pseudo=args.self_pseudo,
+                            val_batch_save_dir=val_batch_save_dir,
+                            save_visuals=getattr(cfg, 'validation_vis_progress', False),
+                        )
 
-                        # ── Pass 2: progressive — 6 views (2 GT + 4 pseudo) ───
-                        # view_num=6: first(GT) + center(pseudo) + last(pseudo)
-                        # Mirrors inference script pseudo_ratio="0.50 1.0".
-                        with torch.no_grad():
-                            _prog_out = _prog_model.forward_stage2_with_difix3d(
-                                batch_val, 'val',
-                                view_num=6, matching_nums=3,
-                                iter=0,
-                                frozen_stage_1_model=_prog_frozen,
-                                pretrained_diffix_model=pretrained_diffix_model,
-                                mix_psuedo_views_ratio=1.0,
-                                mix_difix3d_ratio=1.0,
-                                use_self_for_pseudo=args.self_pseudo,
-                                cfg=cfg,
-                            )
-                        _pl = _prog_out[1]
-                        for _view in ('first', 'center', 'last'):
-                            _mv_k  = 'val/psnr_multiview_{}'.format(_view)
-                            _fus_k = 'val/psnr_fused_{}'.format(_view)
-                            if _mv_k in _pl:
-                                acc_pseudo_mv[_view].append(_pl[_mv_k])
-                                acc_pseudo_mv['all'].append(_pl[_mv_k])
-                            if _fus_k in _pl:
-                                acc_pseudo_fus[_view].append(_pl[_fus_k])
-                                acc_pseudo_fus['all'].append(_pl[_fus_k])
-
-                    # ── Finalise & build single JSON ───────────────────────────
-                    def _mean(lst):
-                        return sum(lst) / len(lst) if lst else None
-
-                    def _section(acc):
-                        return {
-                            'psnr_first':  _mean(acc['first']),
-                            'psnr_center': _mean(acc['center']),
-                            'psnr_last':   _mean(acc['last']),
-                            'psnr_mean':   _mean(acc['all']),
-                        }
-
-                    fusion_metric = {
-                        '2view':            _section(acc_2view),
-                        'pseudo_multiview': _section(acc_pseudo_mv),
-                        'pseudo_fused':     _section(acc_pseudo_fus),
-                    }
+                    fusion_metric = fusion_metric_from_accumulators(
+                        acc_2view, acc_pseudo_mv, acc_pseudo_fus)
 
                     saved_into_json(
                         data_dict=fusion_metric,
