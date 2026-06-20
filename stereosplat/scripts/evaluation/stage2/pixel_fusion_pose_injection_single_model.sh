@@ -74,17 +74,18 @@ pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla
 prompt="remove degradation"
 timestep=199
 
-# ---- Pixel-level conf fusion margin settings ----
-# fusion_mode: "legacy" (global margin) or "per_view_adaptive" (per-view margin)
-fusion_mode="legacy"
-conf_fusion_margin="0.05"
+# ---- Pixel-level conf fusion (train/val-aligned soft fusion by default) ----
+# fusion_mode: "soft" (default, same as train val_fusion_mode) | "legacy" (hard pick) | "per_view_adaptive"
+fusion_mode="soft"
+# conf_fusion_margin only applies when fusion_mode=legacy
+# conf_fusion_margin="0.05"
 
 # Per-view margins (only used when fusion_mode=per_view_adaptive):
 # fusion_first_margin="999.0"   # first stereo → always keep 2-view result
 # fusion_center_margin="0.0"
 # fusion_last_margin="0.0"
 
-output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/pixel-level-fusion/margin_${conf_fusion_margin}"
+output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/pixel-level-fusion/${fusion_mode}"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="${STEREOSPLAT_ROOT}:${PYTHONPATH}"
@@ -110,8 +111,8 @@ pixi run -e cu118 accelerate launch --config-file "$accelerate_config_path" eval
   --use_diffix3d \
   --use_ref \
   --conf_pixel_level_fusion \
-  --fusion_mode "$fusion_mode" \
-  --conf_fusion_margin "$conf_fusion_margin"
+  --fusion_mode "$fusion_mode"
+  # legacy hard fusion: add --conf_fusion_margin 0.05
   # --fusion_first_margin "999.0" --fusion_center_margin "0.0" --fusion_last_margin "0.0"
   # --output_vis
 

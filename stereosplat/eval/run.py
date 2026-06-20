@@ -185,9 +185,12 @@ def main(args=None, defaults: dict | None = None):
     parser.add_argument(
         "--fusion_mode",
         type=str,
-        default="legacy",
-        choices=["legacy", "per_view_adaptive"],
-        help="legacy=global margin; per_view_adaptive=per-view margins + optional calibration.",
+        default="soft",
+        choices=["soft", "legacy", "per_view_adaptive"],
+        help=(
+            "soft=train/val-aligned sigmoid conf fusion (reads fusion_sup_dict); "
+            "legacy=global hard conf pick; per_view_adaptive=per-view margins."
+        ),
     )
     parser.add_argument(
         "--fusion_first_margin",

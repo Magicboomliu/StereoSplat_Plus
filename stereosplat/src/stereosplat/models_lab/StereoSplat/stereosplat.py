@@ -624,7 +624,18 @@ def pixel_fuse_renders(
     fusion_last_margin=0.0,
     fusion_calibration="none",
     fusion_temperature=None,
+    fusion_sup_dict=None,
 ):
+    if fusion_mode == "soft":
+        return fuse_renders_eval_mode(
+            rgb_a,
+            rgb_b,
+            depth_a,
+            depth_b,
+            conf_a,
+            conf_b,
+            fusion_sup_dict=fusion_sup_dict,
+        )
     if fusion_mode == "per_view_adaptive":
         return fuse_renders_per_view_adaptive(
             rgb_a,
@@ -9855,6 +9866,41 @@ class StereoSplat(BaseModule):
             pixel_level_conf_fusion=False,
         )
 
+    def _pixel_fuse_inference(
+        self,
+        rgb_a,
+        rgb_b,
+        depth_a,
+        depth_b,
+        conf_a,
+        conf_b,
+        *,
+        fusion_mode="soft",
+        conf_fusion_margin=None,
+        fusion_first_margin=999.0,
+        fusion_center_margin=0.0,
+        fusion_last_margin=0.0,
+        fusion_calibration="none",
+        fusion_temperature=None,
+    ):
+        """Pixel fuse for eval/infer; ``soft`` uses ``fuse_renders_eval_mode`` (train/val aligned)."""
+        return pixel_fuse_renders(
+            rgb_a,
+            rgb_b,
+            depth_a,
+            depth_b,
+            conf_a,
+            conf_b,
+            fusion_mode=fusion_mode,
+            conf_fusion_margin=conf_fusion_margin,
+            fusion_first_margin=fusion_first_margin,
+            fusion_center_margin=fusion_center_margin,
+            fusion_last_margin=fusion_last_margin,
+            fusion_calibration=fusion_calibration,
+            fusion_temperature=fusion_temperature,
+            fusion_sup_dict=self.losses_params.fusion_sup_dict,
+        )
+
     def infer_pixel_fusion_pose_injection_frozen_stage1_two_models(
                                         self,
                                         batch,
@@ -9870,7 +9916,7 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
-                                        fusion_mode="legacy",
+                                        fusion_mode="soft",
                                         fusion_first_margin=999.0,
                                         fusion_center_margin=0.0,
                                         fusion_last_margin=0.0,
@@ -9924,7 +9970,7 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
-                                        fusion_mode="legacy",
+                                        fusion_mode="soft",
                                         fusion_first_margin=999.0,
                                         fusion_center_margin=0.0,
                                         fusion_last_margin=0.0,
@@ -10319,7 +10365,7 @@ class StereoSplat(BaseModule):
             rendered_color_stage1_final = rendered_color_fuse
             rendered_depth_stage1_final = rendered_depth_fuse
             rendered_conf_stage1_final = rendered_conf_stage1
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = self._pixel_fuse_inference(
                 rendered_color_stage1_final,
                 rendered_color_gs_fused,
                 rendered_depth_stage1_final,
@@ -10342,7 +10388,7 @@ class StereoSplat(BaseModule):
             rendered_color_stage1_final = rendered_color_fuse
             rendered_depth_stage1_final = rendered_depth_fuse
             rendered_conf_stage1_final = rendered_conf_stage1
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = self._pixel_fuse_inference(
                 rendered_color_stage1_final,
                 rendered_color_stage2,
                 rendered_depth_stage1_final,
@@ -10717,7 +10763,7 @@ class StereoSplat(BaseModule):
                                         vis=False,
                                         pixel_level_conf_fusion=False,
                                         conf_fusion_margin=None,
-                                        fusion_mode="legacy",
+                                        fusion_mode="soft",
                                         fusion_first_margin=999.0,
                                         fusion_center_margin=0.0,
                                         fusion_last_margin=0.0,
@@ -11150,7 +11196,7 @@ class StereoSplat(BaseModule):
             rendered_color_2view_final = rendered_color_fuse
             rendered_depth_2view_final = rendered_depth_fuse
             rendered_conf_2view_final = rendered_conf_2view_cached
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = self._pixel_fuse_inference(
                 rendered_color_2view_final,
                 rendered_color_gs_fused,
                 rendered_depth_2view_final,
@@ -11173,7 +11219,7 @@ class StereoSplat(BaseModule):
             rendered_color_2view_final = rendered_color_fuse
             rendered_depth_2view_final = rendered_depth_fuse
             rendered_conf_2view_final = rendered_conf_2view_cached
-            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = pixel_fuse_renders(
+            rendered_color_fuse, rendered_depth_fuse, rendered_conf_fuse = self._pixel_fuse_inference(
                 rendered_color_2view_final,
                 rendered_color_pseudo_multiview,
                 rendered_depth_2view_final,
