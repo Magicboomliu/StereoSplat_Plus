@@ -199,6 +199,9 @@ _MV_CONF_METRICS = frozenset({
 })
 _MV_MARGIN_METRICS = frozenset({
     'fusion_2v_margin', 'fusion_mv_margin', 'mv_margin',
+    'fusion_2v_margin_center', 'fusion_2v_margin_last',
+    'fusion_mv_margin_center', 'fusion_mv_margin_last',
+    'mv_margin_center', 'mv_margin_last',
 })
 _MV_ANCHOR_METRICS = frozenset({
     '2v_floor_mv', '2v_ceiling_mv',
@@ -647,9 +650,9 @@ def main(args):
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.gradient_accumulation_steps)
 
     # resume and load
-    epoch = 0
     global_iter = 0
     first_epoch = 0
+    resume_step = -1
     path = None
     
 
@@ -682,10 +685,13 @@ def main(args):
         # as a weights-only init; calling accelerator.load_state on it would load
         # garbage optimizer state and set global_iter to the Stage1 step count.
         if not _is_accelerate_checkpoint(path):
-            accelerator.print(
+            _msg = (
                 f"[Resume] {path} is a weights-only checkpoint (no optimizer state). "
                 "Skipping accelerator.load_state — weights-only init was done above."
             )
+            accelerator.print(_msg)
+            if logger is not None:
+                logger.info(_msg)
             path = None
 
     if path:
@@ -694,15 +700,25 @@ def main(args):
         global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
-        if accelerator.is_main_process:
-            print(f'successfully resumed from epoch{first_epoch}-iter{global_iter}')
-    
+        if accelerator.is_main_process and logger is not None:
+            logger.info(
+                '[Resume] successfully resumed from %s -> iter=%d/%d',
+                path, global_iter, cfg.max_train_steps)
     else:
-        resume_step = -1
-    
-    if accelerator.is_main_process:
-        print('work dir: ', args.work_dir)
-        print("max iteration steps: ",cfg.max_train_steps)
+        if accelerator.is_main_process and logger is not None:
+            logger.info(
+                '[Train] starting from scratch (iter=0/%d)', cfg.max_train_steps)
+
+    epoch = first_epoch
+    _resumed_global_iter = global_iter if path else None
+
+    if accelerator.is_main_process and logger is not None:
+        logger.info('work dir: %s', args.work_dir)
+        logger.info('max_train_steps: %d', cfg.max_train_steps)
+        if _resumed_global_iter is not None and resume_step > 0:
+            logger.info(
+                '[Resume] fast-forwarding %d dataloader batches before iter=%d',
+                resume_step, _resumed_global_iter)
         
 
     # training along the iterations.
@@ -718,6 +734,16 @@ def main(args):
         time_s = time.time()
         
         for i_iter, batch in enumerate(train_dataloader):
+            if epoch == first_epoch and i_iter < resume_step:
+                if (accelerator.is_main_process and logger is not None
+                        and resume_step > 0
+                        and (i_iter == 0 or (i_iter + 1) % 200 == 0
+                             or i_iter + 1 == resume_step)):
+                    logger.info(
+                        '[Resume] skipping batch %d/%d (fast-forward)',
+                        i_iter + 1, resume_step)
+                continue
+
             data_time_e = time.time()
 
             # same view_num on all ranks (iter-seeded RNG)
@@ -762,8 +788,10 @@ def main(args):
 
                     loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
                     if torch.isnan(loss) or torch.isinf(loss):
-                        if accelerator.is_main_process:
-                            print(f"[Warning] NaN or INF loss at iter {global_iter}, skipping...")
+                        if accelerator.is_main_process and logger is not None:
+                            logger.warning(
+                                '[Warning] NaN or INF loss at iter=%d/%d, skipping...',
+                                global_iter, cfg.max_train_steps)
                         local_skip = True
                     else:
                         accelerator.backward(loss)
@@ -776,8 +804,10 @@ def main(args):
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e):
-                    if accelerator.is_main_process:
-                        print(f"[OOM] Skipping iteration {global_iter} due to CUDA OOM.")
+                    if accelerator.is_main_process and logger is not None:
+                        logger.warning(
+                            '[OOM] Skipping iter=%d/%d (view_num=%d) due to CUDA OOM.',
+                            global_iter, cfg.max_train_steps, view_num)
                     optimizer.zero_grad(set_to_none=True)
                     torch.cuda.empty_cache()
                     local_skip = True
@@ -789,7 +819,12 @@ def main(args):
                 global_iter += 1
                 continue
 
-            if (accelerator.sync_gradients and global_iter > 0
+            _skip_periodic = (
+                _resumed_global_iter is not None
+                and global_iter == _resumed_global_iter)
+
+            if (not _skip_periodic
+                    and accelerator.sync_gradients and global_iter > 0
                     and cfg.save_freq > 0 and global_iter % cfg.save_freq == 0):
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
@@ -801,7 +836,9 @@ def main(args):
                         logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
                 accelerator.wait_for_everyone()
 
-            _do_val = (accelerator.sync_gradients and global_iter > 0 and global_iter % cfg.val_freq == 0)
+            _do_val = (not _skip_periodic
+                       and accelerator.sync_gradients and global_iter > 0
+                       and global_iter % cfg.val_freq == 0)
             # Step-1 baseline: run once at the very first update (effectively step-0
             # weights; one batch update is negligible). Skipped when resuming
             # mid-training (global_iter already >> 1 on first check).
@@ -809,7 +846,16 @@ def main(args):
                 _do_val = True
             if _run_initial_val:
                 _run_initial_val = False   # clear after first check regardless
+            if _skip_periodic and accelerator.is_main_process and logger is not None:
+                if global_iter % cfg.val_freq == 0 or (
+                        cfg.save_freq > 0 and global_iter % cfg.save_freq == 0):
+                    logger.info(
+                        '[Resume] skip redundant save/val at iter=%d (already done)',
+                        global_iter)
             if _do_val:
+                if accelerator.is_main_process and logger is not None:
+                    logger.info('[Val] iter=%d/%d validation start', global_iter,
+                                cfg.max_train_steps)
                 accelerator.wait_for_everyone()
                 my_model.eval()
                 if accelerator.is_main_process:
@@ -930,11 +976,11 @@ def main(args):
                 for loss_k, loss_v in _filter_display_logs(logs).items():
                     losses_str += ("%s: %.3f, " % (loss_k, loss_v))
                 if logger is not None:
-                    logger.info('[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f, %s grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)'%(
-                        epoch, i_iter, len(train_dataloader), 
-                        loss.item(), losses_str, grad_norm, lr,
-                        time_e - time_s, data_time_e - data_time_s
-                    ))
+                    logger.info(
+                        '[TRAIN] iter %5d/%d | Loss: %.3f, %s grad_norm: %.1f, '
+                        'lr: %.7f, time: %.3f (%.3f)',
+                        global_iter, cfg.max_train_steps, loss.item(), losses_str,
+                        grad_norm, lr, time_e - time_s, data_time_e - data_time_s)
 
             global_iter += 1
 

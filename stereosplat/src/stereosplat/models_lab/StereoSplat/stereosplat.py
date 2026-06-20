@@ -369,6 +369,35 @@ def conf_from_render_pkg(render_pkg):
     raise ValueError(f"Unexpected conf shape: {tuple(conf.shape)}")
 
 
+_KEY_MARGIN_VIEW_NAMES = ('center', 'last')
+# 6-view render layout: [center_L, last_L, center_R, last_R, first_L, first_R]
+_STEREO_TRAIN_VIEW_LR = {
+    'center': (0, 2),
+    'last': (1, 3),
+}
+
+
+def _stereo_pair_mean_psnr(err_pv, left_i, right_i, eps=1e-8):
+    """L/R-averaged PSNR for one stereo keyframe; err_pv is [B, V] per-view MSE."""
+    psnr_l = -10.0 * torch.log10(err_pv[:, left_i] + eps)
+    psnr_r = -10.0 * torch.log10(err_pv[:, right_i] + eps)
+    return (psnr_l + psnr_r) * 0.5
+
+
+def _key_view_psnr_margin_hinge(
+    err_ref_pv, err_tgt_pv, view_name, margin_db=0.0, slack_db=0.0, eps=1e-8,
+    detach_ref=True):
+    """ReLU(PSNR_ref + margin - slack - PSNR_tgt) for one center/last stereo pair."""
+    left_i, right_i = _STEREO_TRAIN_VIEW_LR[view_name]
+    if detach_ref:
+        with torch.no_grad():
+            psnr_ref = _stereo_pair_mean_psnr(err_ref_pv, left_i, right_i, eps)
+    else:
+        psnr_ref = _stereo_pair_mean_psnr(err_ref_pv, left_i, right_i, eps)
+    psnr_tgt = _stereo_pair_mean_psnr(err_tgt_pv, left_i, right_i, eps)
+    return torch.nn.functional.relu(psnr_ref + margin_db - slack_db - psnr_tgt).mean()
+
+
 def stereosplat_conf_eval_stats(rendered_conf_fusion):
     """Mean rendered confidence per view bucket (interleaved stereo layout)."""
     if rendered_conf_fusion is None:
@@ -2820,6 +2849,8 @@ class StereoSplat(BaseModule):
                 self.losses_params.fusion_sup_dict, 'train_fusion_tie_logit_mv', 4.595)
             _detach_rgb = getattr(
                 self.losses_params.fusion_sup_dict, 'train_fusion_detach_rgb', True)
+            _margin_detach_ref = getattr(
+                self.losses_params.fusion_sup_dict, 'margin_detach_ref', True)
             _w_conf_pick = getattr(
                 self.losses_params.fusion_sup_dict, 'weight_conf_pick', 0.0)
             _w_conf_2v_abs = getattr(
@@ -2948,7 +2979,10 @@ class StereoSplat(BaseModule):
                         _fus_2v_margin_val = getattr(
                             self.losses_params.fusion_sup_dict, 'fusion_2v_margin', 0.0)
                         _err_fused_pv = (rgb_gt - _rgb_fused).pow(2).mean(dim=(2, 3, 4))
-                        with torch.no_grad():
+                        if _margin_detach_ref:
+                            with torch.no_grad():
+                                _err_2v_pv = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
+                        else:
                             _err_2v_pv = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
                         _psnr_f_avg = (-10.0 * torch.log10(
                             _err_fused_pv + _psnr_eps)).mean()
@@ -2965,7 +2999,10 @@ class StereoSplat(BaseModule):
                         _fus_mv_margin_val = getattr(
                             self.losses_params.fusion_sup_dict, 'fusion_mv_margin', 0.0)
                         _err_fused_pv_mv = (rgb_gt - _rgb_fused).pow(2).mean(dim=(2, 3, 4))
-                        with torch.no_grad():
+                        if _margin_detach_ref:
+                            with torch.no_grad():
+                                _err_mv_pv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
+                        else:
                             _err_mv_pv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
                         _psnr_f_mv_avg = (-10.0 * torch.log10(
                             _err_fused_pv_mv + _psnr_eps)).mean()
@@ -3029,7 +3066,10 @@ class StereoSplat(BaseModule):
                         _mv_margin_val = getattr(
                             self.losses_params.fusion_sup_dict, 'mv_margin', 0.0)
                         _err_mv_pv_m = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
-                        with torch.no_grad():
+                        if _margin_detach_ref:
+                            with torch.no_grad():
+                                _err_2v_pv_m = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
+                        else:
                             _err_2v_pv_m = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
                         _psnr_mv_m_avg = (-10.0 * torch.log10(
                             _err_mv_pv_m + 1e-8)).mean()
@@ -3039,6 +3079,75 @@ class StereoSplat(BaseModule):
                             _psnr_2v_m_avg + _mv_psnr_db - _mv_margin_val - _psnr_mv_m_avg)
                         fusion_branch_loss = fusion_branch_loss + _w_mv_margin * _loss_mv_margin
                         set_loss("mv_margin", mode, _loss_mv_margin, _w_mv_margin)
+
+                    # center/last per-view margin hinges (weight_margin_key_views)
+                    _w_key_views = getattr(
+                        self.losses_params.fusion_sup_dict, 'weight_margin_key_views', 0.0)
+                    if _w_key_views > 0 and rgb_gt.shape[1] >= 6:
+                        _err_2v_kv = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
+                        _err_mv_kv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
+
+                        if _w_mv_margin > 0:
+                            _mv_psnr_db_kv = getattr(
+                                self.losses_params.fusion_sup_dict,
+                                'mv_psnr_margin_key_views',
+                                getattr(self.losses_params.fusion_sup_dict,
+                                        'mv_psnr_margin', 0.0))
+                            _mv_margin_val_kv = getattr(
+                                self.losses_params.fusion_sup_dict, 'mv_margin', 0.0)
+                            for _kv_name in _KEY_MARGIN_VIEW_NAMES:
+                                _loss_kv_mv = _key_view_psnr_margin_hinge(
+                                    _err_2v_kv, _err_mv_kv, _kv_name,
+                                    margin_db=_mv_psnr_db_kv,
+                                    slack_db=_mv_margin_val_kv,
+                                    eps=_psnr_eps,
+                                    detach_ref=_margin_detach_ref)
+                                fusion_branch_loss = (
+                                    fusion_branch_loss + _w_key_views * _loss_kv_mv)
+                                set_loss(
+                                    f"mv_margin_{_kv_name}", mode, _loss_kv_mv, _w_key_views)
+
+                        if _w_fus_2v_margin > 0 or _w_fus_mv_margin > 0:
+                            _err_fused_kv = (rgb_gt - _rgb_fused).pow(2).mean(dim=(2, 3, 4))
+
+                        if _w_fus_2v_margin > 0:
+                            _fus_2v_psnr_db_kv = getattr(
+                                self.losses_params.fusion_sup_dict,
+                                'fusion_2v_psnr_margin_key_views',
+                                getattr(self.losses_params.fusion_sup_dict,
+                                        'fusion_2v_psnr_margin', 0.0))
+                            _fus_2v_margin_val_kv = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_2v_margin', 0.0)
+                            for _kv_name in _KEY_MARGIN_VIEW_NAMES:
+                                _loss_kv_f2v = _key_view_psnr_margin_hinge(
+                                    _err_2v_kv, _err_fused_kv, _kv_name,
+                                    margin_db=_fus_2v_psnr_db_kv,
+                                    slack_db=_fus_2v_margin_val_kv,
+                                    eps=_psnr_eps,
+                                    detach_ref=_margin_detach_ref)
+                                fusion_branch_loss = (
+                                    fusion_branch_loss + _w_key_views * _loss_kv_f2v)
+                                set_loss(
+                                    f"fusion_2v_margin_{_kv_name}", mode,
+                                    _loss_kv_f2v, _w_key_views)
+
+                        if _w_fus_mv_margin > 0:
+                            _fus_mv_psnr_db_kv = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_mv_psnr_margin', 0.0)
+                            _fus_mv_margin_val_kv = getattr(
+                                self.losses_params.fusion_sup_dict, 'fusion_mv_margin', 0.0)
+                            for _kv_name in _KEY_MARGIN_VIEW_NAMES:
+                                _loss_kv_fmv = _key_view_psnr_margin_hinge(
+                                    _err_mv_kv, _err_fused_kv, _kv_name,
+                                    margin_db=_fus_mv_psnr_db_kv,
+                                    slack_db=_fus_mv_margin_val_kv,
+                                    eps=_psnr_eps,
+                                    detach_ref=_margin_detach_ref)
+                                fusion_branch_loss = (
+                                    fusion_branch_loss + _w_key_views * _loss_kv_fmv)
+                                set_loss(
+                                    f"fusion_mv_margin_{_kv_name}", mode,
+                                    _loss_kv_fmv, _w_key_views)
 
             # ---- 2-input Stage1 band anchor (view_num==2 only; multiview uses 2v_floor_mv above) ----
             if _use_2v_anchor_only:

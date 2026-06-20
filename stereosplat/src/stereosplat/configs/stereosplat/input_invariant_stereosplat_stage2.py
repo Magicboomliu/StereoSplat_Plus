@@ -5,7 +5,7 @@ _base_ = [
 
 # =============================================================================
 # Stage2 full KITTI360 training (Self-Pseudo + soft fusion stack from demo_full)
-# Schedule: save_freq=3000, val_freq=3000, max_train_steps=100000 (production)
+# Schedule: save_freq=500, val_freq=500, max_train_steps=100000
 # Loss/fusion: aligned with input_invariant_stereosplat_stage2_demo_full.py
 # =============================================================================
 
@@ -19,9 +19,9 @@ validation_vis_progress=True
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 3000
+save_freq = 500
 val_epoch_freq = 0         # 0 = iter-based val_freq
-val_freq = 3000
+val_freq = 500
 max_epochs = 300           # legacy; trainer stops at max_train_steps
 save_epoch_freq = -1
 
@@ -244,21 +244,24 @@ loss_args = dict(
         train_fusion_soft_temperature=50.0,
         train_fusion_tie_logit_mv=4.595,
         train_fusion_detach_rgb=True,
+        margin_detach_ref=True,         # margin hinge: detach ref PSNR (2v/mv) so only tgt gets grad
         val_fusion_mode="soft",         # val aligned with train; set "hard" for deploy check
         weight_conf_pick=0.0,
         conf_pick_lambda=40.0,
         weight_conf_comparative=0.0,
         weight_fusion_2v_margin=1.5,
         fusion_2v_psnr_margin=0.6,
+        fusion_2v_psnr_margin_key_views=0.3,
         fusion_2v_margin=0.0,
         weight_fusion_mv_margin=1.0,
         fusion_mv_psnr_margin=0.2,
         fusion_mv_margin=0.0,
         weight_mv_margin=0.5,
         mv_psnr_margin=0.0,
+        mv_psnr_margin_key_views=0.3,
         mv_margin=0.0,
-        weight_margin_key_views=2.0,
-        weight_2v_floor=1.0,
+        weight_margin_key_views=4.0,
+        weight_2v_floor=2.0,
         weight_2v_ceiling=5.0,
         weight_2v_floor_mv=0.0,
         branch_weight =1.0,
