@@ -4,9 +4,11 @@ _base_ = [
     ]
 
 # =============================================================================
-# Stage2 full KITTI360 training (Self-Pseudo + soft fusion stack from demo_full)
-# Schedule: save_freq=2000, val_freq=2000, max_train_steps=100000
-# Loss/fusion: aligned with input_invariant_stereosplat_stage2_demo_full.py
+# Stage2 — selective key-view joint margin grad (KPI-F targeted)
+# Diff vs input_invariant_stereosplat_stage2.py:
+#   save_freq=20, val_freq=20
+#   margin_detach_ref_key_2v_views=False  (#4-7 vs 2v center/last: joint grad)
+#   weight_margin_key_views=0.015 (was 4.0)
 # =============================================================================
 
 # exp name
@@ -19,9 +21,9 @@ validation_vis_progress=True
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 2000
+save_freq = 20
 val_epoch_freq = 0         # 0 = iter-based val_freq
-val_freq = 2000
+val_freq = 20
 max_epochs = 300           # legacy; trainer stops at max_train_steps
 save_epoch_freq = -1
 
@@ -244,8 +246,8 @@ loss_args = dict(
         train_fusion_soft_temperature=50.0,
         train_fusion_tie_logit_mv=4.595,
         train_fusion_detach_rgb=True,
-        margin_detach_ref=True,         # margin hinge: detach ref PSNR (2v/mv) so only tgt gets grad
-        margin_detach_ref_key_2v_views=True,   # mv/fused vs 2v center/last: also detach ref
+        margin_detach_ref=True,         # mean + fusion_mv key hinges: ref PSNR detached
+        margin_detach_ref_key_2v_views=False,  # #4-7 mv/fused vs 2v center/last: joint grad
         val_fusion_mode="soft",         # val aligned with train; set "hard" for deploy check
         weight_conf_pick=0.0,
         conf_pick_lambda=40.0,
@@ -261,8 +263,8 @@ loss_args = dict(
         mv_psnr_margin=0.0,
         mv_psnr_margin_key_views=0.3,
         mv_margin=0.0,
-        weight_margin_key_views=4.0,
-        weight_2v_floor=1.95,
+        weight_margin_key_views=0.015,  # was 4.0; #4-9 center/last hinges
+        weight_2v_floor=2.0,
         weight_2v_ceiling=5.0,
         weight_2v_floor_mv=0.0,
         branch_weight =1.0,

@@ -156,31 +156,47 @@ CONF_KEY_ALIASES = {
     "Conf_gs_fused": "conf_gs_fused",
 }
 
+INFER_BRANCH_NAMES = ("2v", "mv", "fuse")
+
+# metric.json field order per branch (mean_* = all_view over full V)
+INFER_BRANCH_METRIC_KEYS = (
+    "first_psnr", "first_ssim", "first_abs_rel", "first_sq_rel",
+    "center_psnr", "center_ssim", "center_abs_rel", "center_sq_rel",
+    "last_psnr", "last_ssim", "last_abs_rel", "last_sq_rel",
+    "mean_psnr", "mean_ssim", "mean_abs_rel", "mean_sq_rel",
+)
+
 
 def init_metric_accumulators(eval_mode: str, architecture: str, conf_fusion: bool) -> dict:
+    if eval_mode == "pixel_fusion":
+        return {branch: {} for branch in INFER_BRANCH_NAMES}
     accum: dict[str, dict] = {
         "rgb": {},
         "depth": {},
     }
-    if eval_mode in ("stereosplat_plus", "pixel_fusion"):
+    if eval_mode in ("stereosplat_plus",):
         accum["conf"] = {}
-    if eval_mode == "pixel_fusion" and conf_fusion:
-        accum["conf_fused"] = {}
     if architecture == "separated":
         accum["conf_stage1"] = {}
         accum["conf_stage2"] = {}
-    if eval_mode == "pixel_fusion" and architecture == "whole":
-        accum["conf_2view"] = {}
-        accum["conf_pseudo_multiview"] = {}
-        accum["conf_gs_fused"] = {}
     return accum
 
 
 def accumulate_batch_metrics(accum: dict, evaluation_results_stat: dict, args) -> None:
+    for branch in INFER_BRANCH_NAMES:
+        if branch not in evaluation_results_stat:
+            continue
+        bucket = accum.setdefault(branch, {})
+        for key, val in evaluation_results_stat[branch].items():
+            bucket[key] = bucket.get(key, 0.0) + val
+
+    if getattr(args, "eval_mode", None) == "pixel_fusion":
+        return
+
     for key in evaluation_results_stat.get("RGB", {}):
-        accum["rgb"][key] = accum["rgb"].get(key, 0.0) + evaluation_results_stat["RGB"][key]
+        accum.setdefault("rgb", {})[key] = accum["rgb"].get(key, 0.0) + evaluation_results_stat["RGB"][key]
     for key in evaluation_results_stat.get("Depth", {}):
-        accum["depth"][key] = accum["depth"].get(key, 0.0) + evaluation_results_stat["Depth"][key]
+        accum.setdefault("depth", {})[key] = accum["depth"].get(key, 0.0) + evaluation_results_stat["Depth"][key]
 
     conf_fusion = bool(getattr(args, "conf_pixel_level_fusion", False))
     if "Conf" in evaluation_results_stat:
@@ -205,6 +221,34 @@ def accumulate_batch_metrics(accum: dict, evaluation_results_stat: dict, args) -
             accum[bucket][key] = accum[bucket].get(key, 0.0) + val
 
 
+def payload_from_metric_accumulators(accum: dict, batch_count: int) -> dict:
+    return {"accum": accum, "batch_count": batch_count}
+
+
+def merge_inference_metric_payloads(payloads: list[dict]) -> dict:
+    """Merge per-rank metric sums (same math as single-GPU ``finalize_metrics``)."""
+    if not payloads:
+        raise RuntimeError("No validation payloads to merge.")
+
+    merged: dict[str, dict[str, float]] | None = None
+    total_batches = 0
+    for payload in payloads:
+        total_batches += int(payload.get("batch_count", 0))
+        src = payload["accum"]
+        if merged is None:
+            merged = {sec: dict(vals) for sec, vals in src.items()}
+            continue
+        for section, values in src.items():
+            bucket = merged.setdefault(section, {})
+            for key, val in values.items():
+                bucket[key] = bucket.get(key, 0.0) + val
+
+    if total_batches == 0:
+        raise RuntimeError("Validation dataloader is empty on all ranks.")
+    assert merged is not None
+    return finalize_metrics(merged, total_batches)
+
+
 def finalize_metrics(accum: dict, batch_idx: int) -> dict:
     if batch_idx == 0:
         raise RuntimeError("Validation dataloader is empty; cannot compute metrics.")
@@ -212,12 +256,19 @@ def finalize_metrics(accum: dict, batch_idx: int) -> dict:
     for section, values in accum.items():
         if not values:
             continue
-        results[section] = {k: v / batch_idx for k, v in values.items()}
+        if section in INFER_BRANCH_NAMES:
+            averaged = {k: values[k] / batch_idx for k in INFER_BRANCH_METRIC_KEYS if k in values}
+            results[section] = averaged
+        else:
+            results[section] = {k: v / batch_idx for k, v in values.items()}
     return results
 
 
 def wandb_logs_from_metrics(metrics: dict, args) -> dict:
     logs = {}
+    for branch in INFER_BRANCH_NAMES:
+        for k, v in metrics.get(branch, {}).items():
+            logs[f"val/{branch}/{k}"] = float(v)
     for k, v in metrics.get("rgb", {}).items():
         logs[f"val/rgb/{k}"] = float(v)
     for k, v in metrics.get("depth", {}).items():

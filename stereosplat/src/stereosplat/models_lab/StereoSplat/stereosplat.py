@@ -2843,6 +2843,8 @@ class StereoSplat(BaseModule):
                 self.losses_params.fusion_sup_dict, 'weight_fusion_mv_margin', 0.0)
             _w_mv_margin = getattr(
                 self.losses_params.fusion_sup_dict, 'weight_mv_margin', 0.0)
+            _w_key_views = getattr(
+                self.losses_params.fusion_sup_dict, 'weight_margin_key_views', 0.0)
             _soft_T = getattr(
                 self.losses_params.fusion_sup_dict, 'train_fusion_soft_temperature', 0.0)
             _tie_logit = getattr(
@@ -2851,6 +2853,11 @@ class StereoSplat(BaseModule):
                 self.losses_params.fusion_sup_dict, 'train_fusion_detach_rgb', True)
             _margin_detach_ref = getattr(
                 self.losses_params.fusion_sup_dict, 'margin_detach_ref', True)
+            # Key-view hinges vs 2v (mv_margin_*, fusion_2v_margin_* on center/last).
+            # Separate from margin_detach_ref so mean / fusion_mv key margins stay detached.
+            _margin_detach_ref_key_2v = getattr(
+                self.losses_params.fusion_sup_dict,
+                'margin_detach_ref_key_2v_views', True)
             _w_conf_pick = getattr(
                 self.losses_params.fusion_sup_dict, 'weight_conf_pick', 0.0)
             _w_conf_2v_abs = getattr(
@@ -2874,8 +2881,13 @@ class StereoSplat(BaseModule):
                 self.eval()
                 _uc_bak = self.use_checkpoint
                 _vuc_bak = self.volume_gs.use_checkpoint
+                _key_2v_joint = (
+                    not _margin_detach_ref_key_2v
+                    and _w_key_views > 0
+                    and (_w_mv_margin > 0 or _w_fus_2v_margin > 0))
                 _needs_grad_2v = (
                     _use_2v_anchor_mv or _run_conf_pick or _run_conf_2v_abs
+                    or _key_2v_joint
                     or (_run_fusion_train and _soft_T > 0 and _detach_rgb
                         and (_w_fus_2v_margin > 0 or _w_fus_mv_margin > 0
                              or _w_fused > 0 or _w_fused_percep > 0)))
@@ -3081,8 +3093,6 @@ class StereoSplat(BaseModule):
                         set_loss("mv_margin", mode, _loss_mv_margin, _w_mv_margin)
 
                     # center/last per-view margin hinges (weight_margin_key_views)
-                    _w_key_views = getattr(
-                        self.losses_params.fusion_sup_dict, 'weight_margin_key_views', 0.0)
                     if _w_key_views > 0 and rgb_gt.shape[1] >= 6:
                         _err_2v_kv = (rgb_gt - _rgb_2v).pow(2).mean(dim=(2, 3, 4))
                         _err_mv_kv = (rgb_gt - rendered_color_fuse).pow(2).mean(dim=(2, 3, 4))
@@ -3101,7 +3111,7 @@ class StereoSplat(BaseModule):
                                     margin_db=_mv_psnr_db_kv,
                                     slack_db=_mv_margin_val_kv,
                                     eps=_psnr_eps,
-                                    detach_ref=_margin_detach_ref)
+                                    detach_ref=_margin_detach_ref_key_2v)
                                 fusion_branch_loss = (
                                     fusion_branch_loss + _w_key_views * _loss_kv_mv)
                                 set_loss(
@@ -3124,7 +3134,7 @@ class StereoSplat(BaseModule):
                                     margin_db=_fus_2v_psnr_db_kv,
                                     slack_db=_fus_2v_margin_val_kv,
                                     eps=_psnr_eps,
-                                    detach_ref=_margin_detach_ref)
+                                    detach_ref=_margin_detach_ref_key_2v)
                                 fusion_branch_loss = (
                                     fusion_branch_loss + _w_key_views * _loss_kv_f2v)
                                 set_loss(
@@ -10969,9 +10979,14 @@ class StereoSplat(BaseModule):
         rendered_color_fuse = torch.clamp(rendered_color_fuse,min=0,max=1.0)
         rendered_depth_fuse = torch.clamp(rendered_depth_fuse,min=0,max=150)
         rendered_conf_2view_cached = conf_from_render_pkg(render_pkg_fuse)
-        
-        output_rgb = output_batch_dict['output_imgs'] # This is the GT Images
-        sparse_depth_gt = output_batch_dict['output_sparse_depth']  
+
+        rendered_color_2view_branch = rendered_color_fuse.clone()
+        rendered_depth_2view_branch = rendered_depth_fuse.clone()
+        gt_rgb_eval = output_batch_dict['output_imgs']
+        gt_depth_eval = output_batch_dict['output_sparse_depth']
+
+        output_rgb = gt_rgb_eval
+        sparse_depth_gt = gt_depth_eval
 
 
         '''Do the visualization and the evaluation here'''
@@ -11281,25 +11296,21 @@ class StereoSplat(BaseModule):
                 render_pkg_gs_fused['depth'].squeeze(2), min=0, max=150)
             rendered_conf_gs_fused = conf_from_render_pkg(render_pkg_gs_fused)
 
-        if not gs_conf_fusion:
-            render_pkg_pseudo_multiview = self.renderer.render(
-                gaussians=gaussians_all_pseudo_multiview,
-                c2w=render_c2w,
-                fovx=render_fovxs,
-                fovy=render_fovys,
-                rays_o=None,
-                rays_d=None
-            )
-
-            rendered_color_pseudo_multiview = render_pkg_pseudo_multiview['image']
-            rendered_depth_pseudo_multiview = render_pkg_pseudo_multiview['depth'].squeeze(2)
-            rendered_conf_pseudo_multiview = conf_from_render_pkg(render_pkg_pseudo_multiview)
-            rendered_color_pseudo_multiview = torch.clamp(
-                rendered_color_pseudo_multiview, min=0, max=1.0
-            )
-            rendered_depth_pseudo_multiview = torch.clamp(
-                rendered_depth_pseudo_multiview, min=0, max=150
-            )
+        render_pkg_pseudo_multiview = self.renderer.render(
+            gaussians=gaussians_all_pseudo_multiview,
+            c2w=render_c2w,
+            fovx=render_fovxs,
+            fovy=render_fovys,
+            rays_o=None,
+            rays_d=None,
+        )
+        rendered_color_pseudo_multiview = torch.clamp(
+            render_pkg_pseudo_multiview['image'], min=0, max=1.0
+        )
+        rendered_depth_pseudo_multiview = torch.clamp(
+            render_pkg_pseudo_multiview['depth'].squeeze(2), min=0, max=150
+        )
+        rendered_conf_pseudo_multiview = conf_from_render_pkg(render_pkg_pseudo_multiview)
 
         if gs_conf_fusion and pixel_level_conf_fusion:
             rendered_color_2view_final = rendered_color_fuse
@@ -11348,9 +11359,6 @@ class StereoSplat(BaseModule):
             rendered_depth_fuse = rendered_depth_pseudo_multiview
             rendered_conf_fuse = rendered_conf_pseudo_multiview
 
-        output_rgb = output_batch_dict['output_imgs']
-        sparse_depth_gt = output_batch_dict['output_sparse_depth']
-
         rendered_images_fusion = interleave_left_right(rendered_color_fuse)
         rendered_depth_fusion = interleave_left_right_depth(rendered_depth_fuse)
         rendered_conf_fusion = None
@@ -11368,142 +11376,46 @@ class StereoSplat(BaseModule):
         if rendered_conf_gs_fused is not None:
             rendered_conf_gs_fused_fusion = interleave_left_right_depth(
                 rendered_conf_gs_fused)
-        sparse_depth_gt = interleave_left_right_depth(sparse_depth_gt)
-        rendered_images_gt = interleave_left_right(output_rgb)
-        
-        
+        sparse_depth_gt_vis = interleave_left_right_depth(gt_depth_eval)
+        rendered_images_gt = interleave_left_right(gt_rgb_eval)
 
-        # first view
         rendered_images_first_stereo = rendered_images_fusion[:,-2:,:,:,:]
         gt_images_first_stereo = rendered_images_gt[:,-2:,:,:,:]
         renderded_depth_first_stereo = rendered_depth_fusion[:,-2:,:,:]
-        gt_depth_first_stereo = sparse_depth_gt[:,-2:,:,:]
-        
-        # last view
+        gt_depth_first_stereo = sparse_depth_gt_vis[:,-2:,:,:]
+
         rendered_images_last_stereo = rendered_images_fusion[:,-4:-2,:,:,:]
         gt_images_last_stereo = rendered_images_gt[:,-4:-2,:,:,:]
         renderded_depth_last_stereo = rendered_depth_fusion[:,-4:-2,:,:]
-        gt_depth_last_stereo = sparse_depth_gt[:,-4:-2,:,:]
-        
-        # center view
+        gt_depth_last_stereo = sparse_depth_gt_vis[:,-4:-2,:,:]
+
         rendered_images_center_stereo = rendered_images_fusion[:,-6:-4,:,:,:]
         gt_images_center_stereo = rendered_images_gt[:,-6:-4,:,:,:]
         renderded_depth_center_stereo = rendered_depth_fusion[:,-6:-4,:,:]
-        gt_depth_center_stereo = sparse_depth_gt[:,-6:-4,:,:]
-        
+        gt_depth_center_stereo = sparse_depth_gt_vis[:,-6:-4,:,:]
 
-        
-        # all view
-        rendered_images_all_stereo = rendered_images_fusion
-        gt_images_all_stereo =  rendered_images_gt
-        renderded_depth_all_stereo = rendered_depth_fusion
-        gt_depth_all_stereo = sparse_depth_gt
-        
-        
-        ''' The Evaluation of the RGB Metrics '''
-        first_rgb_eval_info = metrics_mean(pred=rendered_images_first_stereo,
-                                           gt=gt_images_first_stereo)
-        first_rgb_lpips = first_rgb_eval_info['lpips']
-        first_rgb_ssim = first_rgb_eval_info['ssim']
-        first_rgb_psnr = first_rgb_eval_info['psnr']
-        
-        
-        center_rgb_eval_info = metrics_mean(pred=rendered_images_center_stereo,
-                                           gt=gt_images_center_stereo)
-        center_rgb_lpips = center_rgb_eval_info['lpips']
-        center_rgb_ssim = center_rgb_eval_info['ssim']
-        center_rgb_psnr = center_rgb_eval_info['psnr']
-        
-        last_rgb_eval_info = metrics_mean(pred=rendered_images_last_stereo,
-                                           gt=gt_images_last_stereo)
-        last_rgb_lpips = last_rgb_eval_info['lpips']
-        last_rgb_ssim = last_rgb_eval_info['ssim']
-        last_rgb_psnr = last_rgb_eval_info['psnr']
-        
-        
-        all_rgb_eval_info = metrics_mean(pred=rendered_images_all_stereo,
-                                           gt=gt_images_all_stereo)
-        all_rgb_lpips = all_rgb_eval_info['lpips']
-        all_rgb_ssim = all_rgb_eval_info['ssim']
-        all_rgb_psnr = all_rgb_eval_info['psnr']
+        gt_rgb_eval = output_batch_dict['output_imgs']
+        gt_depth_eval = output_batch_dict['output_sparse_depth']
 
-
-        
-     
-        ''' The Evaluation of the Depth Metrics '''
-        first_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
-                                                        pred=renderded_depth_first_stereo,
-                                                         gt=gt_depth_first_stereo)
-        
-        frist_view_abs_rel = first_view_depth_eval_info['AbsRel']
-        frist_view_sq_rel = first_view_depth_eval_info['SqRel']
-        frist_view_rmse_log = first_view_depth_eval_info['RMSE_log']
-        
-        center_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
-                                                        pred=renderded_depth_center_stereo,
-                                                         gt=gt_depth_center_stereo)
-        center_view_abs_rel = center_view_depth_eval_info['AbsRel']
-        center_view_sq_rel = center_view_depth_eval_info['SqRel']
-        center_view_rmse_log = center_view_depth_eval_info['RMSE_log']
-        
-        last_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
-                                                        pred=renderded_depth_last_stereo,
-                                                         gt=gt_depth_last_stereo)
-        last_view_abs_rel = last_view_depth_eval_info['AbsRel']
-        last_view_sq_rel = last_view_depth_eval_info['SqRel']
-        last_view_rmse_log = last_view_depth_eval_info['RMSE_log']
-        
-        all_view_depth_eval_info = depth_metrics_absrel_sqrel_rmse_log(
-                                                        pred=renderded_depth_all_stereo,
-                                                         gt=gt_depth_all_stereo)
-        all_view_abs_rel = all_view_depth_eval_info['AbsRel']
-        all_view_sq_rel = all_view_depth_eval_info['SqRel']
-        all_view_rmse_log = all_view_depth_eval_info['RMSE_log']
-        
-        
-        
-        evaluation_rgb_results_stat = {
-            "first_view_psnr_average": first_rgb_psnr.data.item(),
-            "first_view_ssim_average": first_rgb_ssim.data.item(),
-            "first_view_lpips_average": first_rgb_lpips.data.item(),
-            
-            "center_view_psnr_average": center_rgb_psnr.data.item(),
-            "center_view_ssim_average": center_rgb_ssim.data.item(),
-            "center_view_lpips_average": center_rgb_lpips.data.item(),
-            
-            "last_view_psnr_average": last_rgb_psnr.data.item(),
-            "last_view_ssim_average": last_rgb_ssim.data.item(),
-            "last_view_lpips_average": last_rgb_lpips.data.item(),
-            
-            "all_view_psnr_average": all_rgb_psnr.data.item(),
-            "all_view_ssim_average": all_rgb_ssim.data.item(),
-            "all_view_lpips_average": all_rgb_lpips.data.item()
-        }
-        
-        
-        evaluation_depth_results_stat = {
-            
-            "first_view_Abs_Rel_average": frist_view_abs_rel.data.item(),
-            "frist_view_Sq_Rel_average": frist_view_sq_rel.data.item(),
-            "first_view_RMSE_log_average": frist_view_rmse_log.data.item(),
-            
-            "center_view_Abs_Rel_average": center_view_abs_rel.data.item(),
-            "center_view_Sq_Rel_average": center_view_sq_rel.data.item(),
-            "center_view_RMSE_log_average": center_view_rmse_log.data.item(),
-            
-            
-            "last_view_Abs_Rel_average": last_view_abs_rel.data.item(),
-            "last_view_Sq_Rel_average": last_view_sq_rel.data.item(),
-            "last_view_RMSE_log_average": last_view_rmse_log.data.item(),
-            
-            "all_view_Abs_Rel_average": all_view_abs_rel.data.item(),
-            "all_view_Sq_Rel_average": all_view_sq_rel.data.item(),
-            "all_view_RMSE_log_average": all_view_rmse_log.data.item(),            
-        }
-        
         evaluation_results_stat = {
-            "RGB":evaluation_rgb_results_stat,
-            "Depth":evaluation_depth_results_stat,
+            "2v": keyframe_branch_infer_metrics(
+                rendered_color_2view_branch,
+                rendered_depth_2view_branch,
+                gt_rgb_eval,
+                gt_depth_eval,
+            ),
+            "mv": keyframe_branch_infer_metrics(
+                rendered_color_pseudo_multiview,
+                rendered_depth_pseudo_multiview,
+                gt_rgb_eval,
+                gt_depth_eval,
+            ),
+            "fuse": keyframe_branch_infer_metrics(
+                rendered_color_fuse,
+                rendered_depth_fuse,
+                gt_rgb_eval,
+                gt_depth_eval,
+            ),
         }
         if gs_conf_fusion and pixel_level_conf_fusion:
             conf_stats_fused = stereosplat_conf_eval_stats(rendered_conf_fusion)
@@ -14710,6 +14622,70 @@ def lpips_mean(pred: torch.Tensor, gt: torch.Tensor, net: str = "alex") -> torch
 
     d = loss_fn(pred_, gt_)          # [B*V, 1, 1, 1]
     return d.mean()       
+
+@torch.no_grad()
+def keyframe_branch_infer_metrics(
+    pred_rgb: torch.Tensor,
+    pred_depth: torch.Tensor,
+    gt_rgb: torch.Tensor,
+    gt_depth: torch.Tensor,
+) -> dict[str, float]:
+    """Standard inference branch metrics for metric.json.
+
+    Keyframe fields (last 6 interleaved slots, L/R averaged per keyframe):
+      first_*, center_*, last_*
+    Mean fields (all_view — every stereo view V from dataloader, V may be > 6):
+      mean_psnr, mean_ssim, mean_abs_rel, mean_sq_rel
+    """
+    assert pred_rgb.shape == gt_rgb.shape, (
+        f"RGB shape mismatch: pred {pred_rgb.shape} vs gt {gt_rgb.shape}"
+    )
+    assert pred_depth.shape == gt_depth.shape, (
+        f"Depth shape mismatch: pred {pred_depth.shape} vs gt {gt_depth.shape}"
+    )
+    assert pred_rgb.shape[1] == pred_depth.shape[1], (
+        f"V mismatch: rgb V={pred_rgb.shape[1]} depth V={pred_depth.shape[1]}"
+    )
+
+    pred_rgb_i = interleave_left_right(pred_rgb)
+    pred_depth_i = interleave_left_right_depth(pred_depth)
+    gt_rgb_i = interleave_left_right(gt_rgb)
+    gt_depth_i = interleave_left_right_depth(gt_depth)
+
+    v_total = pred_rgb_i.shape[1]
+    if v_total < 6:
+        raise ValueError(
+            f"Need at least 6 interleaved views for keyframe slices, got V={v_total}"
+        )
+
+    all_rgb_m = metrics_mean(pred_rgb_i, gt_rgb_i)
+    all_depth_m = depth_metrics_absrel_sqrel_rmse_log(pred_depth_i, gt_depth_i)
+
+    out: dict[str, float] = {
+        "mean_psnr": float(all_rgb_m["psnr"].data.item()),
+        "mean_ssim": float(all_rgb_m["ssim"].data.item()),
+        "mean_abs_rel": float(all_depth_m["AbsRel"].data.item()),
+        "mean_sq_rel": float(all_depth_m["SqRel"].data.item()),
+    }
+
+    view_slices = {
+        "first": (-2, None),
+        "center": (-6, -4),
+        "last": (-4, -2),
+    }
+    for name, (start, end) in view_slices.items():
+        rgb_pred = pred_rgb_i[:, start:end, :, :, :]
+        rgb_gt = gt_rgb_i[:, start:end, :, :, :]
+        depth_pred = pred_depth_i[:, start:end, :, :]
+        depth_gt = gt_depth_i[:, start:end, :, :]
+        rgb_m = metrics_mean(rgb_pred, rgb_gt)
+        depth_m = depth_metrics_absrel_sqrel_rmse_log(depth_pred, depth_gt)
+        out[f"{name}_psnr"] = float(rgb_m["psnr"].data.item())
+        out[f"{name}_ssim"] = float(rgb_m["ssim"].data.item())
+        out[f"{name}_abs_rel"] = float(depth_m["AbsRel"].data.item())
+        out[f"{name}_sq_rel"] = float(depth_m["SqRel"].data.item())
+    return out
+
 
 @torch.no_grad()
 def metrics_mean(pred: torch.Tensor, gt: torch.Tensor, lpips_net: str = "alex"):

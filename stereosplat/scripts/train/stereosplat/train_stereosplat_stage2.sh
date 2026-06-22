@@ -118,7 +118,7 @@ output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/ste
 # FIRST LAUNCH: set resume_from="" so no accelerate resume happens;
 #               stage_1_model_path provides the initial model weights.
 # RESUME RUN:   set resume_from to checkpoint dir; restores optimizer/scheduler/global_iter.
-resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/checkpoint-2000"
+resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/checkpoint-5500"
 # resume_from=""
 
 # Weights-only init for first launch (ignored on resume since accelerator.load_state

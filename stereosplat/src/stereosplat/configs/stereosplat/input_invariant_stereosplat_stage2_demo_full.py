@@ -244,6 +244,7 @@ loss_args = dict(
         train_fusion_tie_logit_mv=4.595,      # logit(0.99): ties prefer mv like legacy >=
         train_fusion_detach_rgb=True,         # margin/recon grad -> conf only
         margin_detach_ref=True,               # margin hinge: detach ref PSNR (2v/mv); False = joint grad
+        margin_detach_ref_key_2v_views=True,  # mv/fused vs 2v center/last: detach ref when True
         val_fusion_mode="soft",               # val: "soft" (train-aligned) or "hard" (legacy pick)
         weight_conf_pick=0.0,           # off: stuck ~0.69/46% acc; soft fusion+margins drive conf
         conf_pick_lambda=40.0,          # softer pick label (was 75)

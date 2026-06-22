@@ -259,6 +259,15 @@ def main(args=None, defaults: dict | None = None):
             "(and margin rule). Omit to use relative conf comparison only."
         ),
     )
+    parser.add_argument(
+        "--supp-view-nums",
+        type=str,
+        default="all",
+        help=(
+            "Val dataloader supp_view_nums (default all, same as legacy inference). "
+            "Controls how many GT views V are loaded; mean_* averages all V (all_view)."
+        ),
+    )
     parser.add_argument("--output_vis", action="store_true", default=False)
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-entity", type=str, default=None)
@@ -330,6 +339,9 @@ def main(args=None, defaults: dict | None = None):
     )
     dataset_cls = getattr(datasets, dataset_config.dataset_name)
     val_filelist = args.demo_filelist if args.output_vis else args.val_filelist
+    supp_view_nums: int | str = (
+        "all" if args.supp_view_nums == "all" else int(args.supp_view_nums)
+    )
     val_dataset = dataset_cls(
         datapath=dataset_config.datapath,
         train_filelist=dataset_config.train_filelist,
@@ -342,7 +354,7 @@ def main(args=None, defaults: dict | None = None):
         use_center=dataset_config.use_center,
         use_first=dataset_config.use_first,
         use_last=dataset_config.use_last,
-        supp_view_nums="all",
+        supp_view_nums=supp_view_nums,
         depth_info_dict=dataset_config.depth_info_params,
         camera_model=dataset_config.camera_model,
     )
@@ -423,6 +435,17 @@ def main(args=None, defaults: dict | None = None):
             data_dict=results_dict,
             path=os.path.join(args.output_folder, "metric.json"),
         )
+        for branch in ("2v", "mv", "fuse"):
+            sec = results_dict.get(branch)
+            if not sec:
+                continue
+            accelerator.print(
+                f"[eval] {branch}: "
+                f"mean_psnr={sec.get('mean_psnr', float('nan')):.4f} "
+                f"mean_ssim={sec.get('mean_ssim', float('nan')):.4f} "
+                f"mean_abs_rel={sec.get('mean_abs_rel', float('nan')):.4f} "
+                f"mean_sq_rel={sec.get('mean_sq_rel', float('nan')):.4f}"
+            )
     if tracker_enabled and accelerator.is_main_process:
         accelerator.log(wandb_logs_from_metrics(results_dict, args), step=0)
 

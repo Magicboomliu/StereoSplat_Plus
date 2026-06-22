@@ -1,8 +1,8 @@
-"""Multi-GPU Stage2 fusion validation — same logic as training ``fusion_metric.json``.
+"""Multi-GPU Stage2 pixel_fusion inference — same metrics as ``eval/run.py``.
 
-Shards the val dataloader across GPUs, runs training-aligned two-pass validation
-per batch, merges per-rank PSNR lists on the main process, and writes
-``fusion_metric.json`` (identical schema to training validation).
+Shards the val dataloader across GPUs, runs ``infer_pixel_fusion_pose_injection_single_model``
+per batch (via ``run_batch_inference``), merges per-rank metric sums, and writes
+``metric.json`` with ``2v`` / ``mv`` / ``fuse`` sections (16 metrics per branch; ``mean_*`` = all_view).
 
 Launch:
   accelerate launch --config_file accelerate_configs/inference/multi_gpu.yaml \\
@@ -42,15 +42,17 @@ from eval.common import (  # noqa: E402
     load_state_dict_any,
     setup_import_paths,
 )
+from eval.routes import (  # noqa: E402
+    accumulate_batch_metrics,
+    init_metric_accumulators,
+    merge_inference_metric_payloads,
+    payload_from_metric_accumulators,
+    requires_separated_stage1,
+    run_batch_inference,
+)
 
 setup_import_paths()
 
-from eval.fusion_validation import (  # noqa: E402
-    accumulate_batch_fusion_metrics,
-    merge_fusion_metric_payloads,
-    new_fusion_metric_accumulators,
-    payload_from_accumulators,
-)
 from stereosplat.models_lab.StereoSplat.stereosplat import StereoSplat  # noqa: E402
 from difix3d import DifixRef  # noqa: E402
 from tools.metrics import saved_into_json  # noqa: E402
@@ -84,7 +86,7 @@ def load_frozen_stage1(accelerator, cfg, stage1_path: str) -> StereoSplat:
     return frozen
 
 
-def maybe_load_difix(accelerator, args) -> DifixRef | None:
+def maybe_load_difix(args) -> DifixRef | None:
     if not args.pretrained_diffix_model_path:
         return None
     if not os.path.exists(args.pretrained_diffix_model_path):
@@ -98,7 +100,6 @@ def maybe_load_difix(accelerator, args) -> DifixRef | None:
         mv_unet=args.use_ref,
     )
     net.set_eval()
-    accelerator.print(f"[Difix3D] loaded from {args.pretrained_diffix_model_path}")
     return net
 
 
@@ -110,32 +111,100 @@ def gather_validation_payloads(accelerator, local_payload: dict) -> list[dict]:
     return [p for p in gathered if p is not None]
 
 
+def validate_args(args) -> None:
+    if args.architecture == "separated" and requires_separated_stage1(
+        args.eval_mode, args.architecture
+    ):
+        if not args.stage_1_model_path:
+            raise ValueError(
+                "architecture=separated requires --stage_1_model_path for frozen Stage1."
+            )
+    if args.eval_mode == "pixel_fusion" and args.architecture == "whole":
+        if not args.pretrained_diffix_model_path:
+            raise ValueError(
+                "pixel_fusion + whole requires --pretrained_diffix_model_path."
+            )
+    if args.conf_fusion_margin is not None and not args.conf_pixel_level_fusion:
+        raise ValueError("--conf_fusion_margin requires --conf_pixel_level_fusion.")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Multi-GPU Stage2 fusion validation (training-aligned)"
+        description="Multi-GPU Stage2 pixel_fusion inference (metric.json, same as run.py)"
     )
     parser.add_argument("--config_path", required=True)
     parser.add_argument("--output_folder", type=str, required=True)
     parser.add_argument("--pretrained_model_path", type=str, required=True)
     parser.add_argument("--pretrained_diffix_model_path", type=str, required=True)
     parser.add_argument("--val_filelist", type=str, default="")
+    parser.add_argument(
+        "--eval_mode",
+        choices=["stereosplat", "stereosplat_plus", "pixel_fusion"],
+        default="pixel_fusion",
+    )
+    parser.add_argument(
+        "--architecture",
+        choices=["whole", "separated"],
+        default="whole",
+    )
     parser.add_argument("--timestep", type=int, default=199)
     parser.add_argument("--prompt", type=str, default="remove degradation")
     parser.add_argument("--use_ref", action="store_true", default=False)
+    parser.add_argument("--use_diffix3d", action="store_true", default=True)
     parser.add_argument("--self_pseudo", action="store_true", default=False)
+    parser.add_argument("--stage_1_model_path", type=str, default=None)
+    parser.add_argument("--pseudo_ratio", type=str, nargs="*", default=[])
     parser.add_argument(
-        "--stage_1_model_path",
+        "--supp-view-nums",
         type=str,
-        default=None,
-        help="Frozen Stage1 for non-self-pseudo validation (ignored when --self_pseudo).",
+        default="all",
+        help="Val dataloader supp_view_nums (default all, same as run.py inference).",
     )
+    parser.add_argument(
+        "--conf_pixel_level_fusion",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument("--conf_fusion_margin", type=float, default=None)
+    parser.add_argument(
+        "--fusion_mode",
+        type=str,
+        default="soft",
+        choices=["soft", "legacy", "per_view_adaptive"],
+    )
+    parser.add_argument("--fusion_first_margin", type=float, default=999.0)
+    parser.add_argument("--fusion_center_margin", type=float, default=0.0)
+    parser.add_argument("--fusion_last_margin", type=float, default=0.0)
+    parser.add_argument(
+        "--fusion_calibration",
+        type=str,
+        default="none",
+        choices=["none", "zscore", "minmax"],
+    )
+    parser.add_argument("--fusion_temperature", type=float, default=None)
+    parser.add_argument("--gs_conf_fusion", action="store_true", default=False)
+    parser.add_argument("--gs_fusion_voxel_size", type=float, default=0.1)
+    parser.add_argument("--gs_fusion_margin", type=float, default=0.05)
+    parser.add_argument(
+        "--gs_fusion_conf_agg",
+        choices=["mean", "max"],
+        default="mean",
+    )
+    parser.add_argument("--gs_fusion_base_conf_thresh", type=float, default=None)
     parser.add_argument(
         "--output_vis",
         action="store_true",
         default=False,
-        help="Save per-batch visuals (main process only; not recommended multi-GPU).",
+        help="Save per-batch visuals (main process only; single GPU recommended).",
     )
     args = parser.parse_args()
+
+    args.pseudo_ratio = [float(x) for x in args.pseudo_ratio]
+    if not args.pseudo_ratio and args.eval_mode in ("stereosplat_plus", "pixel_fusion"):
+        args.pseudo_ratio = [0.5, 1.0]
+    args.use_gt_view = False
+    args.output_folder = args.output_folder
+    validate_args(args)
 
     if args.output_vis and int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("--output_vis is not supported with multiple processes.")
@@ -160,10 +229,10 @@ def main():
         set_seed(cfg.seed + accelerator.local_process_index)
 
     dataset_config = cfg.dataset_params
-    if args.val_filelist:
-        val_filelist = args.val_filelist
-    else:
-        val_filelist = dataset_config.val_filelist
+    val_filelist = args.val_filelist or dataset_config.val_filelist
+    supp_view_nums: int | str = (
+        "all" if args.supp_view_nums == "all" else int(args.supp_view_nums)
+    )
 
     if accelerator.is_main_process:
         os.makedirs(args.output_folder, exist_ok=True)
@@ -173,8 +242,6 @@ def main():
         dataset_module_for_world_center(getattr(cfg, "world_center", None))
     )
     dataset_cls = getattr(datasets, dataset_config.dataset_name)
-
-    # Match trainer val dataloader (supp_view_nums=3, not "all").
     val_dataset = dataset_cls(
         datapath=dataset_config.datapath,
         train_filelist=dataset_config.train_filelist,
@@ -187,7 +254,7 @@ def main():
         use_center=dataset_config.use_center,
         use_first=dataset_config.use_first,
         use_last=dataset_config.use_last,
-        supp_view_nums=3,
+        supp_view_nums=supp_view_nums,
         depth_info_dict=dataset_config.depth_info_params,
         camera_model=dataset_config.camera_model,
     )
@@ -200,14 +267,20 @@ def main():
     )
 
     frozen_stage_1_model = None
-    if not args.self_pseudo:
+    if args.architecture == "separated" and requires_separated_stage1(
+        args.eval_mode, args.architecture
+    ):
         if not args.stage_1_model_path:
-            raise ValueError("--stage_1_model_path is required without --self_pseudo.")
+            raise ValueError("--stage_1_model_path is required for architecture=separated.")
         frozen_stage_1_model = load_frozen_stage1(
             accelerator, cfg, args.stage_1_model_path
         )
 
-    pretrained_diffix_model = maybe_load_difix(accelerator, args)
+    pretrained_diffix_model = maybe_load_difix(args)
+    if pretrained_diffix_model is not None:
+        accelerator.print(
+            f"[Difix3D] loaded from {args.pretrained_diffix_model_path}"
+        )
 
     my_model = build_model(cfg)
     my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
@@ -233,58 +306,57 @@ def main():
     if pretrained_diffix_model is not None:
         pretrained_diffix_model.to(accelerator.device)
 
-    acc_2view, acc_mv, acc_fus = new_fusion_metric_accumulators()
+    accum = init_metric_accumulators(
+        args.eval_mode, args.architecture, args.conf_pixel_level_fusion
+    )
     batch_count = 0
 
     my_model.eval()
     with torch.no_grad():
         iterator = val_dataloader
         if accelerator.is_main_process:
-            iterator = tqdm(val_dataloader, desc="[Val MultiGPU]")
+            iterator = tqdm(val_dataloader, desc="[Infer MultiGPU]")
 
         for batch in iterator:
-            val_batch_save_dir = ""
-            if args.output_vis and accelerator.is_main_process:
-                val_batch_save_dir = osp.join(
-                    args.output_folder, f"batch-{batch_count}"
-                )
-                os.makedirs(val_batch_save_dir, exist_ok=True)
-
-            accumulate_batch_fusion_metrics(
-                acc_2view,
-                acc_mv,
-                acc_fus,
+            bin_token_list = batch["bin_token"]
+            evaluation_results_stat = run_batch_inference(
                 my_model,
                 batch,
+                args,
                 cfg,
-                frozen_stage_1_model=frozen_stage_1_model,
+                bin_token_list,
+                eval_mode=args.eval_mode,
+                architecture=args.architecture,
                 pretrained_diffix_model=pretrained_diffix_model,
-                self_pseudo=args.self_pseudo,
-                val_batch_save_dir=val_batch_save_dir,
-                save_visuals=args.output_vis,
+                frozen_stage_1_model=frozen_stage_1_model,
             )
+            accumulate_batch_metrics(accum, evaluation_results_stat, args)
             batch_count += 1
 
     accelerator.wait_for_everyone()
 
-    local_payload = payload_from_accumulators(
-        acc_2view, acc_mv, acc_fus, batch_count
-    )
+    local_payload = payload_from_metric_accumulators(accum, batch_count)
     gathered = gather_validation_payloads(accelerator, local_payload)
 
     if accelerator.is_main_process:
         for i, payload in enumerate(gathered):
             print(
-                f"[Val MultiGPU] rank {i}: {payload['batch_count']} batches"
+                f"[Infer MultiGPU] rank {i}: {payload['batch_count']} batches"
             )
-        fusion_metric = merge_fusion_metric_payloads(gathered)
-        out_path = osp.join(args.output_folder, "fusion_metric.json")
-        saved_into_json(data_dict=fusion_metric, path=out_path)
-        print(f"[Val MultiGPU] saved fusion_metric -> {out_path}")
-        for sec, data in fusion_metric.items():
+        results_dict = merge_inference_metric_payloads(gathered)
+        out_path = osp.join(args.output_folder, "metric.json")
+        saved_into_json(data_dict=results_dict, path=out_path)
+        print(f"[Infer MultiGPU] saved metric.json -> {out_path}")
+        for branch in ("2v", "mv", "fuse"):
+            sec = results_dict.get(branch)
+            if not sec:
+                continue
             print(
-                f"  {sec}: mean={data['psnr_mean']:.4f} "
-                f"center={data['psnr_center']:.4f} last={data['psnr_last']:.4f}"
+                f"  {branch}: "
+                f"mean_psnr={sec.get('mean_psnr', float('nan')):.4f} "
+                f"mean_ssim={sec.get('mean_ssim', float('nan')):.4f} "
+                f"mean_abs_rel={sec.get('mean_abs_rel', float('nan')):.4f} "
+                f"mean_sq_rel={sec.get('mean_sq_rel', float('nan')):.4f}"
             )
 
     accelerator.wait_for_everyone()
