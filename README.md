@@ -4,22 +4,6 @@ Feed-forward 3D Gaussian Splatting for autonomous driving scenes (KITTI-360).
 
 This repository is the **confidence-enabled StereoSplat+** release: **15D Gaussians** (14 geometry/appearance + 1 confidence) with a custom rasterizer. Training and evaluation are built around the conf model end-to-end.
 
----
-
-## Components
-
-| Component | Description |
-|-----------|-------------|
-| **StereoSplat (conf)** | Stage 1: all GT views + confidence supervision |
-| **StereoSplat+ (Stage 2)** | Self-pseudo training with optional Difix3D enhancement |
-| **StereoSplat+ inference** | `stereosplat_plus`: pose injection + `pseudo_ratio` |
-| **Pixel-level fusion** | `pixel_fusion`: per-pixel conf fusion of two renders (optional `--conf_fusion_margin`) |
-| **GS voxel fusion** | `--gs_conf_fusion`: fuse G_base and G_plus in 3D voxels, then render once |
-| **GS + pixel** | `--gs_conf_fusion` + `--conf_pixel_level_fusion`: GS fusion then pixel fusion |
-| **Oracle upper bound** | `--use_gt_view`: GT pixel-wise pick between G_base / G_plus (ablation) |
-| **Difix3D** | Reference-guided pseudo-view refinement (`difix3d/` standalone Pixi sub-project) |
-
----
 
 ## Quick Start
 
