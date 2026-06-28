@@ -13,6 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 
+def _resolve_model(model) -> Any:
+    """Unwrap DDP / Accelerate wrapper so custom infer_* methods are reachable."""
+    return model.module if hasattr(model, "module") else model
+
+
 def requires_separated_stage1(eval_mode: str, architecture: str) -> bool:
     return architecture == "separated" and eval_mode in ("stereosplat_plus", "pixel_fusion")
 
@@ -33,6 +38,8 @@ def run_batch_inference(
     pretrained_diffix_model=None,
     frozen_stage_1_model=None,
 ) -> dict[str, Any]:
+    model = _resolve_model(model)
+
     if args.use_gt_view:
         return model.infer_oracle_upper_bound_ablation(
             batch,

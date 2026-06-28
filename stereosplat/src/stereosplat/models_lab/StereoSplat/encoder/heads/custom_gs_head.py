@@ -75,12 +75,13 @@ class Custom_Gaussain_Head(nn.Module):
                  monodepth_vit_type,
                  upsample_factor,
                  num_scales,
-                 gaussian_regressor_channels
-                 
+                 gaussian_regressor_channels,
+                 use_split_conf_head=False,
                  ):
         super().__init__()
         
         self.num_scales = num_scales
+        self.use_split_conf_head = use_split_conf_head
         
         self.monodepth_vit_type = monodepth_vit_type
         self.upsample_factor = upsample_factor
@@ -132,7 +133,22 @@ class Custom_Gaussain_Head(nn.Module):
             
         )
         
-        self.gaussian_head = nn.Sequential(
+        if self.use_split_conf_head:
+            # Shared 128->15 hidden (same as unified gaussian_head layer 0+GELU).
+            # Split only the second conv so migrated unified weights are bit-exact.
+            self.shared_hidden = nn.Sequential(
+                nn.Conv2d(128, self.num_gaussian_parameters,
+                          3, 1, 1, padding_mode='replicate'),
+                nn.GELU(),
+            )
+            self.rgb_geom_head = nn.Conv2d(
+                self.num_gaussian_parameters, self.num_gaussian_parameters - 1,
+                3, 1, 1, padding_mode='replicate')
+            self.conf_head = nn.Conv2d(
+                self.num_gaussian_parameters, 1,
+                3, 1, 1, padding_mode='replicate')
+        else:
+            self.gaussian_head = nn.Sequential(
                 nn.Conv2d(128, self.num_gaussian_parameters,
                           3, 1, 1, padding_mode='replicate'),
                 nn.GELU(),
@@ -202,7 +218,13 @@ class Custom_Gaussain_Head(nn.Module):
         
         features = self.gaussain_aggregator(features)
         
-        gaussians = self.gaussian_head(features)  # [BV, C, H, W]
+        if self.use_split_conf_head:
+            hidden = self.shared_hidden(features)
+            rgb_geom = self.rgb_geom_head(hidden)
+            conf_raw = self.conf_head(hidden)
+            gaussians = torch.cat([rgb_geom, conf_raw], dim=1)
+        else:
+            gaussians = self.gaussian_head(features)  # [BV, C, H, W]
         
         
         depths = depth 

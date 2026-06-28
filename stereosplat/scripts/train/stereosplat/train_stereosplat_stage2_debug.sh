@@ -7,7 +7,8 @@ if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 # Config: input_invariant_stereosplat_stage2_no_detach.py
 #   margin_detach_ref=True  (mean + fusion_mv key margins: ref detached)
 #   margin_detach_ref_key_2v_views=False  (#4-7: mv/fused vs 2v center/last joint grad)
-#   weight_margin_key_views=0.015, save_freq=20, val_freq=20
+#   weight_margin_key_views=0.005, weight_fusion_mv_margin=1.5, fusion_mv_psnr_margin=0.3
+#   save_freq=10, val_freq=10, max_train_steps=10021 (resume@10000 → +21 iters)
 #
 # Data (debug subset, same as stage2_self_pseudo_debug):
 #   train/val/test → val.txt / val_tiny.txt / val_tiny.txt
@@ -32,7 +33,7 @@ output_dir="/data1/zliu/IROS26/Compared_With_Others_Pixi/train_visualization/ste
 
 # ---- Resume: default best1 (detach run) checkpoint-5500 ----
 PREV_DEBUG_DIR="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug"
-resume_from="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_no_detach_debug/checkpoint-5550"
+resume_from="/data1/zliu/IROS26/camera_ready_models/candidates/checkpoint-10000"
 # Continue no_detach run: resume_from="latest"
 # Train from Stage1 only: resume_from=""
 
@@ -69,7 +70,8 @@ export TRANSFORMERS_OFFLINE=1
 echo "[Launch] config=${configs_path}"
 echo "[Launch] work_dir=${work_dir}"
 echo "[Launch] resume_from=${resume_from:-<none>}"
-echo "[Launch] margin_detach_ref_key_2v_views=False, weight_margin_key_views=0.015, save_freq=20, val_freq=20"
+echo "[Launch] save_freq=10, val_freq=10, max_train_steps=10021 (short debug)"
+echo "[Launch] margin_detach_ref_key_2v_views=False, weight_margin_key_views=0.005, weight_fusion_mv_margin=1.5, fusion_mv_psnr_margin=0.3"
 
 pixi run -e cu118 python -m accelerate.commands.launch --config_file "$accelerate_config_path" \
     trainer/train_kitti360_stereosplat_stage2_with_difix3d.py \

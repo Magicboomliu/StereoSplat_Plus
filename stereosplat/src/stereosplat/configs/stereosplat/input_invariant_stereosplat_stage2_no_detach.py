@@ -6,9 +6,10 @@ _base_ = [
 # =============================================================================
 # Stage2 — selective key-view joint margin grad (KPI-F targeted)
 # Diff vs input_invariant_stereosplat_stage2.py:
-#   save_freq=20, val_freq=20
+#   save_freq=10, val_freq=10, max_train_steps=10021 (short debug from ckpt-10000)
 #   margin_detach_ref_key_2v_views=False  (#4-7 vs 2v center/last: joint grad)
-#   weight_margin_key_views=0.015 (was 4.0)
+#   weight_margin_key_views=0.005 (was 4.0 → 0.015 too strong)
+#   weight_fusion_mv_margin=1.5, fusion_mv_psnr_margin=0.3
 # =============================================================================
 
 # exp name
@@ -21,14 +22,14 @@ validation_vis_progress=True
 lr = 8e-5
 grad_max_norm = 1.0
 print_freq = 1
-save_freq = 20
+save_freq = 10
 val_epoch_freq = 0         # 0 = iter-based val_freq
-val_freq = 20
+val_freq = 10
 max_epochs = 300           # legacy; trainer stops at max_train_steps
 save_epoch_freq = -1
 
 lr_scheduler_type = "constant_with_warmup"
-max_train_steps = 100000
+max_train_steps = 10021
 warmup_steps = 1000
 mixed_precision = "no"
 train_skip_aux_renders = True   # train fuse-only; val still full renders
@@ -256,14 +257,14 @@ loss_args = dict(
         fusion_2v_psnr_margin=0.6,
         fusion_2v_psnr_margin_key_views=0.3,
         fusion_2v_margin=0.0,
-        weight_fusion_mv_margin=1.0,
-        fusion_mv_psnr_margin=0.2,
+        weight_fusion_mv_margin=1.5,
+        fusion_mv_psnr_margin=0.3,
         fusion_mv_margin=0.0,
         weight_mv_margin=0.5,
         mv_psnr_margin=0.0,
         mv_psnr_margin_key_views=0.3,
         mv_margin=0.0,
-        weight_margin_key_views=0.015,  # was 4.0; #4-9 center/last hinges
+        weight_margin_key_views=0.005,  # was 4.0→0.015; #4-9 center/last hinges
         weight_2v_floor=2.0,
         weight_2v_ceiling=5.0,
         weight_2v_floor_mv=0.0,

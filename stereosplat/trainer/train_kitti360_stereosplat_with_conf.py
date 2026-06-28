@@ -20,7 +20,14 @@ torch.autograd.set_detect_anomaly(False)
 import numpy as np
 from torch import Tensor,nn
 
-from tools.metrics import saved_into_json,RGB_Quality_Meter,Depth_Quality_Meter
+from tools.metrics import saved_into_json
+from eval.stage1_validation import (
+    accumulate_batch_stage1_metrics,
+    gather_stage1_validation_payloads,
+    merge_stage1_metric_payloads,
+    new_stage1_metric_accumulators,
+    payload_from_stage1_accumulators,
+)
 # from tools.metrics import RGB_Quality_Meter,Depth_Quality_Meter,saved_into_json
 from mmengine.registry import MODELS
 import random
@@ -31,91 +38,12 @@ from tqdm import tqdm
 import importlib
 import torchvision
 
-def _make_side_dict(factory):
-    return {"left": factory(), "right": factory()}
-
-def _make_rgb_meter():
-    return RGB_Quality_Meter(psnr=0.0, ssim=0.0)
-
-def _make_depth_meter():
-    return Depth_Quality_Meter(mae=0.0, mse=0.0)
-
-def _make_stage_meters():
-    # output rgb/depth for center/first/last + input depth (left/right)
-    return {
-        "rgb": {
-            "center": _make_side_dict(_make_rgb_meter),
-            "first": _make_side_dict(_make_rgb_meter),
-            "last": _make_side_dict(_make_rgb_meter),
-        },
-        "depth": {
-            "center": _make_side_dict(_make_depth_meter),
-            "first": _make_side_dict(_make_depth_meter),
-            "last": _make_side_dict(_make_depth_meter),
-        },
-        "input_depth": _make_side_dict(_make_depth_meter),
-    }
-
-def _update_stage_meters(stage_meters, rgb_dict, depth_dict, input_depth_dict):
-    # rgb_dict: {center_view/first_view/last_view: {left/right: {psnr,ssim}}}
-    # depth_dict: {center_view/first_view/last_view: {left/right: {mae,mse}}}
-    view_key_map = {
-        "center": "center_view",
-        "first": "first_view",
-        "last": "last_view",
-    }
-    for view_short, view_key in view_key_map.items():
-        for side in ("left", "right"):
-            stage_meters["rgb"][view_short][side].update(
-                rgb_dict[view_key][side]["psnr"],
-                rgb_dict[view_key][side]["ssim"],
-            )
-            stage_meters["depth"][view_short][side].update(
-                mae=depth_dict[view_key][side]["mae"],
-                mse=depth_dict[view_key][side]["mse"],
-            )
-    for side in ("left", "right"):
-        stage_meters["input_depth"][side].update(
-            mae=input_depth_dict["input_depth"][side]["mae"],
-            mse=input_depth_dict["input_depth"][side]["mse"],
-        )
-
-def _finalize_meters(obj):
-    # Convert meter objects to stats dicts in-place-compatible manner
-    if isinstance(obj, dict):
-        return {k: _finalize_meters(v) for k, v in obj.items()}
-    if hasattr(obj, "get_stats"):
-        return obj.get_stats()
-    return obj
-
-def _extract_wandb_metrics(prefix: str, results_dict: dict) -> dict:
+def _extract_wandb_stage1_section(prefix: str, section: dict) -> dict:
     out = {}
-    for view in ("center", "first", "last"):
-        rgb_key = f"rgb_{view}"
-        depth_key = f"depth_{view}"
-        rgb = results_dict.get(rgb_key, {})
-        depth = results_dict.get(depth_key, {})
-        for side in ("left", "right"):
-            rgb_stats = rgb.get(side, {})
-            depth_stats = depth.get(side, {})
-            if "psnr" in rgb_stats:
-                out[f"{prefix}/{rgb_key}/{side}/psnr"] = float(rgb_stats["psnr"])
-            if "ssim" in rgb_stats:
-                out[f"{prefix}/{rgb_key}/{side}/ssim"] = float(rgb_stats["ssim"])
-            if "mae" in depth_stats:
-                out[f"{prefix}/{depth_key}/{side}/mae"] = float(depth_stats["mae"])
-            if "mse" in depth_stats:
-                out[f"{prefix}/{depth_key}/{side}/mse"] = float(depth_stats["mse"])
-
-    input_depth = results_dict.get("input_depth", {})
-    for side in ("left", "right"):
-        stats = input_depth.get(side, {})
-        if "mae" in stats:
-            out[f"{prefix}/input_depth/{side}/mae"] = float(stats["mae"])
-        if "mse" in stats:
-            out[f"{prefix}/input_depth/{side}/mse"] = float(stats["mse"])
+    for key, value in section.items():
+        if value is not None:
+            out[f"{prefix}/{key}"] = float(value)
     return out
-
 
 def _conf_map_to_wandb_image(conf_map: torch.Tensor):
     """
@@ -307,7 +235,7 @@ def main(args):
         "use_center":dataset_config.use_center,
         "use_first": dataset_config.use_first,
         "use_last": dataset_config.use_last,
-        "supp_view_nums": 3,
+        "supp_view_nums": dataset_config.supp_view_nums,
         "depth_info_dict":dataset_config.depth_info_params,
         "camera_model": dataset_config.camera_model
     }
@@ -483,139 +411,117 @@ def main(args):
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             accelerator.wait_for_everyone()
-            if accelerator.sync_gradients and accelerator.is_main_process:
-                if global_iter % cfg.save_freq == 0:
-                    if accelerator.is_main_process:
-                        save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
-                        accelerator.save_state(save_file_name)
-                        dst_file = osp.join(args.work_dir, 'latest')
-                        mmengine.utils.symlink(save_file_name, dst_file)
-                        if logger is not None:
-                            logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
-                
-                
-                if global_iter % 100 == 0:
+            if accelerator.sync_gradients:
+                if accelerator.is_main_process and global_iter % cfg.save_freq == 0:
+                    save_file_name = os.path.join(os.path.abspath(args.work_dir), f'checkpoint-{global_iter}')
+                    accelerator.save_state(save_file_name)
+                    dst_file = osp.join(args.work_dir, 'latest')
+                    mmengine.utils.symlink(save_file_name, dst_file)
+                    if logger is not None:
+                        logger.info('[TRAIN] Save latest state dict to {}.'.format(save_file_name))
+
+                if accelerator.is_main_process and global_iter % 100 == 0:
                     torch.cuda.empty_cache()
 
-            # perform the validation scripts
+                # Multi-GPU validation: each rank evaluates its val shard, then merge.
                 if global_iter % cfg.val_freq == 0:
+                    if accelerator.is_main_process and logger is not None:
+                        logger.info('[Val] iter=%d multi-GPU validation start', global_iter)
+                    accelerator.wait_for_everyone()
                     my_model.eval()
+
+                    accum = new_stage1_metric_accumulators()
+                    save_visuals = bool(getattr(cfg, 'validation_vis_progress', False))
+                    val_batch_count = 0
+
+                    for i_iter_val, batch_val in enumerate(val_dataloader):
+                        val_batch_count += 1
+                        if accelerator.is_main_process:
+                            print(
+                                "Processed {}/{} (rank 0 shard)".format(
+                                    i_iter_val + 1, len(val_dataloader)))
+
+                        val_batch_save_dir = None
+                        if save_visuals and accelerator.is_main_process and i_iter_val < 3:
+                            overall_val_batch_save_dir = osp.join(
+                                cfg.output_dir, cfg.exp_name, "validation",
+                                "step-{}".format(global_iter))
+                            os.makedirs(overall_val_batch_save_dir, exist_ok=True)
+                            val_batch_save_dir = os.path.join(
+                                overall_val_batch_save_dir,
+                                "batch-{}".format(i_iter_val))
+                            os.makedirs(val_batch_save_dir, exist_ok=True)
+
+                        accumulate_batch_stage1_metrics(
+                            accum,
+                            my_model,
+                            batch_val,
+                            cfg,
+                            global_iter=global_iter,
+                            val_batch_save_dir=val_batch_save_dir,
+                            save_visuals=(
+                                save_visuals
+                                and accelerator.is_main_process
+                                and i_iter_val < 3
+                            ),
+                        )
+
+                    local_payload = payload_from_stage1_accumulators(
+                        accum, val_batch_count)
+                    gathered = gather_stage1_validation_payloads(
+                        accelerator, local_payload)
+
                     if accelerator.is_main_process:
-                        meters = {
-                            "fusion": _make_stage_meters(),
-                            "volume": _make_stage_meters(),
-                            "cv": _make_stage_meters(),
-                        }
-                        stage_by_index = {0: "fusion", 1: "volume", 2: "cv"}
-                        
-                        conf_val_sum = 0.0
-                        conf_val_count = 0
-                        for i_iter_val, batch_val in enumerate(val_dataloader):
-                            print("Processed {}/{}".format(i_iter_val,len(val_dataloader)))
-                            overall_val_batch_save_dir = osp.join(cfg.output_dir, cfg.exp_name, "validation",
-                                                                  "step-{}".format(global_iter))
-                            os.makedirs(overall_val_batch_save_dir,exist_ok=True)
-                            val_batch_save_dir = os.path.join(overall_val_batch_save_dir,"batch-{}".format(i_iter_val))
-                            os.makedirs(val_batch_save_dir,exist_ok=True)
-                
-                            
-                            if args.gpus<=1:
-                                metrics_rendered_rgb_list, metrics_rendered_depth_list, metrics_estimated_depth_list = my_model.validation_step(batch_val, val_batch_save_dir, cfg)
-                            else:
-                                metrics_rendered_rgb_list, metrics_rendered_depth_list, metrics_estimated_depth_list = my_model.module.validation_step(batch_val, val_batch_save_dir, cfg)
+                        metrics = merge_stage1_metric_payloads(gathered)
+                        overall_val_batch_save_dir = osp.join(
+                            cfg.output_dir, cfg.exp_name, "validation",
+                            "step-{}".format(global_iter))
+                        os.makedirs(overall_val_batch_save_dir, exist_ok=True)
 
-                            # --- conf map: forward in val mode to get conf ---
-                            with torch.no_grad():
-                                try:
-                                    _model_ref = my_model if args.gpus <= 1 else my_model.module
-                                    _, _, _val_fusion_list, _, _ = _model_ref.forward(
-                                        batch_val, "train",   # use train mode to get rendered lists without extra returns
-                                        view_num=2, matching_nums=2, iter=global_iter, cfg=cfg)
-                                    if len(_val_fusion_list) > 2:
-                                        _conf = _val_fusion_list[2]   # [B, V, H, W]
-                                        conf_val_sum += _conf.detach().float().mean().item()
-                                        conf_val_count += 1
-                                        # save conf map image for first 3 batches
-                                        if i_iter_val < 3:
-                                            conf_save_path = os.path.join(val_batch_save_dir, "conf_map.png")
-                                            _c = _conf[0, 0].float().cpu().clamp(0, 1).numpy()
-                                            import matplotlib.cm as cm
-                                            _colored = (cm.viridis(_c)[:, :, :3] * 255).astype(np.uint8)
-                                            import PIL.Image
-                                            PIL.Image.fromarray(_colored).save(conf_save_path)
-                                except Exception as _e:
-                                    pass  # conf vis is best-effort
+                        saved_into_json(
+                            data_dict=metrics["fusion"],
+                            path=os.path.join(
+                                overall_val_batch_save_dir, "fusion_metric.json"))
+                        saved_into_json(
+                            data_dict=metrics["volume"],
+                            path=os.path.join(
+                                overall_val_batch_save_dir, "volume_metric.json"))
+                        saved_into_json(
+                            data_dict=metrics["cv"],
+                            path=os.path.join(
+                                overall_val_batch_save_dir, "cv_metric.json"))
 
-                            for i in range(len(metrics_rendered_rgb_list)):
-                                output_rgb_meter_dict = metrics_rendered_rgb_list[i]
-                                output_depth_meter_dict = metrics_rendered_depth_list[i]
-                                input_depth_meter_dict = metrics_estimated_depth_list[i]
-                                
-                                stage = stage_by_index.get(i)
-                                if stage is None:
-                                    continue
-                                _update_stage_meters(
-                                    meters[stage],
-                                    output_rgb_meter_dict,
-                                    output_depth_meter_dict,
-                                    input_depth_meter_dict,
-                                )
-                            
-                        
-                        stats = {k: _finalize_meters(v) for k, v in meters.items()}
-
-                        results_dict_fusion = {
-                            "rgb_center": stats["fusion"]["rgb"]["center"],
-                            "rgb_first": stats["fusion"]["rgb"]["first"],
-                            "rgb_last": stats["fusion"]["rgb"]["last"],
-                            "depth_center": stats["fusion"]["depth"]["center"],
-                            "depth_first": stats["fusion"]["depth"]["first"],
-                            "depth_last": stats["fusion"]["depth"]["last"],
-                            "input_depth": stats["fusion"]["input_depth"],
-                        }
-                        results_dict_volume = {
-                            "rgb_center": stats["volume"]["rgb"]["center"],
-                            "rgb_first": stats["volume"]["rgb"]["first"],
-                            "rgb_last": stats["volume"]["rgb"]["last"],
-                            "depth_center": stats["volume"]["depth"]["center"],
-                            "depth_first": stats["volume"]["depth"]["first"],
-                            "depth_last": stats["volume"]["depth"]["last"],
-                            "input_depth": stats["volume"]["input_depth"],
-                        }
-                        results_dict_cv = {
-                            "rgb_center": stats["cv"]["rgb"]["center"],
-                            "rgb_first": stats["cv"]["rgb"]["first"],
-                            "rgb_last": stats["cv"]["rgb"]["last"],
-                            "depth_center": stats["cv"]["depth"]["center"],
-                            "depth_first": stats["cv"]["depth"]["first"],
-                            "depth_last": stats["cv"]["depth"]["last"],
-                            "input_depth": stats["cv"]["input_depth"],
-                        }
-                        
-                        mean_conf_val = conf_val_sum / conf_val_count if conf_val_count > 0 else None
-
-                        results_dict_fusion["mean_conf"] = mean_conf_val
-                        saved_into_json(data_dict=results_dict_fusion,
-                                        path=os.path.join(overall_val_batch_save_dir,"fusion_metric.json"))
-
-                        saved_into_json(data_dict=results_dict_volume,
-                                        path=os.path.join(overall_val_batch_save_dir,"volume_metric.json"))
-
-                        saved_into_json(data_dict=results_dict_cv,
-                                        path=os.path.join(overall_val_batch_save_dir,"cv_metric.json"))
-
-                        if logger is not None and mean_conf_val is not None:
-                            logger.info(f"[VAL] step={global_iter}  mean_conf={mean_conf_val:.4f}")
+                        fusion = metrics["fusion"]
+                        if logger is not None:
+                            logger.info(
+                                '[VAL] step=%d fusion psnr_mean=%.4f ssim_mean=%.4f '
+                                'psnr_first=%.4f psnr_center=%.4f psnr_last=%.4f',
+                                global_iter,
+                                fusion.get("psnr_mean") or float('nan'),
+                                fusion.get("ssim_mean") or float('nan'),
+                                fusion.get("psnr_first") or float('nan'),
+                                fusion.get("psnr_center") or float('nan'),
+                                fusion.get("psnr_last") or float('nan'),
+                            )
+                            if fusion.get("mean_conf") is not None:
+                                logger.info(
+                                    '[VAL] step=%d mean_conf=%.4f',
+                                    global_iter, fusion["mean_conf"])
 
                         if tracker_enabled:
                             wandb_logs = {}
-                            wandb_logs.update(_extract_wandb_metrics("val/fusion", results_dict_fusion))
-                            wandb_logs.update(_extract_wandb_metrics("val/volume", results_dict_volume))
-                            wandb_logs.update(_extract_wandb_metrics("val/cv", results_dict_cv))
-                            if mean_conf_val is not None:
-                                wandb_logs["val/mean_conf"] = mean_conf_val
+                            wandb_logs.update(
+                                _extract_wandb_stage1_section(
+                                    "val/fusion", metrics["fusion"]))
+                            wandb_logs.update(
+                                _extract_wandb_stage1_section(
+                                    "val/volume", metrics["volume"]))
+                            wandb_logs.update(
+                                _extract_wandb_stage1_section(
+                                    "val/cv", metrics["cv"]))
                             accelerator.log(wandb_logs, step=global_iter)
-                        
+
+                    accelerator.wait_for_everyone()
                     my_model.train()
 
 

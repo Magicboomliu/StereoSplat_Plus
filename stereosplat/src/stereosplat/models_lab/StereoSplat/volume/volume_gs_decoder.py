@@ -15,7 +15,7 @@ class VolumeGaussianDecoder(BaseModule):
         self, tpv_h, tpv_w, tpv_z, pc_range, gs_dim=14,
         in_dims=64, hidden_dims=128, out_dims=None,
         scale_h=2, scale_w=2, scale_z=2, gpv=4, offset_max=None, scale_max=None,
-        use_checkpoint=False
+        use_checkpoint=False, use_split_conf_head=False,
     ):
         super().__init__()
         self.tpv_h = tpv_h
@@ -26,6 +26,8 @@ class VolumeGaussianDecoder(BaseModule):
         self.scale_w = scale_w
         self.scale_z = scale_z
         self.gpv = gpv
+        self.gs_dim = gs_dim
+        self.use_split_conf_head = use_split_conf_head
 
         out_dims = in_dims if out_dims is None else out_dims
 
@@ -35,7 +37,11 @@ class VolumeGaussianDecoder(BaseModule):
             nn.Linear(hidden_dims, out_dims)
         )
 
-        self.gs_decoder = nn.Linear(out_dims, gs_dim*gpv)
+        if self.use_split_conf_head:
+            self.gs_rgb_decoder = nn.Linear(out_dims, (gs_dim - 1) * gpv)
+            self.conf_decoder = nn.Linear(out_dims, gpv)
+        else:
+            self.gs_decoder = nn.Linear(out_dims, gs_dim * gpv)
         self.use_checkpoint = use_checkpoint
 
         # set activations
@@ -131,11 +137,19 @@ class VolumeGaussianDecoder(BaseModule):
         bs, w, h, z, _ = gaussians.shape
         if self.use_checkpoint:
             gaussians = torch.utils.checkpoint.checkpoint(self.decoder, gaussians, use_reentrant=False)
-            gaussians = torch.utils.checkpoint.checkpoint(self.gs_decoder, gaussians, use_reentrant=False)
+            if self.use_split_conf_head:
+                gaussians = torch.utils.checkpoint.checkpoint(
+                    self._decode_gs_split, gaussians, use_reentrant=False)
+            else:
+                gaussians = torch.utils.checkpoint.checkpoint(
+                    self.gs_decoder, gaussians, use_reentrant=False)
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
         else:
             gaussians = self.decoder(gaussians)
-            gaussians = self.gs_decoder(gaussians)
+            if self.use_split_conf_head:
+                gaussians = self._decode_gs_split(gaussians)
+            else:
+                gaussians = self.gs_decoder(gaussians)
             gaussians = gaussians.view(bs, w, h, z, self.gpv, -1)
         #print("after decode:{}".format(torch.cuda.memory_allocated(0)))
         gs_offsets_x = self.pos_act(gaussians[..., :1]) * self.offset_max[0]
@@ -167,3 +181,8 @@ class VolumeGaussianDecoder(BaseModule):
         gaussians = torch.cat([gs_positions, rgbs, opacity, rotation, scale_x, scale_y, scale_z, conf], dim=-1)
     
         return gaussians
+
+    def _decode_gs_split(self, feat):
+        rgb = self.gs_rgb_decoder(feat)
+        conf = self.conf_decoder(feat)
+        return torch.cat([rgb, conf], dim=-1)

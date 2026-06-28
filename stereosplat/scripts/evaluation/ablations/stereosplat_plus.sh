@@ -15,14 +15,14 @@ cd "$STEREOSPLAT_ROOT" || exit 1
 accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/multi_gpu.yaml"
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
 # ---- Val filelist (must match training val for comparable numbers) ----
-val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
+val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync_complete.txt"
 # val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 
 # ---- Model checkpoint ----
 # candidates/ 里目前只有: 5500, 5560, 5570, 8000, 20000
 # 10000/14000 等请用 stage2_self_pseudo_debug 原路径，或先 cp 到 candidates/
-CKPT_STEP=10000
-pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/stage2_self_pseudo_debug/checkpoint-${CKPT_STEP}/model.safetensors"
+CKPT_STEP=42000
+pretrained_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/withconf/ablations/stage2_self_pseudo/checkpoint-${CKPT_STEP}/model.safetensors"
 pretrained_diffix_model_path="/data4/zliu/Difix3D_Output_Results/Refined_Vanilla_Difix3D_PSNR20/checkpoints/model_130001.pkl"
 prompt="remove degradation"
 timestep=199
@@ -32,7 +32,7 @@ self_pseudo_flag="--self_pseudo"
 # output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/val-multi-gpu/checkpoint-5500"
 
 
-output_folder="/data1/zliu/IROS26/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/val-multi-gpu/${CKPT_STEP}"
+output_folder="/data1/zliu/IROS26/EXP_Ablations/stereosplat_ablations/withconf/stage2/stereosplat_plus/whole-model-self-pseudo/fusion/val-multi-gpu/${CKPT_STEP}"
 
 if [ ! -f "$pretrained_model_path" ]; then
   echo "[ERROR] checkpoint not found: $pretrained_model_path"

@@ -1,12 +1,11 @@
-"""Multi-GPU Stage2 pixel_fusion inference — same metrics as ``eval/run.py``.
+"""Multi-GPU inference — same metrics as ``eval/run.py``.
 
-Shards the val dataloader across GPUs, runs ``infer_pixel_fusion_pose_injection_single_model``
-per batch (via ``run_batch_inference``), merges per-rank metric sums, and writes
-``metric.json`` with ``2v`` / ``mv`` / ``fuse`` sections (16 metrics per branch; ``mean_*`` = all_view).
+Supports ``eval_mode`` stereosplat / stereosplat_plus / pixel_fusion.
+Shards val dataloader, merges per-rank sums, writes ``metric.json``.
 
 Launch:
   accelerate launch --config_file accelerate_configs/inference/multi_gpu.yaml \\
-      eval/run_multi_gpu.py --output_folder ... --pretrained_model_path ...
+      eval/run_multi_gpu.py --eval_mode stereosplat --pretrained_model_path ...
 """
 from __future__ import annotations
 
@@ -41,6 +40,10 @@ from eval.common import (  # noqa: E402
     dataset_module_for_world_center,
     load_state_dict_any,
     setup_import_paths,
+)
+from eval.conf_tune_infer import (  # noqa: E402
+    cfg_uses_split_conf_head,
+    validate_split_conf_load,
 )
 from eval.routes import (  # noqa: E402
     accumulate_batch_metrics,
@@ -87,6 +90,8 @@ def load_frozen_stage1(accelerator, cfg, stage1_path: str) -> StereoSplat:
 
 
 def maybe_load_difix(args) -> DifixRef | None:
+    if not args.use_diffix3d:
+        return None
     if not args.pretrained_diffix_model_path:
         return None
     if not os.path.exists(args.pretrained_diffix_model_path):
@@ -119,23 +124,34 @@ def validate_args(args) -> None:
             raise ValueError(
                 "architecture=separated requires --stage_1_model_path for frozen Stage1."
             )
-    if args.eval_mode == "pixel_fusion" and args.architecture == "whole":
-        if not args.pretrained_diffix_model_path:
-            raise ValueError(
-                "pixel_fusion + whole requires --pretrained_diffix_model_path."
-            )
+    if (
+        args.use_diffix3d
+        and args.eval_mode == "pixel_fusion"
+        and args.architecture == "whole"
+        and not args.pretrained_diffix_model_path
+    ):
+        raise ValueError(
+            "pixel_fusion + whole with Difix3D requires --pretrained_diffix_model_path "
+            "(or pass --no_difix3d)."
+        )
     if args.conf_fusion_margin is not None and not args.conf_pixel_level_fusion:
         raise ValueError("--conf_fusion_margin requires --conf_pixel_level_fusion.")
 
 
-def main():
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
-        description="Multi-GPU Stage2 pixel_fusion inference (metric.json, same as run.py)"
+        description="Multi-GPU inference (metric.json, same format as eval/run.py)"
     )
     parser.add_argument("--config_path", required=True)
     parser.add_argument("--output_folder", type=str, required=True)
     parser.add_argument("--pretrained_model_path", type=str, required=True)
-    parser.add_argument("--pretrained_diffix_model_path", type=str, required=True)
+    parser.add_argument("--pretrained_diffix_model_path", type=str, default="")
+    parser.add_argument(
+        "--split_conf_head",
+        action="store_true",
+        default=False,
+        help="Expect split conf_head model+ckpt (conf_tune). Validates load; use run_multi_gpu_tune.py.",
+    )
     parser.add_argument("--val_filelist", type=str, default="")
     parser.add_argument(
         "--eval_mode",
@@ -150,7 +166,12 @@ def main():
     parser.add_argument("--timestep", type=int, default=199)
     parser.add_argument("--prompt", type=str, default="remove degradation")
     parser.add_argument("--use_ref", action="store_true", default=False)
-    parser.add_argument("--use_diffix3d", action="store_true", default=True)
+    parser.add_argument(
+        "--no_difix3d",
+        action="store_true",
+        default=False,
+        help="Skip Difix3D pseudo enhancement (raw pseudo views only).",
+    )
     parser.add_argument("--self_pseudo", action="store_true", default=False)
     parser.add_argument("--stage_1_model_path", type=str, default=None)
     parser.add_argument("--pseudo_ratio", type=str, nargs="*", default=[])
@@ -197,7 +218,8 @@ def main():
         default=False,
         help="Save per-batch visuals (main process only; single GPU recommended).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.use_diffix3d = not args.no_difix3d
 
     args.pseudo_ratio = [float(x) for x in args.pseudo_ratio]
     if not args.pseudo_ratio and args.eval_mode in ("stereosplat_plus", "pixel_fusion"):
@@ -210,6 +232,11 @@ def main():
         raise ValueError("--output_vis is not supported with multiple processes.")
 
     cfg = Config.fromfile(args.config_path)
+    if args.split_conf_head and not cfg_uses_split_conf_head(cfg):
+        raise ValueError(
+            "--split_conf_head requires input_invariant_stereosplat_stage2_conf_tune.py "
+            "(use_split_conf_head=True in gaussain_head_kwargs and gs_decoder)."
+        )
     cfg.work_dir = args.output_folder
     cfg.prompt = args.prompt
 
@@ -281,6 +308,10 @@ def main():
         accelerator.print(
             f"[Difix3D] loaded from {args.pretrained_diffix_model_path}"
         )
+    elif args.use_diffix3d:
+        accelerator.print("[Difix3D] enabled but no weights loaded (path empty).")
+    else:
+        accelerator.print("[Difix3D] disabled (--no_difix3d)")
 
     my_model = build_model(cfg)
     my_model, val_dataloader = accelerator.prepare(my_model, val_dataloader)
@@ -292,16 +323,25 @@ def main():
     sd = load_state_dict_any(args.pretrained_model_path, map_location="cpu")
     _model = my_model.module if hasattr(my_model, "module") else my_model
     incompatible = _model.load_state_dict(sd, strict=False)
-    if incompatible.missing_keys:
-        accelerator.print(
-            f"  [warn] missing keys: {incompatible.missing_keys[:5]}"
-            f"{'...' if len(incompatible.missing_keys) > 5 else ''}"
+    if args.split_conf_head:
+        check = validate_split_conf_load(
+            incompatible.missing_keys,
+            incompatible.unexpected_keys,
+            log=accelerator.print,
         )
-    if incompatible.unexpected_keys:
-        accelerator.print(
-            f"  [warn] unexpected keys: {incompatible.unexpected_keys[:5]}"
-            f"{'...' if len(incompatible.unexpected_keys) > 5 else ''}"
-        )
+        if not check.ok:
+            raise RuntimeError(check.message)
+    else:
+        if incompatible.missing_keys:
+            accelerator.print(
+                f"  [warn] missing keys: {incompatible.missing_keys[:5]}"
+                f"{'...' if len(incompatible.missing_keys) > 5 else ''}"
+            )
+        if incompatible.unexpected_keys:
+            accelerator.print(
+                f"  [warn] unexpected keys: {incompatible.unexpected_keys[:5]}"
+                f"{'...' if len(incompatible.unexpected_keys) > 5 else ''}"
+            )
 
     if pretrained_diffix_model is not None:
         pretrained_diffix_model.to(accelerator.device)
@@ -357,6 +397,14 @@ def main():
                 f"mean_ssim={sec.get('mean_ssim', float('nan')):.4f} "
                 f"mean_abs_rel={sec.get('mean_abs_rel', float('nan')):.4f} "
                 f"mean_sq_rel={sec.get('mean_sq_rel', float('nan')):.4f}"
+            )
+        rgb = results_dict.get("rgb")
+        if rgb:
+            print(
+                f"  rgb: first_psnr={rgb.get('first_view_psnr_average', float('nan')):.4f} "
+                f"center_psnr={rgb.get('center_view_psnr_average', float('nan')):.4f} "
+                f"last_psnr={rgb.get('last_view_psnr_average', float('nan')):.4f} "
+                f"all_psnr={rgb.get('all_view_psnr_average', float('nan')):.4f}"
             )
 
     accelerator.wait_for_everyone()

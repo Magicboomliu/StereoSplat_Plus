@@ -1414,7 +1414,7 @@ class StereoSplat(BaseModule):
         loss = 0.0
         loss_terms = {}
         def set_loss(key, split, loss_value, loss_weight=1.0):
-            _v = loss_value.item()
+            _v = loss_value.item() if hasattr(loss_value, 'item') else float(loss_value)
             loss_terms[f"{split}/loss_{key}"] = _v
             loss_terms[f"{split}/loss_{key}_w"] = _v * loss_weight
 
@@ -2029,7 +2029,7 @@ class StereoSplat(BaseModule):
         loss = 0.0
         loss_terms = {}
         def set_loss(key, split, loss_value, loss_weight=1.0):
-            _v = loss_value.item()
+            _v = loss_value.item() if hasattr(loss_value, 'item') else float(loss_value)
             loss_terms[f"{split}/loss_{key}"] = _v
             loss_terms[f"{split}/loss_{key}_w"] = _v * loss_weight
 
@@ -2538,7 +2538,7 @@ class StereoSplat(BaseModule):
         loss = 0.0
         loss_terms = {}
         def set_loss(key, split, loss_value, loss_weight=1.0):
-            _v = loss_value.item() if hasattr(loss_value, 'item') else float(loss_value)
+            _v = loss_value.item() if hasattr(loss_value, 'item') else float(loss_value) if hasattr(loss_value, 'item') else float(loss_value)
             loss_terms[f"{split}/loss_{key}"] = _v
             loss_terms[f"{split}/loss_{key}_w"] = _v * loss_weight
 
@@ -2592,6 +2592,11 @@ class StereoSplat(BaseModule):
                 mode == 'train' and view_num == 2 and
                 frozen_2v_ref_model is not None and (_w_2v_floor > 0.0 or _w_2v_ceil > 0.0))
 
+            _conf_tune_mode = getattr(self.losses_params, 'conf_tune_mode', False)
+            if _conf_tune_mode:
+                _w_2v_floor = _w_2v_ceil = _w_2v_floor_mv = 0.0
+                _use_2v_anchor_only = False
+
             def _render_frozen_stage1_2v(_ref_model):
                 with torch.no_grad():
                     _in2v_r, _ = _ref_model.prepare_input_multiview(
@@ -2620,7 +2625,7 @@ class StereoSplat(BaseModule):
             
 
             # ==================== Depth Estimation Loss =====================
-            if self.losses_params.depth_estimation and not _use_2v_anchor_only:
+            if self.losses_params.depth_estimation and not _use_2v_anchor_only and not _conf_tune_mode:
                 if self.losses_params.gt_depth_type=='sparse':
                     
                     valid_mask_01 = input_sparse_gt_depth>0
@@ -2670,7 +2675,7 @@ class StereoSplat(BaseModule):
                      self.losses_params.depth_est_sup_dict.branch_weight)
             
             # ==================== RGB Loss Here =====================
-            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only and not _conf_tune_mode: # Must
                 
                 if self.losses_params.use_volume and render_pkg_volume is not None:
                     rec_loss_vol = (rgb_gt * mask_dptm.unsqueeze(2) - render_pkg_volume["image"] * mask_dptm.unsqueeze(2)) ** 2
@@ -2689,11 +2694,11 @@ class StereoSplat(BaseModule):
                 set_loss("recon_gs", mode, rec_loss.mean(), self.losses_params.fusion_sup_dict.weight_recon)              
                 
             else:
-                if not _use_2v_anchor_only:
+                if not _use_2v_anchor_only and not _conf_tune_mode:
                     raise NotImplementedError
 
             # ==================== Preception Loss Here ================
-            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only and not _conf_tune_mode: # Must
                 if self.losses_params.use_volume and render_pkg_volume is not None:
                     current_height, current_width = rgb_gt.shape[-2:]
                     preception_loss_volume = self.perceptual_loss(rgb_gt.reshape(-1,3,current_height,current_width)*mask_dptm.unsqueeze(2).reshape(-1,1,current_height,current_width),
@@ -2727,12 +2732,12 @@ class StereoSplat(BaseModule):
                             self.losses_params.fusion_sup_dict.weight_perceptual)
                 
             else:
-                if not _use_2v_anchor_only:
+                if not _use_2v_anchor_only and not _conf_tune_mode:
                     raise NotImplementedError
         
              # ==================== Rendered Depth Loss ================
             
-            if self.losses_params.use_fusion and not _use_2v_anchor_only: # Must
+            if self.losses_params.use_fusion and not _use_2v_anchor_only and not _conf_tune_mode: # Must
                 
                 if self.losses_params.gt_depth_type=='sparse':
                     valid_mask_01 = sparse_depth_gt>0
@@ -2791,7 +2796,7 @@ class StereoSplat(BaseModule):
             
             
             else:
-                if not _use_2v_anchor_only:
+                if not _use_2v_anchor_only and not _conf_tune_mode:
                     raise NotImplementedError
                 
             
@@ -2801,7 +2806,8 @@ class StereoSplat(BaseModule):
                 self.losses_params.fusion_sup_dict, 'weight_conf_mv_abs', 0.0)
             _w_conf_legacy = getattr(self.losses_params.fusion_sup_dict, 'weight_conf', 0.1)
             _conf_lambda = getattr(self.losses_params, 'conf_lambda', 10.0)
-            if (not _use_2v_anchor_only and rendered_conf_fuse is not None):
+            if (not _use_2v_anchor_only and rendered_conf_fuse is not None
+                    and not (_conf_tune_mode and mode == 'train' and view_num < 3)):
                 if _w_conf_mv_abs > 0.0:
                     with torch.no_grad():
                         _rgb_l1_mv = torch.abs(
@@ -2833,7 +2839,8 @@ class StereoSplat(BaseModule):
             # (floor + ceiling) via one grad 2v forward when anchor weights are on.
             _use_2v_anchor_mv = (
                 mode == 'train' and view_num >= 3 and frozen_2v_ref_model is not None
-                and (_w_2v_floor > 0.0 or _w_2v_ceil > 0.0))
+                and (_w_2v_floor > 0.0 or _w_2v_ceil > 0.0)
+                and not _conf_tune_mode)
             _w_fused = getattr(self.losses_params.fusion_sup_dict, 'weight_fusion_sup', 0.0)
             _w_fused_percep = getattr(
                 self.losses_params.fusion_sup_dict, 'weight_fusion_sup_percep', 0.0)
@@ -2862,6 +2869,10 @@ class StereoSplat(BaseModule):
                 self.losses_params.fusion_sup_dict, 'weight_conf_pick', 0.0)
             _w_conf_2v_abs = getattr(
                 self.losses_params.fusion_sup_dict, 'weight_conf_2v_abs', 0.0)
+            if _conf_tune_mode:
+                _w_fus_2v_margin = _w_fus_mv_margin = _w_mv_margin = 0.0
+                _w_key_views = _w_conf_pick = 0.0
+                _w_2v_floor = _w_2v_ceil = _w_2v_floor_mv = 0.0
             _run_conf_pick = (
                 mode == 'train' and view_num >= 3 and _w_conf_pick > 0.0
                 and rendered_conf_fuse is not None and _did_mix_pseudo)
@@ -3179,6 +3190,13 @@ class StereoSplat(BaseModule):
                         trip_plane_branch_loss * self.losses_params.volume_sup_dict.branch_weight + \
                             fusion_branch_loss * self.losses_params.fusion_sup_dict.branch_weight + \
                                 depth_estimation_branch_loss * self.losses_params.depth_est_sup_dict.branch_weight
+
+            if _conf_tune_mode and mode == 'train' and view_num < 3:
+                loss = torch.zeros((), device=rgb_gt.device, dtype=rgb_gt.dtype)
+                for _p in self.parameters():
+                    if _p.requires_grad:
+                        loss = loss + _p.sum() * 0.0
+                        break
             
             
             rendered_fusion_list = [rendered_color_fuse, rendered_depth_fuse] + \
@@ -3278,15 +3296,19 @@ class StereoSplat(BaseModule):
 
         # loss and loss terms
         with torch.no_grad():
-            if view_num is not None:
-                fwd_out = self.forward(
-                    batch, mode='val',
-                    view_num=view_num,
-                    matching_nums=matching_nums if matching_nums is not None else view_num,
-                    cfg=cfg,
-                )
-            else:
-                fwd_out = self.forward(batch, mode='val', cfg=cfg)
+            if view_num is None:
+                # Stage1 val: 2-view input (first stereo pair), aligned with 2v baseline.
+                view_num = 2
+                matching_nums = 2
+            elif matching_nums is None:
+                matching_nums = max(1, int(view_num) - 1)
+
+            fwd_out = self.forward(
+                batch, mode='val',
+                view_num=view_num,
+                matching_nums=matching_nums,
+                cfg=cfg,
+            )
             loss, loss_terms,rendered_fusion_list,\
                 rendered_volume_list,rendered_cv_results_list, \
                     predicted_input_depth,input_sparse_gt_depth,\

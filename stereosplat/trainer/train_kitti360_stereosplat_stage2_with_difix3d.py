@@ -46,6 +46,10 @@ from eval.fusion_validation import (
     fusion_metric_from_accumulators,
     new_fusion_metric_accumulators,
 )
+from conf_tune_utils import (
+    freeze_all_except_conf_modules,
+    migrate_unified_to_split_conf_head,
+)
 
 def _strip_prefix_if_present(state_dict: dict, prefix: str) -> dict:
     if not state_dict:
@@ -119,6 +123,30 @@ def _is_accelerate_checkpoint(path: str) -> bool:
         os.path.exists(os.path.join(path, fname))
         for fname in ("optimizer.bin", "optimizer.safetensors", "random_states_0.pkl")
     )
+
+
+def _resolve_accelerate_resume_path(cfg, args) -> str | None:
+    """Return accelerate checkpoint dir to resume, or None."""
+    if getattr(args, "resume_from", None):
+        cfg.resume_from = args.resume_from
+    resume_from = getattr(cfg, "resume_from", None)
+    if not resume_from or str(resume_from).strip().lower() in ("", "none"):
+        return None
+    if resume_from != "latest":
+        path = resume_from
+    elif os.path.isdir(cfg.work_dir):
+        dirs = [d for d in os.listdir(cfg.work_dir) if d.startswith("checkpoint")]
+        if not dirs:
+            return None
+        dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+        path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
+    else:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.abspath(cfg.work_dir), path)
+    if not _is_accelerate_checkpoint(path):
+        return None
+    return path
 
 def _make_side_dict(factory):
     return {"left": factory(), "right": factory()}
@@ -321,6 +349,15 @@ def sample_2_to_6(n=1, floats=False, rng=None):
                     return v
             return _population[-1]
         return _sample_one() if n == 1 else [_sample_one() for _ in range(n)]
+
+
+def sample_3_to_6(n=1, floats=False, rng=None):
+    """Sample view_num in {3,4,5,6} with equal probability (conf-only tuning)."""
+    _rng = rng if rng is not None else random
+    if floats:
+        return _rng.uniform(3, 6) if n == 1 else [_rng.uniform(3, 6) for _ in range(n)]
+    _population = [3, 4, 5, 6]
+    return _rng.choice(_population) if n == 1 else [_rng.choice(_population) for _ in range(n)]
 
 
 def _iter_rng(global_iter: int, salt: int = 0) -> random.Random:
@@ -591,11 +628,43 @@ def main(args):
                                     dataset_params=cfg.dataset_params,
                                     use_checkpoint=cfg.use_checkpoint)
 
+    if args.conf_tune:
+        _resume_path_early = _resolve_accelerate_resume_path(cfg, args)
+        if _resume_path_early is not None:
+            accelerator.print(
+                f"[ConfTune] accelerate resume detected ({_resume_path_early}); "
+                "skip --init_ckpt load (will restore from checkpoint)."
+            )
+        else:
+            init_path = args.init_ckpt
+            if init_path is None:
+                raise ValueError(
+                    "--conf_tune requires --init_ckpt (Stage2 checkpoint for weight surgery)."
+                )
+            accelerator.print(f"[ConfTune] loading init checkpoint from: {init_path}")
+            sd_init = _load_state_dict_any(init_path, map_location="cpu")
+            sd_init = migrate_unified_to_split_conf_head(sd_init)
+            incompatible = my_model.load_state_dict(sd_init, strict=False)
+            accelerator.print(
+                f"[ConfTune] load done. missing={len(incompatible.missing_keys)}, "
+                f"unexpected={len(incompatible.unexpected_keys)}"
+            )
+            if incompatible.missing_keys:
+                accelerator.print(
+                    f"[ConfTune] missing (first 8): {incompatible.missing_keys[:8]}"
+                )
+        n_trainable, n_frozen, train_names = freeze_all_except_conf_modules(my_model)
+        accelerator.print(
+            f"[ConfTune] frozen={n_frozen:,} params, trainable={n_trainable:,} params"
+        )
+        for _tn in train_names:
+            accelerator.print(f"[ConfTune]   trainable: {_tn}")
+
     # Self-bootstrap: weights-only init from --stage_1_model_path BEFORE
     # accelerator.prepare.  This sets model weights for the first launch.
     # A later accelerator.load_state(resume_from) will override both the model
     # weights AND restore optimizer / scheduler / global_iter when resuming.
-    if args.self_pseudo:
+    elif args.self_pseudo:
         if args.stage_1_model_path is not None:
             accelerator.print(f"[SelfPseudo] init student weights from: {args.stage_1_model_path}")
             sd_init = _load_state_dict_any(args.stage_1_model_path, map_location="cpu")
@@ -641,6 +710,11 @@ def main(args):
     my_model, optimizer, train_dataloader, val_dataloader, scheduler= accelerator.prepare(
         my_model, optimizer, train_dataloader, val_dataloader, scheduler
     )
+
+    if args.conf_tune:
+        _conf_model = my_model.module if hasattr(my_model, "module") else my_model
+        freeze_all_except_conf_modules(_conf_model)
+        accelerator.print("[ConfTune] re-applied conf-only freeze after accelerator.prepare")
     
     if frozen_stage_1_model is not None:
         frozen_stage_1_model.to(accelerator.device)
@@ -662,42 +736,16 @@ def main(args):
     
 
     # Potentially load in the weights and states from a previous save
-    if args.resume_from:
-        cfg.resume_from = args.resume_from
-    if cfg.resume_from:
-        if cfg.resume_from == "None":
-            path = None
-        elif cfg.resume_from != "latest":
-            path = cfg.resume_from
-        else:
-            # Get the most recent checkpoint
-            if os.path.isdir(cfg.work_dir):
-                dirs = os.listdir(cfg.work_dir)
-                dirs = [d for d in dirs if d.startswith("checkpoint")]
-                if len(dirs) > 0:
-                    dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-                    path = os.path.join(os.path.abspath(cfg.work_dir), dirs[-1])
-                else:
-                    path = None
-            else:
-                path = None
-
-    if path:
-        if not os.path.isabs(path):
-            path = os.path.join(os.path.abspath(cfg.work_dir), path)
-        # In self-pseudo mode the initial resume_from may point to a plain Stage1
-        # weights checkpoint (no optimizer state). That was already handled above
-        # as a weights-only init; calling accelerator.load_state on it would load
-        # garbage optimizer state and set global_iter to the Stage1 step count.
-        if not _is_accelerate_checkpoint(path):
-            _msg = (
-                f"[Resume] {path} is a weights-only checkpoint (no optimizer state). "
-                "Skipping accelerator.load_state — weights-only init was done above."
-            )
-            accelerator.print(_msg)
-            if logger is not None:
-                logger.info(_msg)
-            path = None
+    path = _resolve_accelerate_resume_path(cfg, args)
+    if path is None and cfg.resume_from and str(cfg.resume_from).strip().lower() not in ("", "none"):
+        _raw = cfg.resume_from if cfg.resume_from != "latest" else "(latest under work_dir)"
+        _msg = (
+            f"[Resume] {_raw} is not an accelerate checkpoint (no optimizer state). "
+            "Skipping accelerator.load_state."
+        )
+        accelerator.print(_msg)
+        if logger is not None:
+            logger.info(_msg)
 
     if path:
         accelerator.print(f"Resuming from checkpoint {path}")
@@ -705,6 +753,10 @@ def main(args):
         global_iter = int(path.rstrip("/").split("/")[-1].split("-")[1])
         first_epoch = global_iter // num_update_steps_per_epoch
         resume_step = global_iter % num_update_steps_per_epoch
+        if args.conf_tune:
+            _conf_model = my_model.module if hasattr(my_model, "module") else my_model
+            freeze_all_except_conf_modules(_conf_model)
+            accelerator.print("[ConfTune] re-applied conf-only freeze after resume")
         if accelerator.is_main_process and logger is not None:
             logger.info(
                 '[Resume] successfully resumed from %s -> iter=%d/%d',
@@ -752,7 +804,12 @@ def main(args):
             data_time_e = time.time()
 
             # same view_num on all ranks (iter-seeded RNG)
-            sample_view_nums = sample_2_to_6(n=1, floats=False, rng=_iter_rng(global_iter, salt=31))
+            if args.conf_tune:
+                sample_view_nums = sample_3_to_6(
+                    n=1, floats=False, rng=_iter_rng(global_iter, salt=31))
+            else:
+                sample_view_nums = sample_2_to_6(
+                    n=1, floats=False, rng=_iter_rng(global_iter, salt=31))
             if sample_view_nums == 2:
                 view_num = 2
                 matching_nums = 2
@@ -971,6 +1028,18 @@ if __name__ == '__main__':
     
     # stereosplat stage 1 pre-trained model
     parser.add_argument('--stage_1_model_path', type=str, default=None)
+    parser.add_argument(
+        '--conf_tune',
+        action='store_true',
+        default=False,
+        help='Conf-only fine-tuning: split conf_head, freeze RGB/geometry, fuse-only loss.',
+    )
+    parser.add_argument(
+        '--init_ckpt',
+        type=str,
+        default=None,
+        help='Stage2 checkpoint for conf_tune init (weight surgery from unified head).',
+    )
     parser.add_argument('--mix_psuedo_views_ratio', type=float, default=0.5)
     parser.add_argument('--mix_difix3d_ratio', type=float, default=None,
                         help='Probability of applying Difix3D enhancement to pseudo views. '
