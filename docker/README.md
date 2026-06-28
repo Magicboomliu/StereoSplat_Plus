@@ -1,18 +1,18 @@
-## Docker（容器内用 Pixi 装环境）
+## Docker (Pixi environment inside the container)
 
-Base image：`pytorch/pytorch:2.1.0-cuda11.8-cudnn8-devel`
+Base image: `pytorch/pytorch:2.1.0-cuda11.8-cudnn8-devel`
 
-训练与评估说明见仓库 **[stereosplat/README.md](../stereosplat/README.md)**、**[stereosplat/eval/README.md](../stereosplat/eval/README.md)**。
+For training and evaluation, see **[stereosplat_conf/README.md](../stereosplat_conf/README.md)** and **[stereosplat_conf/eval/README.md](../stereosplat_conf/eval/README.md)**.
 
 ### Build
 
-在仓库根目录执行：
+From the repository root:
 
 ```bash
 docker build -t stereosplat-plus:cu118 -f docker/Dockerfile .
 ```
 
-### Run（GPU）
+### Run (GPU)
 
 ```bash
 docker run --gpus all -it --rm \
@@ -20,16 +20,15 @@ docker run --gpus all -it --rm \
   stereosplat-plus:cu118
 ```
 
-### 在容器里进入 Pixi 环境
+### Enter the Pixi environment in the container
 
 ```bash
-pixi shell --manifest-path stereosplat/pyproject.toml --environment cu118
+pixi shell --manifest-path stereosplat_conf/pyproject.toml --environment cu118
 ```
 
-或不进入 shell，直接跑命令：
+Or run a command without entering the shell:
 
 ```bash
-pixi run --manifest-path stereosplat/pyproject.toml --environment cu118 \
+pixi run --manifest-path stereosplat_conf/pyproject.toml --environment cu118 \
   python -c "import torch; print(torch.__version__, torch.version.cuda)"
 ```
-

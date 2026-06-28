@@ -28,9 +28,9 @@ WORKDIR /workspace/StereoSplat_Plus
 # Copy repo
 COPY . .
 
-# IMPORTANT: run pixi tasks from the stereosplat project directory,
+# IMPORTANT: run pixi tasks from the stereosplat_conf project directory,
 # because tasks like `pip install -e .` are relative to CWD.
-WORKDIR /workspace/StereoSplat_Plus/stereosplat
+WORKDIR /workspace/StereoSplat_Plus/stereosplat_conf
 
 # Install pixi environment (cu118) and run project setup tasks.
 # `--locked` uses pixi.lock for reproducible builds (if present).

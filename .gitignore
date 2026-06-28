@@ -31,3 +31,5 @@ stereosplat/outputs/
 .env.development.local
 .env.test.local
 .env.production.local
+
+outputs/*
