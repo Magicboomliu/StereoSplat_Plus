@@ -1,6 +1,10 @@
 # StereoSplat+ with Confidence
 
-**Confidence-enabled StereoSplat (StereoSplat_Plus)** — not the original 14D model without `conf`.
+**Confidence-enabled StereoSplat (StereoSplat_Plus)** 
+
+In this repo, we support the original gaussain splatting with an additional confidence attribute.
+And we use the rasterization function defined in [diff-gaussian-rasterization-conf](/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat_conf/diff-gaussian-rasterization-conf)
+
 
 | Item | Detail |
 |------|--------|
@@ -39,14 +43,14 @@ All trainers produce **15D conf models** (`gs_dim=15`, `use_conf_loss=True` in c
 Edit paths inside each script (`datapath`, `work_dir`, `stage_1_model_path`, Difix3D weights, etc.) before launching.
 
 ```bash
-# Stage 1
+# Trainin the StereoSplat
 bash scripts/train/complete/train_stereosplat.sh
 
-# Stage 2 (self-pseudo; see below)
+# Train the StereoSplat-Plus
 bash scripts/train/complete/train_stereosplat_plus.sh
 ```
 
-### Stage 1 — all GT views + conf supervision
+### StereoSplat — all GT views + conf supervision
 
 | Item | Value |
 |------|-------|
@@ -61,7 +65,7 @@ conf_gt = exp(-λ · mean_L1(rendered_rgb, gt_rgb))   [stop-gradient]
 L_conf  = MSE(rendered_conf, conf_gt)
 ```
 
-### Stage 2 — pseudo-GT mix + Difix3D
+### Extend to Stereosplat-plus — pseudo-GT mix + Difix3D
 
 | Item | Value |
 |------|-------|
@@ -88,17 +92,6 @@ Both `train_stereosplat_plus.sh` scripts pass `--self_pseudo`:
 
 The trainer still supports **dual-model** mode (omit `--self_pseudo`): a frozen Stage1 renders pseudo views while a separate Stage2 student trains. Not wired in the current shell scripts — enable via CLI if needed.
 
-#### Losses (Stage 2)
-
-| Loss | Weight (typical) | When |
-|------|------------------|------|
-| `recon_gs` | `weight_recon=1.0` | always |
-| `perceptual_gs` | `weight_percep=0.1` | always |
-| `conf_loss` | `weight_conf=0.5` | always |
-| `depth_est_loss` | `branch_weight=0.1` | always |
-| `recon_pixel_fused` | `weight_fusion_sup=1.5` | `view_num > 2`, train |
-| `perceptual_pixel_fused` | `weight_fusion_sup_percep=0.3` | `view_num > 2`, train |
-| `conf_comparative` | `weight_conf_comparative=0.3` | `view_num > 2`, train |
 
 #### Key CLI flags (Stage 2 trainer)
 
@@ -246,18 +239,19 @@ stereosplat_conf/
 └── src/stereosplat/
 ```
 
----
 
-## Quick reference
+## Models Zoo (Google Drive)
 
-```bash
-pixi install -e cu118 && pixi run -e cu118 setup
+### Utility Models Weights
 
-bash scripts/train/complete/train_stereosplat.sh
-bash scripts/train/complete/train_stereosplat_plus.sh
+- [Unimatch Weights (Depth Estimation Initialization)](https://drive.google.com/drive/folders/1zy7PVENps22YavP2sDaNlVmBrjfBko5U?usp=sharing) 
+- [Refined Difix3D (Psuedo View Enhancement) ](https://drive.google.com/drive/folders/1zy7PVENps22YavP2sDaNlVmBrjfBko5U?usp=sharing) 
 
-bash scripts/evaluation/evaluations/stereosplat.sh
-bash scripts/evaluation/evaluations/stereosplat_plus.sh
 
-pixi run -e cu118 test-stereosplat
-```
+### Ablations Pre-trained Weights
+- [StereoSplat-Conf](https://drive.google.com/drive/folders/1rk8RCTS96JV4O1iE_KJb1wcx23SF4elB?usp=sharing)
+- [StereoSplat-Plus-Conf](https://drive.google.com/drive/folders/1TaG-n7EjGt36VmA7ynpei4tTPS_nFKa7?usp=sharing) 
+
+### Completed Training Set Pre-trained Weights
+- [StereoSplat-Conf](https://drive.google.com/drive/folders/1sm3rWZ0IcgiP3dZ-XgRZgCL0f0wi-ooU?usp=sharing)
+- [StereoSplat-Plus-Conf](https://drive.google.com/drive/folders/12lMwnNCBrI76M53eFrYIgWfqEA1FmVDO?usp=sharing) 
