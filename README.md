@@ -1,5 +1,9 @@
 # StereoSplat+
 
+<p align="center">
+  <img src="assets/figure.png" alt="StereoSplat+ pipeline overview" width="900">
+</p>
+
 **[Paper (arXiv:2607.08808)](https://arxiv.org/abs/2607.08808)** · IROS 2026
 
 Feed-forward **3D Gaussian Splatting** for autonomous driving scenes, built on KITTI-360. Official implementation of **[StereoSplat+: Feed-Forward Stereo Gaussian Splatting with Diffusion-Assisted Progressive Inference](https://arxiv.org/abs/2607.08808)** (Liu & Okutomi, IROS 2026).
