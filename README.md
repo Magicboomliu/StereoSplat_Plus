@@ -8,6 +8,43 @@ This repository implements **StereoSplat with confidence (15D Gaussians)** and *
 
 > **Main code lives in [`stereosplat_conf/`](stereosplat_conf/)**. See [`stereosplat_conf/README.md`](stereosplat_conf/README.md) for training/eval details and [`stereosplat_conf/eval/README.md`](stereosplat_conf/eval/README.md) for CLI flags.
 
+## Install Pixi
+
+This project uses [Pixi](https://pixi.sh) to manage Python 3.10, CUDA 11.8, and all dependencies. Install Pixi first, then set up the repo.
+
+### 1. Install the Pixi CLI (Linux)
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | bash
+```
+
+Restart your shell (or `source ~/.bashrc`) so `pixi` is on your `PATH`, then verify:
+
+```bash
+pixi --version
+```
+
+Other install options (Homebrew, Windows, etc.) are documented on the [Pixi installation page](https://pixi.sh/latest/installation/).
+
+### 2. Set up this repository
+
+```bash
+git clone https://github.com/Magicboomliu/StereoSplat_Plus.git
+cd StereoSplat_Plus/stereosplat_conf
+
+pixi install -e cu118
+pixi run -e cu118 setup    # build diff-gaussian-rasterization-conf (required once)
+```
+
+Run any command inside the environment with `pixi run -e cu118 <cmd>`, or enter an interactive shell:
+
+```bash
+pixi shell -e cu118
+```
+
+> The PyPI Gaussian rasterizer does **not** support the confidence channel — always run `setup` before training or evaluation.
+
+---
 
 ## Overview
 
@@ -58,17 +95,9 @@ StereoSplat_Plus/
 
 ## Installation
 
-### Option A — Pixi (recommended)
+Pixi setup is covered in **[Install Pixi](#install-pixi)** above. Alternative:
 
-```bash
-cd stereosplat_conf
-pixi install -e cu118
-pixi run -e cu118 setup    # Build diff-gaussian-rasterization-conf (required)
-```
-
-Run `setup` before any training or evaluation. The PyPI rasterizer does **not** support the confidence channel.
-
-### Option B — Docker
+### Docker
 
 ```bash
 # From repository root
