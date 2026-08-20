@@ -8,18 +8,6 @@ This repository implements **StereoSplat with confidence (15D Gaussians)** and *
 
 > **Main code lives in [`stereosplat_conf/`](stereosplat_conf/)**. See [`stereosplat_conf/README.md`](stereosplat_conf/README.md) for training/eval details and [`stereosplat_conf/eval/README.md`](stereosplat_conf/eval/README.md) for CLI flags.
 
----
-
-## Paper
-
-| | |
-|---|---|
-| **Title** | [StereoSplat+: Feed-Forward Stereo Gaussian Splatting with Diffusion-Assisted Progressive Inference](https://arxiv.org/abs/2607.08808) |
-| **Authors** | Zihua Liu, Masatoshi Okutomi |
-| **Venue** | IEEE/RSJ International Conference on Intelligent Robots and Systems (**IROS 2026**) |
-| **arXiv** | [2607.08808](https://arxiv.org/abs/2607.08808) · [PDF](https://arxiv.org/pdf/2607.08808) |
-
----
 
 ## Overview
 
