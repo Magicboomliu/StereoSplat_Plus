@@ -33,3 +33,11 @@ stereosplat/outputs/
 .env.production.local
 
 outputs/*
+
+stereosplat_conf/outputs/*
+
+# Difix3D local artifacts (machine-specific paths)
+stereosplat_conf/difix3d/filenames/Validation_Set/all_results_dict.json
+stereosplat_conf/difix3d/output/
+difix3d/filenames/Validation_Set/all_results_dict.json
+difix3d/output/

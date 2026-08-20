@@ -3,16 +3,19 @@ _base_ = [
     './_base_/schedule.py'
     ]
 
+import os
+
+_CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.normpath(os.path.join(_CONFIG_DIR, '..', '..', '..', '..', '..'))
+
 # =============================================================================
-# Stage2 full KITTI360 training (Self-Pseudo + soft fusion stack from demo_full)
-# Schedule: save_freq=2000, val_freq=2000, max_train_steps=100000
-# Loss/fusion: aligned with input_invariant_stereosplat_stage2_demo_full.py
+# Stage2 full KITTI360 training (Self-Pseudo + Difix3D + soft conf fusion)
 # =============================================================================
 
 # exp name
 # output directionary
 exp_name = "input_invariant_stereosplat_kitti360_stereo_114x544"
-output_dir = "/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/stage_2_psuedo_gt_mix_training/"
+output_dir = os.path.join(_REPO_ROOT, "outputs/train/stage2")
 validation_vis_progress=True
 
 # learning rate setiing
@@ -47,17 +50,16 @@ resolution = [112, 544]
 # LiDAR Range id different
 point_cloud_range = [-3.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 background_color=[0.0, 0.0, 0.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+datapath = "/path/to/KITTI360"
+train_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/train.txt")
+val_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/val.txt")
+test_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/val.txt")
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
 world_center="First_Stage2" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
-# if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-stage_1_model_path="/data1/zliu/IROS26/Compared_With_Others_Pixi/models/stereosplat/Input_View_Invariant/use_gt_views/checkpoint-159000/model.safetensors"
+unimatch_weights_path = None
+stage_1_model_path = "/path/to/stage1_checkpoint"
 
 camera_model='OpenCV' # select from openCV and openGL
 used_3D_offset=True
@@ -244,9 +246,8 @@ loss_args = dict(
         train_fusion_soft_temperature=50.0,
         train_fusion_tie_logit_mv=4.595,
         train_fusion_detach_rgb=True,
-        margin_detach_ref=True,         # margin hinge: detach ref PSNR (2v/mv) so only tgt gets grad
-        margin_detach_ref_key_2v_views=True,   # mv/fused vs 2v center/last: also detach ref
-        val_fusion_mode="soft",         # val aligned with train; set "hard" for deploy check
+        margin_detach_ref=True,
+        val_fusion_mode="soft",
         weight_conf_pick=0.0,
         conf_pick_lambda=40.0,
         weight_conf_comparative=0.0,
@@ -297,7 +298,7 @@ model = dict(
         style='pytorch',
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat_conf/pretrained/dino_resnet50_pretrain.pth',
+            checkpoint=os.path.join(_REPO_ROOT, 'pretrained/dino_resnet50_pretrain.pth'),
             prefix=None)),
     
     neck=dict(

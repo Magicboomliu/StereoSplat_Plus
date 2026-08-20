@@ -279,6 +279,11 @@ class KITTI360DatasetVGGT(Dataset):
 
 if __name__=="__main__":
 
+    _REPO_ROOT = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "..")
+    )
+    _FILENAMES = os.path.join(_REPO_ROOT, "filenames", "kitti360", "trainval")
+
 
     depth_info_params = dict(
         use_pseudo_depth=True,
@@ -290,10 +295,10 @@ if __name__=="__main__":
     
 
     dataset_params = {
-        "datapath":"/data1/StereoDatasets/KITTI/KITTI360/",
-        "train_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/more_sup_trainval/train_2013_05_28_drive_0000_sync.txt",
-        "val_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
-        "test_filelist":"/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/trainval/val_2013_05_28_drive_0000_sync.txt",
+        "datapath":os.environ.get("KITTI360_DATAPATH", "/path/to/KITTI360"),
+        "train_filelist":os.path.join(_FILENAMES, "train_2013_05_28_drive_0000_sync.txt"),
+        "val_filelist":os.path.join(_FILENAMES, "val_2013_05_28_drive_0000_sync.txt"),
+        "test_filelist":os.path.join(_FILENAMES, "val_2013_05_28_drive_0000_sync.txt"),
         "data_version":"bin_infos_8.0",
         "resolution":[112, 518], # idx 0 is the proceseed image resolution, the last is the the initial image resolution
         "split":"train",

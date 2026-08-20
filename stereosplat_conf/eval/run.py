@@ -135,6 +135,12 @@ def validate_args(args) -> None:
         raise ValueError("--fusion_mode per_view_adaptive requires --conf_pixel_level_fusion.")
     if args.gs_conf_fusion and args.eval_mode not in ("pixel_fusion", "stereosplat_plus"):
         raise ValueError("--gs_conf_fusion requires eval_mode pixel_fusion or stereosplat_plus.")
+    if args.output_vis_video and not args.output_vis:
+        raise ValueError("--output_vis_video requires --output_vis.")
+    if args.eval_mode == "bev_plus" and not args.pretrained_diffix_model_path:
+        raise ValueError("bev_plus requires --pretrained_diffix_model_path.")
+    if args.eval_mode in ("bev", "bev_plus") and not args.output_vis:
+        raise ValueError(f"{args.eval_mode} is visualization-only; pass --output_vis.")
 
 
 def main(args=None, defaults: dict | None = None):
@@ -142,7 +148,7 @@ def main(args=None, defaults: dict | None = None):
     parser.add_argument("--training_stage", choices=["stage1", "stage2"], default=None)
     parser.add_argument(
         "--eval_mode",
-        choices=["stereosplat", "stereosplat_plus", "pixel_fusion"],
+        choices=["stereosplat", "stereosplat_plus", "pixel_fusion", "bev", "bev_plus"],
         default=None,
     )
     parser.add_argument(
@@ -268,7 +274,25 @@ def main(args=None, defaults: dict | None = None):
             "Controls how many GT views V are loaded; mean_* averages all V (all_view)."
         ),
     )
+    parser.add_argument(
+        "--num-workers-val",
+        type=int,
+        default=None,
+        help=(
+            "Override val DataLoader num_workers (use 0 for single-GPU vis/debug; "
+            "avoids CUDA+fork hangs with num_workers_val=8 in config)."
+        ),
+    )
     parser.add_argument("--output_vis", action="store_true", default=False)
+    parser.add_argument(
+        "--output_vis_video",
+        action="store_true",
+        default=False,
+        help=(
+            "With --output_vis, also export trajectory rgb/depth mp4 under "
+            "<bin>/videos/ (extra forward; slow)."
+        ),
+    )
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-entity", type=str, default=None)
     parser.add_argument("--wandb-project", type=str, default=None)
@@ -276,6 +300,18 @@ def main(args=None, defaults: dict | None = None):
     parser.add_argument("--wandb-api-key", type=str, default=None)
     parser.add_argument("--wandb-run-name", type=str, default=None)
     parser.add_argument("--pseudo_ratio", type=str, nargs="*", default=[])
+    parser.add_argument(
+        "--bev_rescale_h",
+        type=float,
+        default=3.0,
+        help="BEV render vertical resolution scale (default 3.0, legacy BEV scripts).",
+    )
+    parser.add_argument(
+        "--bev_rescale_w",
+        type=float,
+        default=1.0,
+        help="BEV render horizontal resolution scale (default 1.0).",
+    )
 
     if args is None:
         args = parser.parse_args()
@@ -362,7 +398,11 @@ def main(args=None, defaults: dict | None = None):
         val_dataset,
         dataset_config.batch_size_val,
         shuffle=False,
-        num_workers=dataset_config.num_workers_val,
+        num_workers=(
+            args.num_workers_val
+            if args.num_workers_val is not None
+            else dataset_config.num_workers_val
+        ),
     )
 
     frozen_stage_1_model = None
@@ -371,7 +411,7 @@ def main(args=None, defaults: dict | None = None):
             accelerator, cfg, args.stage_1_model_path
         )
 
-    force_difix = args.eval_mode == "pixel_fusion" and args.architecture == "whole"
+    force_difix = args.eval_mode in ("pixel_fusion", "bev_plus") and args.architecture == "whole"
     pretrained_diffix_model = maybe_load_difix(args, force=force_difix)
 
     my_model = build_model(cfg)
@@ -402,7 +442,9 @@ def main(args=None, defaults: dict | None = None):
     if pretrained_diffix_model is not None:
         pretrained_diffix_model.to(accelerator.device)
 
-    if args.use_gt_view:
+    if args.eval_mode in ("bev", "bev_plus"):
+        accum = {}
+    elif args.use_gt_view:
         accum = {"rgb": {}, "depth": {}, "oracle_reference": {}}
     else:
         accum = init_metric_accumulators(

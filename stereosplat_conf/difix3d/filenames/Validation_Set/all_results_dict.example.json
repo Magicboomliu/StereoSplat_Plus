@@ -1,0 +1,17 @@
+{
+  "training": {
+    "0": {
+      "image": "/path/to/difix_dataset/scene_bin026/raw_images/rendered_1.png",
+      "target_image": "/path/to/difix_dataset/scene_bin026/gt_images/gt_1.png",
+      "ref_image": "/path/to/difix_dataset/scene_bin026/ref_images/reference_1.png",
+      "prompt": "remove degradation",
+      "relative_pose": [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ]
+    }
+  },
+  "test": {}
+}

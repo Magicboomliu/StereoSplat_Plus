@@ -1,9 +1,9 @@
 # StereoSplat+ with Confidence
 
-**Confidence-enabled StereoSplat (StereoSplat_Plus)** 
+**Confidence-enabled StereoSplat (StereoSplat_Plus)** — code for [StereoSplat+ (arXiv:2607.08808)](https://arxiv.org/abs/2607.08808), IROS 2026.
 
 In this repo, we support the original gaussain splatting with an additional confidence attribute.
-And we use the rasterization function defined in [diff-gaussian-rasterization-conf](/home/zliu/IROS2026/Conf/StereoSplat_Plus/stereosplat_conf/diff-gaussian-rasterization-conf)
+And we use the rasterization function defined in [diff-gaussian-rasterization-conf](diff-gaussian-rasterization-conf)
 
 
 | Item | Detail |
@@ -244,8 +244,10 @@ stereosplat_conf/
 
 ### Utility Models Weights
 
-- [Unimatch Weights (Depth Estimation Initialization)](https://drive.google.com/drive/folders/1zy7PVENps22YavP2sDaNlVmBrjfBko5U?usp=sharing) 
-- [Refined Difix3D (Psuedo View Enhancement) ](https://drive.google.com/drive/folders/1zy7PVENps22YavP2sDaNlVmBrjfBko5U?usp=sharing) 
+| Model | Download | File to use |
+|-------|----------|-------------|
+| Refined Difix3D (pseudo view enhancement) | [model_130001.pkl](https://drive.google.com/file/d/15UOotc_7WRJ_Mg9T3g0enx9Kuh_Yn9Cm/view?usp=drive_link) | `model_130001.pkl` |
+| UniMatch (depth init) | [depth_estimation_224x840](https://drive.google.com/drive/folders/1zy7PVENps22YavP2sDaNlVmBrjfBko5U?usp=drive_link) | `checkpoint-90000/model.safetensors` |
 
 
 ### Ablations Pre-trained Weights

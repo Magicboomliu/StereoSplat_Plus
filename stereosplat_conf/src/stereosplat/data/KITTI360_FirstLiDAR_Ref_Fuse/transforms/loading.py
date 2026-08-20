@@ -213,8 +213,8 @@ def load_conditions(img_paths, reso,depth_info_params):
         cks.append(ck)
         
         # relative depth from DepthAnything-v2
-        # /data1/StereoDatasets/KITTI/KITTI360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/data_rect/0000000256.png
-        # /data1/StereoDatasets/KITTI/KITTI360/monocular_depth/monodepthV2/data_2d_raw/2013_05_28_drive_0000_sync/
+        # e.g. {KITTI360_ROOT}/data_2d_raw/2013_05_28_drive_0000_sync/image_00/data_rect/0000000256.png
+        # e.g. {KITTI360_ROOT}/monocular_depth/monodepthV2/data_2d_raw/2013_05_28_drive_0000_sync/
 
         if depth_info_params.use_pseudo_depth:
             depth_path = img_path.replace("data_2d_raw", "monocular_depth/monodepthV2/data_2d_raw")

@@ -36,6 +36,8 @@ bash difix3d/scripts/train_difix3d.sh
 
 Edit the script to set dataset paths, output directory, checkpoints, and GPU ids.
 
+Difix3D finetuning expects a dataset manifest JSON (`training` / `test` splits with image paths). See `filenames/Validation_Set/all_results_dict.example.json` for the schema; set `DIFIX_DATASET_JSON` to your generated file (do not commit machine-specific paths).
+
 ## Inference / Evaluation
 
 Script:

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-# stereosplat_conf.sh — with-conf weights, 2-view eval (--eval_mode stereosplat), multi-GPU
-
 StereoSplat_2Views_Eval_MultiGPU() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,11 +11,12 @@ accelerate_config_path="${STEREOSPLAT_ROOT}/accelerate_configs/inference/multi_g
 configs_path="${STEREOSPLAT_ROOT}/src/stereosplat/configs/stereosplat/input_invariant_stereosplat_stage2.py"
 val_filelist="${STEREOSPLAT_ROOT}/filenames/kitti360/train_complete/val.txt"
 
-pretrained_model_path="/data1/zliu/IROS26/camera_ready_models/Compared_With_Others/withconf/stereosplat"
+pretrained_model_path="${STEREOSPLAT_CHECKPOINT:-/path/to/stereosplat_conf_checkpoint}"
 output_folder="${STEREOSPLAT_ROOT}/outputs/eval/evaluations/withconf/stereosplat_conf"
 
 if [ ! -e "$pretrained_model_path" ]; then
   echo "[ERROR] checkpoint not found: $pretrained_model_path"
+  echo "        Set STEREOSPLAT_CHECKPOINT or edit this script."
   exit 1
 fi
 
@@ -37,7 +36,6 @@ pixi run -e cu118 accelerate launch --config_file "$accelerate_config_path" eval
   --output_folder "$output_folder" \
   --val_filelist "$val_filelist" \
   --pretrained_model_path "$pretrained_model_path"
-  # --output_vis  # not supported with multi-GPU in run_multi_gpu.py
 
 }
 

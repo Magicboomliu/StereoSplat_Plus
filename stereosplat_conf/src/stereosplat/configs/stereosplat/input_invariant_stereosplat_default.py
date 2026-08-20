@@ -3,10 +3,15 @@ _base_ = [
     './_base_/schedule.py'
     ]
 
+import os
+
+_CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.normpath(os.path.join(_CONFIG_DIR, '..', '..', '..', '..', '..'))
+
 # exp name
 # output directionary
 exp_name = "input_invariant_stereosplat_kitti360_stereo_114x544"
-output_dir = "/data1/zliu/feedforward_outputs_revision/VolumeFusion/FirwstCAM_As_Ref/KITTI360_Complete/RandomView_RandomSample/visualization"
+output_dir = os.path.join(_REPO_ROOT, "outputs/train/stage1")
 validation_vis_progress=True
 
 # learning rate setiing
@@ -38,17 +43,16 @@ resolution = [112, 544]
 # LiDAR Range id different
 point_cloud_range = [-3.0, -50.0, -3.0, 50.0, 50.0, 12.0]
 background_color=[0.0, 0.0, 0.0]
-datapath = "/data1/StereoDatasets/KITTI/KITTI360"
-train_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/all.txt"
-val_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
-test_filelist="/home/zliu/Project2025/FeedStereoGS/filenames/kitti360/train_complete/demo.txt"
+datapath = "/path/to/KITTI360"
+train_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/train.txt")
+val_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/val.txt")
+test_filelist = os.path.join(_REPO_ROOT, "filenames/kitti360/train_complete/val.txt")
 sequence='2013_05_28_drive_0000_sync'
 data_version="bin_infos_8.0_FirstLIDAR"
 supp_view_nums=6
 world_center="First_LiDAR_3_Uniform" # Select from "Center_LiDAR" or "First_Cam0" or "First_LiDAR"
-# if neccssary
-unimatch_weights_path="/data1/zliu/feedforward_outputs_new/depth_estimation_224x840/checkpoint-90000/model.safetensors"
-#unimatch_weights_path=None
+# Override via --unimatch-weights-path in training scripts; None for eval-only checkpoint load
+unimatch_weights_path = None
 camera_model='OpenCV' # select from openCV and openGL
 used_3D_offset=True
 
@@ -270,7 +274,7 @@ model = dict(
         style='pytorch',
         init_cfg=dict(
             type='Pretrained',
-            checkpoint='/home/zliu/IROS2026/StereoSplat_Latest/StereoSplat_Plus/stereosplat_conf/pretrained/dino_resnet50_pretrain.pth',
+            checkpoint=os.path.join(_REPO_ROOT, 'pretrained/dino_resnet50_pretrain.pth'),
             prefix=None)),
     
     neck=dict(

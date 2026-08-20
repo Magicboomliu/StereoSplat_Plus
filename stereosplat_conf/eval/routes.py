@@ -6,6 +6,8 @@ Canonical model methods (see stereosplat.py):
   stereosplat_plus         separated   -> infer_stereosplat_plus_frozen_stage1_two_models
   pixel_fusion             whole       -> infer_pixel_fusion_pose_injection_single_model
   pixel_fusion             separated   -> infer_pixel_fusion_pose_injection_frozen_stage1_two_models
+  bev                      whole       -> get_additional_bev_novel_views_non_progressive
+  bev_plus                 whole       -> get_additional_bev_novel_views_progressive_iter_once
   (--use_gt_view)          any         -> infer_oracle_upper_bound_ablation (GT pseudo + RGB/Depth/Conf)
 """
 from __future__ import annotations
@@ -53,6 +55,36 @@ def run_batch_inference(
             use_ref=args.use_ref,
             vis=args.output_vis,
         )
+
+    if eval_mode == "bev":
+        model.get_additional_bev_novel_views_non_progressive(
+            batch,
+            args.output_folder,
+            bin_token_list,
+            cfg=cfg,
+            view_num=2,
+            matching_nums=2,
+            vis=args.output_vis,
+            rescale_h=args.bev_rescale_h,
+            rescale_w=args.bev_rescale_w,
+        )
+        return {}
+
+    if eval_mode == "bev_plus":
+        model.get_additional_bev_novel_views_progressive_iter_once(
+            batch,
+            args.output_folder,
+            bin_token_list,
+            cfg=cfg,
+            start_images_views=2,
+            use_diffix3d=args.use_diffix3d,
+            diffix3d_network=pretrained_diffix_model,
+            use_ref=args.use_ref,
+            vis=args.output_vis,
+            rescale_h=args.bev_rescale_h,
+            rescale_w=args.bev_rescale_w,
+        )
+        return {}
 
     if eval_mode == "stereosplat":
         return model.infer_stereosplat_two_gt_views_forward(
@@ -119,6 +151,7 @@ def run_batch_inference(
             gs_fusion_margin=args.gs_fusion_margin,
             gs_fusion_conf_agg=args.gs_fusion_conf_agg,
             gs_fusion_base_conf_thresh=args.gs_fusion_base_conf_thresh,
+            output_vis_video=getattr(args, "output_vis_video", False),
         )
 
     if eval_mode == "pixel_fusion" and architecture == "separated":
