@@ -211,10 +211,9 @@ pixi run -e cu118 accelerate launch \
 | `--conf_pixel_level_fusion` | Enable 2D per-pixel conf fusion |
 | `--conf_fusion_margin` | A1 margin: pick plus only if `conf_plus > conf_base + margin` |
 | `--fusion_mode` | `soft` (default in shells) / `legacy` / `per_view_adaptive` |
-| `--gs_conf_fusion` | 3D voxel GS fusion (CLI only; no bundled shell) |
 | `--output_vis` | Save images (`eval/run.py` single-GPU; **not** multi-GPU) |
 
-Full parameter list, FAQ, and output format → **[eval/README.md](eval/README.md)**.
+Full parameter list and output format → **[eval/README.md](eval/README.md)**.
 
 ---
 
